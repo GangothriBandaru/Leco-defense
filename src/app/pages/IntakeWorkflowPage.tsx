@@ -1385,7 +1385,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                         };
                         const asked = selectedMediaOptions(req.requestedMedia);
                         const got = receivedMediaFor(req.id);
-                        const showMediaReceived = asked.length > 0 || got.files > 0;
                         const answer = answered ? answerFor(req) : null;
 
                         return (
@@ -1413,7 +1412,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                   </button>
                                 </div>
                               </div>
-                              <div className={`grid grid-cols-2 divide-x divide-line border-b border-line ${asked.length ? "md:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.4fr)]" : "md:grid-cols-4"}`}>
+                              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.4fr)] divide-x divide-line border-b border-line">
                                 <div className="px-5 py-4">
                                   <div className="eyebrow mb-1">Recipient</div>
                                   <div className="text-sm font-semibold text-ink truncate">{req.recipient}</div>
@@ -1433,15 +1432,20 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                     {req.requestedDocs.length > 3 && <div className="text-xs text-[#5B6B78]">+{req.requestedDocs.length - 3} more</div>}
                                   </div>
                                 </div>
-                                {asked.length > 0 && (
-                                  <div className="px-5 py-4 bg-[#F6FDFF]">
-                                    <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Requested <NewBadge /></div>
+                                {/* Always shown, so a request without media reads as one. */}
+                                <div className="px-5 py-4 bg-[#F6FDFF]">
+                                  <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Requested <NewBadge /></div>
+                                  {asked.length > 0 ? (
                                     <div className="space-y-0.5">
-                                      {asked.slice(0, 3).map((o) => <div key={o.key} className="text-xs text-[#5B6B78] break-words">• {o.title}</div>)}
-                                      {asked.length > 3 && <div className="text-xs text-[#5B6B78]">+{asked.length - 3} more</div>}
+                                      {asked.map((o) => <div key={o.key} className="text-xs text-[#5B6B78] break-words">• {o.title}</div>)}
                                     </div>
-                                  </div>
-                                )}
+                                  ) : (
+                                    <>
+                                      <div className="text-sm font-semibold text-ink">Not requested</div>
+                                      <div className="text-xs text-[#5B6B78] mt-0.5">No video or photo uploads were requested.</div>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                               {req.lastModified && (
                                 <div className="px-5 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
@@ -1454,7 +1458,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                             {/* ── COMPLETED SUBMISSION CARD — the client's answer, no link ── */}
                             {answer && (
                               <>
-                                <div className="eyebrow pt-2">2 · Client has answered</div>
+                                <div className="eyebrow pt-2">2 · Client has responded</div>
                                 <div className="bg-white border border-line rounded-xl overflow-hidden">
                                   <div className="flex items-center justify-between gap-3 px-5 py-3 bg-white border-b border-line">
                                     <span className="mono-ref font-bold">{req.id}</span>
@@ -1470,7 +1474,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                       </button>
                                     </div>
                                   </div>
-                                  <div className={`grid grid-cols-2 divide-x divide-line ${showMediaReceived ? "md:grid-cols-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)]" : "md:grid-cols-4"}`}>
+                                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)] divide-x divide-line">
                                     <div className="px-5 py-4">
                                       <div className="eyebrow mb-1">Status</div>
                                       <div className="text-sm font-semibold text-ink">Completed</div>
@@ -1487,30 +1491,34 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                       <div className="eyebrow mb-1">Missing Documents</div>
                                       <div className={`kpi-value ${answer.missing.length ? "text-amber-600" : "text-ink"}`}>{answer.missing.length}</div>
                                     </div>
-                                    {showMediaReceived && (
-                                      <button
-                                        type="button"
-                                        onClick={viewMediaEvidence}
-                                        disabled={got.files === 0}
-                                        className="px-5 py-4 text-left bg-[#F6FDFF] hover:bg-tint transition-colors disabled:hover:bg-[#F6FDFF] disabled:cursor-default"
-                                        title={got.files > 0 ? "Open Media evidence" : undefined}
-                                      >
-                                        <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Received <NewBadge /></div>
-                                        <div className="flex items-center gap-2">
-                                          <span className="kpi-value">{got.files > 0 ? got.files : "—"}</span>
-                                          {got.processing && (
-                                            <span className="inline-flex items-center gap-1 text-xs text-[#5B6B78]">
-                                              <Loader2 className="w-3.5 h-3.5 text-brand animate-spin" strokeWidth={1.75} /> Analysing
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="text-xs text-[#5B6B78] mt-0.5">
-                                          {got.files > 0
-                                            ? <>{got.videos} {got.videos === 1 ? "video" : "videos"} · {got.sets} photo {got.sets === 1 ? "set" : "sets"} ({got.photos} {got.photos === 1 ? "photo" : "photos"}) · <span className="font-semibold text-deep">opens Media evidence</span></>
-                                            : "Requested — none received yet"}
-                                        </div>
-                                      </button>
-                                    )}
+                                    {/* Always shown — counted from this request's own media records. */}
+                                    <div className="px-5 py-4 bg-[#F6FDFF]">
+                                      <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Received <NewBadge /></div>
+                                      {got.files > 0 ? (
+                                        <>
+                                          <div className="flex items-baseline gap-1.5 flex-wrap">
+                                            <span className="kpi-value">{got.files}</span>
+                                            <span className="text-xs text-[#5B6B78]">received media {got.files === 1 ? "file" : "files"}</span>
+                                            {got.processing && (
+                                              <span className="inline-flex items-center gap-1 text-xs text-deep self-center">
+                                                <Loader2 className="w-3.5 h-3.5 text-brand animate-spin" strokeWidth={1.75} /> Processing
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-xs text-[#5B6B78] mt-0.5">
+                                            {got.videos} {got.videos === 1 ? "video" : "videos"} · {got.sets} photo {got.sets === 1 ? "set" : "sets"} ({got.photos} {got.photos === 1 ? "photo" : "photos"})
+                                          </div>
+                                          <button type="button" onClick={viewMediaEvidence} className="mt-1 text-xs font-semibold text-deep hover:underline">
+                                            Open Media Evidence →
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <div className="text-sm font-semibold text-ink">No media received</div>
+                                          <div className="text-xs text-[#5B6B78] mt-0.5">{asked.length > 0 ? "The client sent no video or photos." : "None was requested."}</div>
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
                                   {req.clientNotes && (
                                     <div className="px-5 py-3 border-t border-line">

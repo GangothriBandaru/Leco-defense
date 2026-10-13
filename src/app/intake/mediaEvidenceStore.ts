@@ -33,10 +33,12 @@ export interface MediaFile {
   analysisResult?: string;
   /** Why the analysis failed. */
   analysisError?: string;
+  /** Which version of the file check produced the status (absent: the first). */
+  checkVersion?: number;
 }
 
 /** The analysis fields of a file. */
-export type AnalysisPatch = Pick<MediaFile, "analysisStatus" | "analysisStartedAt" | "analysisCompletedAt" | "analysisResult" | "analysisError">;
+export type AnalysisPatch = Pick<MediaFile, "analysisStatus" | "analysisStartedAt" | "analysisCompletedAt" | "analysisResult" | "analysisError" | "checkVersion">;
 
 /** Who added the media: the attorney, or the client through a request link. */
 export interface MediaOrigin { source: "Attorney" | "Client"; requestId?: string }

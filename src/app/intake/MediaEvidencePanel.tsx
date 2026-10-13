@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  Camera, ChevronDown, Download, Eye, Loader2, Play, RotateCcw, ScanLine, Video, Image as ImageIcon,
+  Camera, ChevronDown, Download, Loader2, ScanLine, Video, Image as ImageIcon,
   AlertTriangle, CheckCircle, X, Info, Upload,
 } from "lucide-react";
 import type { CaseDocument } from "../types/case";
@@ -9,8 +9,9 @@ import {
   useMediaEvidence, fileStatus, setStatus, STALLED_AFTER_MS,
   type MediaFile, type MediaStatus, type PhotoSetEvidence, type VideoEvidence,
 } from "./mediaEvidenceStore";
-import { analyseVideo, analyseSet } from "./mediaAnalysis";
+import { analyseVideo, analyseSet, CHECK_VERSION } from "./mediaAnalysis";
 import { getMediaFile, downloadMediaFile } from "./mediaFileStore";
+import { DocActions, DocumentWorkspaceModal, type DocInsights } from "../components/DocumentWorkspace";
 
 // ── Media evidence ───────────────────────────────────────────────────────────
 // A case's videos, photo sets and medical image studies, apart from its
@@ -38,7 +39,7 @@ function StatusBadge({ status }: { status: MediaStatus }) {
     case "failed":
       return <span className="pill pill-risk shrink-0"><X className="w-3.5 h-3.5" strokeWidth={1.75} /> Failed</span>;
     default:
-      return <span className="pill pill-neutral shrink-0">Not analysed</span>;
+      return <span className="pill pill-neutral shrink-0">Pending</span>;
   }
 }
 
@@ -46,7 +47,7 @@ function StatusBadge({ status }: { status: MediaStatus }) {
 function fileNote(f: MediaFile): { text: string; tone: "muted" | "amber" | "red"; spin?: boolean } | null {
   const s = fileStatus(f);
   if (s === "processing") return { text: "Analysing…", tone: "muted", spin: true };
-  if (s === "stalled") return { text: `No progress for ${minutesSince(f.analysisStartedAt)} minutes — the analysis stopped. Retry to run it again.`, tone: "amber" };
+  if (s === "stalled") return { text: `No progress for ${minutesSince(f.analysisStartedAt)} minutes — the file check stopped before finishing.`, tone: "amber" };
   if (s === "failed") return { text: f.analysisError ?? "The check failed.", tone: "red" };
   if (s === "ready") return { text: f.analysisResult ?? "Checked.", tone: "muted" };
   return null;
@@ -57,56 +58,23 @@ const NOTE_TONE = { muted: "text-[#5B6B78]", amber: "text-[#B45309]", red: "text
 // ── Actions ──────────────────────────────────────────────────────────────────
 
 const outline = "inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-line rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
-const primary = "inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 
-function FileActions({ file, onPreview, children }: { file: MediaFile; onPreview: () => void; children?: React.ReactNode }) {
-  const [failed, setFailed] = useState(false);
-  const stored = !!file.storageKey;
+/** The dashboard's standard evidence actions — Preview | Insights | Download —
+ *  each disabled, with the reason, when this file cannot support it. */
+function FileActions({ file, onPreview, onInsights }: { file: MediaFile; onPreview: () => void; onInsights: () => void }) {
+  // Always offered. Preview and Insights explain an unavailable file in their
+  // own view; a download that finds no file says so here.
+  const [downloadFailed, setDownloadFailed] = useState(false);
   return (
-    <>
-      <button onClick={onPreview} disabled={!stored} title={stored ? "Preview" : "The original file is not stored on this device"} className={`${outline} text-ink hover:bg-wash`}>
-        <Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> Preview
-      </button>
-      {children}
-      <button
-        onClick={async () => setFailed(!(await downloadMediaFile(file.storageKey, file.name)))}
-        disabled={!stored}
-        title={failed ? "The original file could not be found on this device" : stored ? "Download the original file" : "The original file is not stored on this device"}
-        aria-label={`Download ${file.name}`}
-        className={`${outline} ${failed ? "text-[#B91C1C] border-[#FBD5D5]" : "text-ink hover:bg-wash"}`}
-      >
-        <Download className="w-3.5 h-3.5" strokeWidth={1.75} />
-      </button>
-    </>
-  );
-}
-
-const needsRetry = (s: MediaStatus) => s === "stalled" || s === "failed";
-
-/** Retry — only where the last run stalled or failed. */
-function RetryAction({ status, onRun }: { status: MediaStatus; onRun: () => void }) {
-  if (!needsRetry(status)) return null;
-  return (
-    <button onClick={onRun} className={`${outline} text-[#B45309] border-[#FDE6C8] hover:bg-[#FFF7ED]`}>
-      <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} /> Retry
-    </button>
-  );
-}
-
-/** Run analysis — or Run limited analysis, said plainly, when the case has
- *  nothing to compare the media with. Disabled while a run is in progress, and
- *  after a stall or failure, where Retry is the action. */
-function RunAction({ status, limited, onRun }: { status: MediaStatus; limited?: boolean; onRun: () => void }) {
-  const disabled = status === "processing" || needsRetry(status);
-  return (
-    <button
-      onClick={onRun}
-      disabled={disabled}
-      title={status === "processing" ? "Available when the files are ready" : needsRetry(status) ? "Retry the last run first" : limited ? "Nothing on this case to compare with — the analysis would be limited" : undefined}
-      className={primary}
-    >
-      <Play className="w-3.5 h-3.5" strokeWidth={1.75} /> {limited ? "Run limited analysis" : "Run analysis"}
-    </button>
+    <div className="flex flex-col items-end gap-1">
+      <DocActions
+        size="sm"
+        onPreview={onPreview}
+        onInsights={onInsights}
+        onDownload={async () => setDownloadFailed(!(await downloadMediaFile(file.storageKey, file.name)))}
+      />
+      {downloadFailed && <span role="alert" className="text-xs text-[#B91C1C]">The original file is not stored on this device.</span>}
+    </div>
   );
 }
 
@@ -157,6 +125,98 @@ function PreviewModal({ file, kind, onClose }: { file: MediaFile; kind: "video" 
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Insights ─────────────────────────────────────────────────────────────────
+// Insights open the dashboard's Document Workspace, showing the stored file and
+// only what its record holds: the file check's outcome, the set and study it
+// belongs to, where it came from. No evidence analysis has run on media yet, so
+// no findings are shown — the panel says so instead of inventing them.
+
+interface InsightsTarget {
+  file: MediaFile;
+  kind: "video" | "image";
+  label: string;
+  source: string;
+  uploadedAt: string;
+  /** The set or study the file belongs to, and what it can be compared with. */
+  group?: { title: string; study?: string; compareWith: string[]; missing?: string };
+}
+
+const VIEWABLE = { video: ["mp4", "mov", "webm", "m4v"], image: ["jpg", "jpeg", "png", "webp", "gif"] };
+
+function insightsFor(t: InsightsTarget): DocInsights {
+  const status = fileStatus(t.file);
+  const summary = {
+    ready: `File check complete — ${t.file.analysisResult ?? "the file opens"}. No evidence analysis has been run on this file yet: the evidence-analysis service is not connected, so no findings are shown.`,
+    processing: "The file is still being checked. Insights will be available once the check finishes.",
+    stalled: "The file check stopped before finishing, so nothing has been measured from this file and no findings are available.",
+    failed: `The file check failed: ${t.file.analysisError ?? "no reason was recorded"}. No findings are available for this file.`,
+    "not-analysed": t.file.storageKey
+      ? "This file has not been checked yet, so no findings are available."
+      : "The original file is not stored on this device, so it has not been checked and no findings are available.",
+    "partly-ready": "",
+  }[status];
+  const keyPoints = t.group
+    ? [t.group.missing ?? `Case documents to compare with once evidence analysis is available: ${t.group.compareWith.join(", ")}.`]
+    : [];
+  const statusLabel = { ready: "Ready", processing: "Processing", stalled: "Stalled", failed: "Failed", "not-analysed": "Pending", "partly-ready": "Partly ready" }[status];
+  return {
+    summary,
+    keyPoints,
+    entities: [
+      { label: "Evidence", value: t.label },
+      ...(t.group ? [{ label: t.kind === "image" && t.group.study !== undefined ? "Study" : "Set", value: t.group.study ? `${t.group.title} · ${t.group.study}` : t.group.title }] : []),
+      { label: "Source", value: t.source },
+      { label: "Uploaded", value: formatDate(t.uploadedAt) },
+      { label: "File size", value: t.file.size ? `${(t.file.size / 1024 / 1024).toFixed(1)} MB` : "Not available" },
+      { label: "Status", value: statusLabel },
+    ],
+    supportingDocs: [t.file.name],
+    confidence: { level: "No findings yet", score: 0 },
+  };
+}
+
+function MediaInsights({ target, onClose }: { target: InsightsTarget; onClose: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
+  const ext = extOf(target.file.name);
+  const viewable = VIEWABLE[target.kind].includes(ext);
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    if (!viewable) return;
+    getMediaFile(target.file.storageKey).then((blob) => {
+      if (!blob) { setMissing(true); return; }
+      objectUrl = URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    });
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [target.file.storageKey, viewable]);
+  const kindName = ext === "heic" || ext === "heif" ? "HEIC" : ext === "dcm" || ext === "dicom" ? "DICOM" : ext.toUpperCase();
+  const doc = {
+    id: `${target.label}-${target.file.storageKey ?? target.file.name}`,
+    name: target.file.name,
+    source: target.source,
+    date: formatDate(target.uploadedAt),
+    category: target.label,
+    mediaKind: target.kind,
+    mediaUrl: url ?? undefined,
+    mediaUnavailable: missing || !target.file.storageKey
+      ? "The original file is not stored on this device, so it cannot be shown."
+      : !viewable
+        ? `${kindName} files can't be shown in the browser. Download the original to open it in a suitable viewer.`
+        : url ? undefined : "Loading the file…",
+  };
+  return (
+    <DocumentWorkspaceModal
+      docs={[doc]}
+      initialView="insights"
+      insights={insightsFor(target)}
+      noteContext={{ contextType: "Media evidence", reference: `${target.label} · ${target.file.name}` }}
+      onClose={onClose}
+      onDownload={target.file.storageKey ? () => { void downloadMediaFile(target.file.storageKey, target.file.name); } : undefined}
+    />
   );
 }
 
@@ -223,25 +283,27 @@ function NameCell({ label, file }: { label: string; file: MediaFile }) {
 }
 
 function SetBand({
-  set, word, comparison, onPreview,
+  set, word, comparison, onPreview, onInsights,
 }: {
   set: PhotoSetEvidence;
   word: string;
   /** The case documents the set can be compared with, or the reason there are none. */
   comparison: { docs: string[]; missing?: string };
   onPreview: (f: MediaFile) => void;
+  onInsights: (f: MediaFile & { number: number }, groupTitle: string, study?: string) => void;
 }) {
   const [open, setOpen] = useState(true);
   const status = setStatus(set.files);
   const first = set.files[0]?.number;
   const last = set.files[set.files.length - 1]?.number;
   const study = set.study;
-  const limited = !!comparison.missing;
   const things = set.kind === "scene" ? "photos" : "images";
   const unit = set.files.length === 1 ? things.slice(0, -1) : things;
   // Study type and body part in the title, the rest beneath — only what was entered.
   const titleBits = study ? [study.scanType && study.scanType !== "Not sure" ? study.scanType : null, study.bodyPart || null].filter(Boolean) : [];
   const detailBits = study ? [study.view || null, study.side && study.side !== "Not sure" ? study.side : null, study.studyDate ? `study date ${study.studyDate}` : null].filter(Boolean) : [];
+  const groupTitle = `${word} ${first === last ? first : `${first}–${last}`}`;
+  const studyText = titleBits.length ? titleBits.join(" · ") : undefined;
   return (
     <>
       <tr className="bg-[#F6FDFF]">
@@ -250,14 +312,14 @@ function SetBand({
             <ChevronDown className={`w-4 h-4 text-[#5B6B78] mt-0.5 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} strokeWidth={1.75} />
             <span className="min-w-0">
               <span className="block text-sm font-semibold text-ink">
-                {[`${word} ${first === last ? first : `${first}–${last}`}`, `${set.files.length} ${unit}`, ...titleBits].join(" · ")}
+                {[groupTitle, `${set.files.length} ${unit}`, ...titleBits].join(" · ")}
               </span>
               {detailBits.length > 0 && <span className="block text-xs text-[#5B6B78]">{detailBits.join(" · ")}</span>}
               {status === "processing" && (
-                <span className="block text-xs text-[#5B6B78] mt-0.5">The {things} are being analysed. You can run the analysis again when they are ready.</span>
+                <span className="block text-xs text-[#5B6B78] mt-0.5">The {things} are being checked.</span>
               )}
               {status === "stalled" && (
-                <span className="block text-xs text-[#B45309] mt-0.5">The analysis has made no progress for over {Math.round(STALLED_AFTER_MS / 60000)} minutes. Retry to run it again.</span>
+                <span className="block text-xs text-[#B45309] mt-0.5">The file check has made no progress for over {Math.round(STALLED_AFTER_MS / 60000)} minutes and stopped.</span>
               )}
               {comparison.missing ? (
                 <span className="text-xs text-[#B45309] mt-0.5 flex items-start gap-1">
@@ -270,12 +332,7 @@ function SetBand({
           </button>
         </td>
         <td className="px-4 py-3 align-top"><StatusBadge status={status} /></td>
-        <td className="px-4 py-3 align-top">
-          <div className="flex items-center justify-end gap-1.5 flex-wrap">
-            <RetryAction status={status} onRun={() => analyseSet(set)} />
-            <RunAction status={status} limited={limited} onRun={() => analyseSet(set)} />
-          </div>
-        </td>
+        <td className="px-4 py-3 align-top" />
       </tr>
       {open && set.files.map((f) => (
         <tr key={f.number} className="bg-white">
@@ -284,7 +341,7 @@ function SetBand({
           <td className="px-4 py-3 align-top text-sm text-[#5B6B78] whitespace-nowrap">{formatDate(set.uploadedAt)}</td>
           <td className="px-4 py-3 align-top"><StatusBadge status={fileStatus(f)} /></td>
           <td className="px-4 py-3 align-top">
-            <div className="flex items-center justify-end gap-1.5"><FileActions file={f} onPreview={() => onPreview(f)} /></div>
+            <div className="flex items-center justify-end gap-1.5"><FileActions file={f} onPreview={() => onPreview(f)} onInsights={() => onInsights(f, groupTitle, studyText)} /></div>
           </td>
         </tr>
       ))}
@@ -299,12 +356,21 @@ export function MediaEvidencePanel({
 }: { caseId: string; documents?: CaseDocument[]; onUpload?: () => void }) {
   const { videos, sets } = useMediaEvidence(caseId);
   const [preview, setPreview] = useState<{ file: MediaFile; kind: "video" | "image" } | null>(null);
+  const [insights, setInsights] = useState<InsightsTarget | null>(null);
   // Re-read the clock so a check that stops making progress shows as stalled.
   const [, setTick] = useState(0);
   useEffect(() => {
     const t = window.setInterval(() => setTick((n) => n + 1), 30_000);
     return () => window.clearInterval(t);
   }, []);
+
+  // Files never checked, and files an earlier version of the check failed, are
+  // checked now — once. A file that is not stored here fails the check.
+  useEffect(() => {
+    const unchecked = (f: MediaFile) => !f.analysisStatus || (f.analysisStatus === "failed" && (f.checkVersion ?? 1) < CHECK_VERSION);
+    videos.filter((v) => unchecked(v.file)).forEach((v) => { void analyseVideo(v); });
+    sets.filter((x) => x.files.some(unchecked)).forEach((x) => { void analyseSet(x); });
+  }, [videos, sets]);
 
   const scene = sets.filter((s) => s.kind === "scene");
   const medical = sets.filter((s) => s.kind === "medical");
@@ -318,10 +384,10 @@ export function MediaEvidencePanel({
   const medicalDocs = [...docsIn("Medical Records"), ...documents.filter((d) => /expert|letter/i.test(d.name)).map((d) => d.name)].map(readable);
   const sceneComparison = sceneDocs.length
     ? { docs: sceneDocs }
-    : { docs: [], missing: "No crash report, incident report or witness statement is on this case. The analysis would be limited: nothing can be compared." };
+    : { docs: [], missing: "No crash report, incident report or witness statement is on this case, so there is nothing to compare the photos with yet." };
   const medicalComparison = medicalDocs.length
     ? { docs: Array.from(new Set(medicalDocs)) }
-    : { docs: [], missing: "No medical record, bill or expert letter is on this case. The analysis would be limited: nothing can be compared." };
+    : { docs: [], missing: "No medical record, bill or expert letter is on this case, so there is nothing to compare the images with yet." };
 
   const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
   const imagesIn = (xs: PhotoSetEvidence[]) => xs.reduce((t, x) => t + x.files.length, 0);
@@ -369,10 +435,11 @@ export function MediaEvidencePanel({
                   <td className="px-4 py-3 align-top"><StatusBadge status={status} /></td>
                   <td className="px-4 py-3 align-top">
                     <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                      <RetryAction status={status} onRun={() => analyseVideo(v)} />
-                      <FileActions file={v.file} onPreview={() => setPreview({ file: v.file, kind: "video" })}>
-                        <RunAction status={status} onRun={() => analyseVideo(v)} />
-                      </FileActions>
+                      <FileActions
+                        file={v.file}
+                        onPreview={() => setPreview({ file: v.file, kind: "video" })}
+                        onInsights={() => setInsights({ file: v.file, kind: "video", label: `Video ${v.number}`, source: v.source ?? "Attorney", uploadedAt: v.uploadedAt })}
+                      />
                     </div>
                   </td>
                 </tr>
@@ -383,23 +450,38 @@ export function MediaEvidencePanel({
           <Category title="Photos" icon={ImageIcon} count={`${n(imagesIn(scene), "photo", "photos")} · ${n(scene.length, "set", "sets")}`}>
             {scene.length === 0
               ? <tr><td colSpan={5} className="px-4 py-4 text-sm text-[#8A98A3]">No scene photo sets.</td></tr>
-              : scene.map((s) => <SetBand key={s.id} set={s} word="Scene Image" comparison={sceneComparison} onPreview={(f) => setPreview({ file: f, kind: "image" })} />)}
+              : scene.map((s) => <SetBand
+                  key={s.id} set={s} word="Scene Image" comparison={sceneComparison}
+                  onPreview={(f) => setPreview({ file: f, kind: "image" })}
+                  onInsights={(f, title, study) => setInsights({
+                    file: f, kind: "image", label: `Scene Image ${f.number}`, source: s.source ?? "Attorney", uploadedAt: s.uploadedAt,
+                    group: { title, study, compareWith: sceneComparison.docs, missing: sceneComparison.missing },
+                  })}
+                />)}
           </Category>
 
           <Category title="Medical images" icon={ScanLine} count={`${n(imagesIn(medical), "image", "images")} · ${n(medical.length, "study", "studies")}`}>
             {medical.length === 0
               ? <tr><td colSpan={5} className="px-4 py-4 text-sm text-[#8A98A3]">No medical image studies.</td></tr>
-              : medical.map((s) => <SetBand key={s.id} set={s} word="Medical Image" comparison={medicalComparison} onPreview={(f) => setPreview({ file: f, kind: "image" })} />)}
+              : medical.map((s) => <SetBand
+                  key={s.id} set={s} word="Medical Image" comparison={medicalComparison}
+                  onPreview={(f) => setPreview({ file: f, kind: "image" })}
+                  onInsights={(f, title, study) => setInsights({
+                    file: f, kind: "image", label: `Medical Image ${f.number}`, source: s.source ?? "Attorney", uploadedAt: s.uploadedAt,
+                    group: { title, study, compareWith: medicalComparison.docs, missing: medicalComparison.missing },
+                  })}
+                />)}
           </Category>
 
           <p className="text-xs text-[#5B6B78] leading-relaxed flex items-start gap-1.5">
             <Info className="w-3.5 h-3.5 shrink-0 mt-px" strokeWidth={1.75} />
-            Run analysis checks that each file opens and records what can be measured from it (a video's resolution and length, an image's dimensions, a DICOM header). Comparing media with the case's documents needs the evidence-analysis service, which is not connected yet.
+            Each file is checked when it arrives: that it opens, and what can be measured from it (a video's resolution and length, an image's dimensions, a DICOM header). Insights show that check; comparing media with the case's documents needs the evidence-analysis service, which is not connected yet.
           </p>
         </>
       )}
 
       {preview && <PreviewModal file={preview.file} kind={preview.kind} onClose={() => setPreview(null)} />}
+      {insights && <MediaInsights target={insights} onClose={() => setInsights(null)} />}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   DropZone, FileRow, Banner, StudyFields, problemWith, toDrafts, keyOf, EMPTY_STUDY, storeDraft,
   type Draft, type DraftSet,
 } from "./mediaUploadParts";
+import { analyseVideo, analyseSet } from "./mediaAnalysis";
 
 /** What one finished upload put on the case — reported to the page so it can
  *  say exactly what arrived. */
@@ -100,13 +101,13 @@ export function VideoPhotoUploadModal({
     });
     // Each upload stores its original files, then records them.
     const list: Job[] = [
-      ...videos.map((v, i) => make(v.key, `Video ${i + 1}`, v.name, { type: "video", name: v.name }, async () => addVideoEvidence(caseId, await storeDraft(v), uploadedBy, { source: "Attorney" }))),
+      ...videos.map((v, i) => make(v.key, `Video ${i + 1}`, v.name, { type: "video", name: v.name }, async () => { void analyseVideo(addVideoEvidence(caseId, await storeDraft(v), uploadedBy, { source: "Attorney" })); })),
       ...filledSets.map((s, i) => make(
         s.key,
         `Set ${i + 1} · ${s.kind === "scene" ? "Scene photos" : "Medical images"}`,
         plural(s.files.length, "image"),
         { type: "set", kind: s.kind, count: s.files.length },
-        async () => addPhotoSetEvidence(caseId, s.kind, await Promise.all(s.files.map(storeDraft)), uploadedBy, s.kind === "medical" ? s.study : undefined, { source: "Attorney" }),
+        async () => { void analyseSet(addPhotoSetEvidence(caseId, s.kind, await Promise.all(s.files.map(storeDraft)), uploadedBy, s.kind === "medical" ? s.study : undefined, { source: "Attorney" })); },
       )),
     ];
     setJobs(list);

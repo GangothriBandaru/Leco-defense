@@ -3,9 +3,11 @@ import { StageNavigator } from "../components/StageNavigator";
 import {
   ChevronLeft, CheckCircle, ChevronDown, ChevronRight,
   ExternalLink, BarChart2,
-  ArrowRight, Flag, Circle, Shield
+  ArrowRight, Flag, Circle, Shield, Users
 } from "lucide-react";
 import { DELIVERABLES, type DeliverableKind } from "./DeliverablePage";
+import { defendantsForCase } from "../defendants/defendantData";
+import { useDefendantDecisions } from "../defendants/defendantDecisionStore";
 import { INSURANCE_ANALYSIS } from "../insurance/insuranceData";
 import { Button } from "../components/ui/button";
 import {
@@ -30,6 +32,8 @@ interface CaseReadyPageProps {
   onOpenInsurance?: () => void;
   /** Opens one of the Generated Deliverables on its own page. */
   onOpenDeliverable?: (kind: DeliverableKind) => void;
+  /** Opens the Defendant Analysis — the same page Analysis opens. */
+  onOpenDefendants?: () => void;
   /** Section to bring into view on arrival — used when returning from a sub-page. */
   scrollToSection?: string;
 }
@@ -47,7 +51,9 @@ const CHECKLIST_DETAILS: Record<string, string> = {
 // The four deliverables — the same list their dedicated pages are built from.
 const deliverables = DELIVERABLES.map((d) => ({ ...d, color: "bg-tint text-deep" }));
 
-export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake, onOpenWorkspace, onOpenInsurance, onOpenDeliverable, scrollToSection }: CaseReadyPageProps) {
+export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake, onOpenWorkspace, onOpenInsurance, onOpenDeliverable, onOpenDefendants, scrollToSection }: CaseReadyPageProps) {
+  const defendants = defendantsForCase(caseData?.caseId ?? "PI-2024-001");
+  const defendantDecisions = useDefendantDecisions(defendants?.id);
   // Returning from a sub-page lands back on the deliverable it was opened from.
   useEffect(() => {
     if (!scrollToSection) return;
@@ -245,7 +251,8 @@ export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake
           <div id="generated-deliverables" className="lg-card overflow-hidden scroll-mt-[150px]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-line">
               <h2 className="section-header">Generated Deliverables</h2>
-              <span className="secondary-text">6 documents ready</span>
+              {/* Counted: the deliverables, Insurance and Defendant Analysis. */}
+              <span className="secondary-text">{DELIVERABLES.length + 2} documents ready</span>
             </div>
 
             <div className="p-6 grid grid-cols-2 gap-4">
@@ -296,6 +303,38 @@ export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake
                   <span className="mono-ref">{INSURANCE_ANALYSIS.analysedOn}</span>
                   <button
                     onClick={onOpenInsurance}
+                    className="flex items-center gap-1 text-xs font-medium text-deep hover:text-ink transition-colors"
+                  >
+                    Open <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Defendant Analysis — the same analysis the Analysis stage opens. */}
+              <div
+                id="defendant-deliverable"
+                role="button"
+                tabIndex={0}
+                onClick={onOpenDefendants}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpenDefendants?.(); } }}
+                className="lg-card lg-card-i p-4 flex flex-col cursor-pointer scroll-mt-[150px]"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-tint text-deep">
+                    <Users className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    Liability
+                  </div>
+                </div>
+                <h3 className="card-title mb-1">Defendant Analysis</h3>
+                <p className="secondary-text leading-relaxed flex-1">
+                  Review defendant identification, liability evidence, relationships between responsible parties, investigation priorities, and attorney decisions.
+                </p>
+                <div className="flex items-center justify-between mt-4 pt-3 border-t border-line">
+                  <span className="mono-ref">
+                    {!defendants ? "Not available for this case" : defendantDecisions?.confirmedAt ? `Decisions confirmed ${defendantDecisions.confirmedAt}` : "Awaiting attorney decisions"}
+                  </span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onOpenDefendants?.(); }}
                     className="flex items-center gap-1 text-xs font-medium text-deep hover:text-ink transition-colors"
                   >
                     Open <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.75} />

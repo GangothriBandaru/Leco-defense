@@ -14,6 +14,8 @@ import {
 } from "../types/case";
 import { VIOLATION_CARDS, VIOLATION_SEVERITY_PILL } from "../workspace/WorkspaceTabs";
 import { governingLawSummary } from "../jurisdiction/jurisdictionData";
+import { defendantsForCase } from "../defendants/defendantData";
+import { useDefendantDecisions } from "../defendants/defendantDecisionStore";
 
 /* MARKER-MAKE-KIT-INVOKED */
 
@@ -33,6 +35,8 @@ interface AnalysisPageProps {
   onOpenInsurance?: () => void;
   /** Opens the Attorney Jurisdiction Review for this case. */
   onOpenJurisdiction?: () => void;
+  /** Opens the Defendant Analysis for this case, with this defendant selected. */
+  onOpenDefendants?: (defendantName: string) => void;
   /** The governing law the attorney has approved, once there is one. */
   governingLaw?: string;
   /** Section to bring into view on arrival — used when returning from a sub-page. */
@@ -137,7 +141,7 @@ const timelineEvents: TimelineEvent[] = [
 // Total events LECO extracted from the record; the timeline surfaces only the key ones
 const EXTRACTED_EVENT_COUNT = 53;
 
-export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToIntake, onProceedToValuation, onOpenInsurance, onOpenJurisdiction, governingLaw, scrollToSection }: AnalysisPageProps) {
+export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToIntake, onProceedToValuation, onOpenInsurance, onOpenJurisdiction, onOpenDefendants, governingLaw, scrollToSection }: AnalysisPageProps) {
   // Returning from a sub-page lands back on the section it was opened from.
   useEffect(() => {
     if (!scrollToSection) return;
@@ -294,9 +298,16 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
   // Jurisdiction opens the Attorney Jurisdiction Review. Governing Law shows the
   // approved law, else the provisional finding — labelled as such.
   const law = governingLawSummary(data.caseId, data.jurisdiction, governingLaw);
+  // Defendant opens the Defendant Analysis; its note comes from that record.
+  const DEFENDANT = "Memory Care Facility LLC";
+  const defendants = defendantsForCase(data.caseId);
+  const defendantDecisions = useDefendantDecisions(defendants?.id);
+  const defendantNote = defendants
+    ? `${defendants.candidates.length} potential defendants · ${defendantDecisions?.confirmedAt ? "decisions confirmed" : "awaiting attorney decisions"}`
+    : undefined;
   const summaryRows: { icon: any; label: string; value?: string; note?: string; onClick?: () => void; hint?: string }[] = [
     { icon: User, label: "Plaintiff", value: data.plaintiff },
-    { icon: Building2, label: "Defendant", value: "Memory Care Facility LLC" },
+    { icon: Building2, label: "Defendant", value: DEFENDANT, note: defendantNote, onClick: onOpenDefendants ? () => onOpenDefendants(DEFENDANT) : undefined, hint: "Open the Defendant Analysis" },
     { icon: Shield, label: "Insurance Carrier", value: "ABC Professional Liability Insurance" },
     { icon: Scale, label: "Jurisdiction", value: data.jurisdiction, onClick: onOpenJurisdiction, hint: "Open the Attorney Jurisdiction Review" },
     { icon: Gavel, label: "Governing Law", value: law.value, note: law.note },
@@ -359,7 +370,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
         <div className="grid grid-cols-1 lg:grid-cols-[45fr_55fr] gap-6 items-start">
 
           {/* LEFT (45%) — Case Intelligence Summary, compact card grid (sticky while timeline scrolls) */}
-          <div className="lg-card p-6 flex flex-col lg:sticky lg:top-[150px] self-start">
+          <div id="case-intelligence" className="lg-card p-6 flex flex-col lg:sticky lg:top-[150px] self-start scroll-mt-[150px]">
             <div className="flex items-center gap-2.5 mb-5">
               <h2 className="section-header">Case Intelligence Summary</h2>
               <span className="pill pill-complete">92% Complete</span>

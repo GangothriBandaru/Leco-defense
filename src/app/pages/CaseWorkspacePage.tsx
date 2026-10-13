@@ -17,6 +17,7 @@ import { DocumentWorkspaceModal } from "../components/DocumentWorkspace";
 import { DemandSpacePage } from "./DemandSpacePage";
 import { DemandPackageEditorPage } from "./DemandPackageEditorPage";
 import { InsuranceSummaryPage } from "./InsuranceSummaryPage";
+import { DefendantAnalysisPage } from "./DefendantAnalysisPage";
 import { InsuranceDetailPage } from "./InsuranceDetailPage";
 
 interface CaseWorkspacePageProps {
@@ -51,6 +52,8 @@ const TABS = [
 
 // The Evidence workspace, opened from the header rather than the stage bar.
 const EVIDENCE_VIEW = "evidencehub";
+// The Defendant Analysis, opened from the Case Overview's Defendant tile.
+const DEFENDANTS_VIEW = "defendants";
 
 // The Insurance stage: the Insurance Policy Analysis summary, with its Full
 // Detailed Analysis opened from it in place.
@@ -218,7 +221,9 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
   const model: WorkspaceModel = useWorkspaceModel(caseData);
 
   // The Case Overview carrier tile opens the Insurance stage.
-  const tabProps = { model, findings: analysisFindings, documents, goTo: openTab, goToValuation: onNavigateToValuation, onGenerateDemand: startGenerateDemand, onOpenInsurance: () => openInsurance() };
+  const [defendantFocus, setDefendantFocus] = useState<string | undefined>(undefined);
+  const openDefendants = (name: string) => { setDefendantFocus(name); setActiveTab(DEFENDANTS_VIEW); scrollWorkspaceTop(); };
+  const tabProps = { model, findings: analysisFindings, documents, goTo: openTab, goToValuation: onNavigateToValuation, onGenerateDemand: startGenerateDemand, onOpenInsurance: () => openInsurance(), onOpenDefendants: openDefendants };
   const backToOverview = () => { setActiveTab("overview"); scrollWorkspaceTop(); };
 
   const renderTab = () => {
@@ -248,6 +253,16 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
           backLabel="Back to Case Overview"
           onBack={backToOverview}
           onOpenDetail={() => openInsurance(true)}
+        />
+      );
+      case DEFENDANTS_VIEW: return (
+        <DefendantAnalysisPage
+          embedded
+          caseData={{ caseName: model.caseName, caseId: model.caseId, caseType: model.caseType, jurisdiction: model.jurisdiction, defendant: model.defendant }}
+          caseRef={model.caseId}
+          focusName={defendantFocus}
+          backLabel="Back to Case Overview"
+          onBack={backToOverview}
         />
       );
       case "economic": return <EconomicDamagesTab {...tabProps} />;

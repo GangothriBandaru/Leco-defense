@@ -107,12 +107,19 @@ function ForumComparison({ record }: { record: CaseJurisdiction }) {
         Each column is a place the case could be filed. Rules come from the likely governing law under that forum's choice-of-law approach.
       </p>
       <div className="overflow-x-auto rounded-xl border border-line">
-        <table className="w-full min-w-[720px] border-collapse">
+        {/* Fixed proportions: the labels take a third, the forums share the
+            rest and wrap. Only below ~520px does the table scroll, inside
+            its own frame. */}
+        <table className="w-full min-w-[520px] table-fixed border-collapse">
+          <colgroup>
+            <col className="w-[30%]" />
+            {record.forums.map((f) => <col key={f.id} />)}
+          </colgroup>
           <thead>
             <tr className="bg-wash">
-              <th className={`${th} sticky left-0 z-10 bg-wash w-[210px]`}>&nbsp;</th>
+              <th className={`${th} sticky left-0 z-10 bg-wash`}>&nbsp;</th>
               {record.forums.map((f) => (
-                <th key={f.id} className="text-left px-4 py-3 border-b border-l border-line min-w-[240px] align-top">
+                <th key={f.id} className="text-left px-4 py-3 border-b border-l border-line align-top break-words">
                   <div className="text-sm font-semibold text-ink">{f.title}</div>
                   <div className="text-xs text-[#5B6B78] font-normal mt-0.5">{f.court}</div>
                 </th>
@@ -126,7 +133,7 @@ function ForumComparison({ record }: { record: CaseJurisdiction }) {
                   {rowLabel(r.key, r.label)}
                 </th>
                 {record.forums.map((f) => (
-                  <td key={f.id} className="px-4 py-3 align-top border-l border-line">{cell(f, r.key)}</td>
+                  <td key={f.id} className="px-4 py-3 align-top border-l border-line break-words">{cell(f, r.key)}</td>
                 ))}
               </tr>
             ))}
@@ -402,67 +409,32 @@ function MissingData({ record }: { record: CaseJurisdiction }) {
   );
 }
 
-// ── Attorney decision guidance ───────────────────────────────────────────────
-// At the top of the page, so the attorney knows from the start that a decision
-// is needed — and where it stands. It points to the one Attorney Decision panel
-// below; it is not a second form.
+// ── Attorney decision entry point ────────────────────────────────────────────
+// A compact button beside the page heading, so the attorney knows from the
+// start that a decision is needed — and where it stands. It leads to the one
+// Attorney Decision panel in the workspace; it is not a second form.
 
-function DecisionGuidance({ record, decision, onGo }: { record?: CaseJurisdiction; decision: AttorneyDecision; onGo: () => void }) {
-  const working = workingDeadline(record);
-  const finding = record?.governingLaw.finding;
-  const forumTitle = (id: string) => record?.forums.find((f) => f.id === id)?.title ?? id;
-  const cta = (label: string) => (
-    <button onClick={onGo} className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-brand hover:bg-deep text-white rounded-lg text-sm font-semibold transition-colors shrink-0">
-      {label} <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
-    </button>
-  );
-
-  if (decision.status === "approved") {
-    return (
-      <div className="rounded-xl border border-[#D1FADF] bg-[#ECFDF3] px-5 py-4 flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-start gap-3 min-w-0">
-          <CheckCircle className="w-5 h-5 text-[#15803D] shrink-0 mt-0.5" strokeWidth={1.75} />
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-ink">Attorney decision recorded</div>
-            <p className="text-sm text-ink mt-0.5">
-              Governing law {decision.governingLaw}. Forums: {decision.forums.map(forumTitle).join(", ") || "none"}. Working deadline {formatDate(working?.iso)} confirmed and calendared.
-            </p>
-            {decision.reviewer && <p className="text-xs text-[#5B6B78] mt-0.5">Reviewer: {decision.reviewer} · {decision.decidedAt}</p>}
-          </div>
-        </div>
-        {cta("View decision")}
-      </div>
-    );
-  }
-
-  const pending = decision.status === "needs-info"
-    ? { title: "More information requested — decision still pending", text: "Follow-up tasks are open. Once the information is in, confirm the governing law, the forums and the working deadline." }
-    : decision.status === "escalated"
-      ? { title: "Escalated to the supervising attorney — decision still pending", text: "The case is waiting on a second review. Nothing has been approved or calendared yet." }
-      : { title: "Attorney decision required", text: "Review the recommended jurisdiction, confirm the governing law, select the forums to plan around, and verify the working statute-of-limitations deadline before approving the case for filing preparation." };
-
+function DecisionCta({ decision, onGo }: { decision: AttorneyDecision; onGo: () => void }) {
+  const state = {
+    open: { label: "Attorney Decision Required", badge: "Action required", tone: "bg-[#FFF7ED] text-[#B45309] border-[#FDE6C8]" },
+    "needs-info": { label: "Attorney Decision Pending", badge: "More info requested", tone: "bg-[#FFF7ED] text-[#B45309] border-[#FDE6C8]" },
+    escalated: { label: "Attorney Decision Pending", badge: "Escalated", tone: "bg-[#FFF7ED] text-[#B45309] border-[#FDE6C8]" },
+    approved: { label: "View Attorney Decision", badge: "Approved", tone: "bg-[#ECFDF3] text-[#15803D] border-[#D1FADF]" },
+  }[decision.status];
   return (
-    <div className="rounded-xl border border-[#D6F2F7] bg-[#F6FDFF] px-5 py-4 flex items-start justify-between gap-4 flex-wrap">
-      <div className="flex items-start gap-3 min-w-0 flex-1">
-        <div className="w-9 h-9 rounded-lg bg-tint flex items-center justify-center shrink-0">
-          <Gavel className="w-4 h-4 text-deep" strokeWidth={1.75} />
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-ink">{pending.title}</span>
-            <span className="pill pill-progress">Action required</span>
-          </div>
-          <p className="text-sm text-ink mt-1 leading-relaxed">{pending.text}</p>
-          <p className="text-xs text-[#5B6B78] mt-1.5">
-            {[
-              finding ? `Governing law: ${finding} — provisional system finding` : "Governing law: not yet determined",
-              working ? `Working deadline: ${formatDate(working.iso)} — calculated, not yet confirmed` : "Working deadline: needs attorney review",
-            ].join(" · ")}
-          </p>
-        </div>
-      </div>
-      {cta("Go to Attorney Decision")}
-    </div>
+    <button
+      onClick={onGo}
+      className="inline-flex items-center justify-center flex-wrap gap-2 max-w-full pl-3.5 pr-3 py-2 bg-brand hover:bg-deep text-white rounded-lg text-sm font-semibold transition-colors"
+    >
+      {state.label}
+      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-semibold ${state.tone}`}>
+        {decision.status === "approved"
+          ? <CheckCircle className="w-3 h-3" strokeWidth={2} />
+          : <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B]" aria-hidden />}
+        {state.badge}
+      </span>
+      <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
+    </button>
   );
 }
 
@@ -486,11 +458,6 @@ function DecisionPanel({
   const working = workingDeadline(record);
   const overridden = !!finding && !!decision.governingLaw && decision.governingLaw !== finding;
   const forumTitle = (id: string) => record?.forums.find((f) => f.id === id)?.title ?? id;
-
-  // The fault outcome across every forum, at the client-fault estimate.
-  const e = record?.fault.estimate;
-  const outcomes = record && e ? record.forums.map((f) => resultOverRange(record, f.appliedRule)!) : [];
-  const allBarred = outcomes.length > 0 && outcomes.every((o) => o.barred);
 
   const stamp = () => ({ reviewer: REVIEWER, decidedAt: now() });
 
@@ -529,20 +496,6 @@ function DecisionPanel({
       className={`lg-card p-5 space-y-5 scroll-mt-[170px] outline-none transition-shadow duration-500 ${highlight ? "ring-2 ring-brand ring-offset-2 ring-offset-wash" : ""}`}
     >
       <h3 className="section-header">Attorney decision</h3>
-
-      {/* Liability summary */}
-      <div className="lg-zone lg-zone-grey p-4 space-y-1.5">
-        <div className="eyebrow">Liability summary</div>
-        {record ? (
-          <>
-            <p className="text-sm text-ink leading-relaxed">{record.liability.summary}</p>
-            <p className="text-sm text-ink">Client fault estimate: <strong className="font-semibold">{e ? faultRangeLabel(e) : NA}</strong></p>
-            {allBarred && <p className="text-sm font-semibold text-[#B91C1C]">Barred in all forums unless an exception applies</p>}
-            {!e && <p className="text-sm text-[#5B6B78]">Fault outcome not assessed — no client-fault estimate.</p>}
-            <p className="text-sm text-ink"><strong className="font-semibold">Best path:</strong> {record.liability.bestPath}</p>
-          </>
-        ) : <p className="text-sm text-[#8A98A3]">{NA}</p>}
-      </div>
 
       {/* Governing law */}
       <div>
@@ -749,127 +702,138 @@ export function JurisdictionReviewPage({ caseData, decision: stored, onDecisionC
       <StageNavigator currentStage="Analysis" onStageClick={onStageClick} />
 
       <div className="max-w-[1400px] mx-auto px-8 py-8 space-y-6">
-        <div>
-          <h1 className="page-title" style={{ fontSize: "24px" }}>Jurisdiction &amp; SOL Review</h1>
-          <p className="secondary-text mt-1">Where the case can be filed, which law governs it, and the deadline to file — for the attorney to confirm.</p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <h1 className="page-title" style={{ fontSize: "24px" }}>Jurisdiction &amp; SOL Review</h1>
+            <p className="secondary-text mt-1">Where the case can be filed, which law governs it, and the deadline to file — for the attorney to confirm.</p>
+          </div>
+          <DecisionCta decision={decision} onGo={goToDecision} />
         </div>
 
-        <DecisionGuidance record={record} decision={decision} onGo={goToDecision} />
+        {/* Case overview on the left, held in place while the workspace on the
+            right scrolls with the page — the dashboard's Case Snapshot layout. */}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] gap-6 items-start">
+          {/* ── LEFT — case overview, then the attorney decision. No height cap
+              or scroll area of its own: it is taller than most windows, so it
+              scrolls with the page and nothing in it is ever cut off. ── */}
+          <aside className="space-y-4 min-w-0">
+            <div className="lg-card p-4 space-y-3">
+              <div>
+                <h3 className="card-title mb-1.5">Case Overview</h3>
+                <h2 className="text-base font-semibold text-ink leading-snug">{caseName}</h2>
+                <div className="mono-ref mt-0.5 break-words">{meta.join(" · ")}</div>
+                {caseData?.summary && <p className="text-sm text-[#5B6B78] leading-snug mt-1.5">{caseData.summary}</p>}
+              </div>
+              <dl className="grid grid-cols-2 gap-2">
+                {[
+                  { label: "Plaintiff", value: caseData?.plaintiff ?? model.plaintiff },
+                  { label: "Defendant", value: record?.defendant ?? null },
+                  { label: "Jurisdiction", value: caseData?.jurisdiction ?? model.jurisdiction },
+                  { label: "Date of incident", value: record ? formatDate(record.incidentDate) : null },
+                ].map((f) => (
+                  <div key={f.label} className="lg-zone lg-zone-grey px-3 py-2">
+                    <dt className="eyebrow mb-0.5">{f.label}</dt>
+                    <dd className="text-sm font-semibold text-ink break-words"><Muted value={f.value} /></dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {record?.governingLaw.finding
+                  ? <span className="pill pill-neutral"><Gavel className="w-3.5 h-3.5" strokeWidth={1.75} /> Governing law: {record.governingLaw.finding} · system finding</span>
+                  : <span className="pill pill-progress"><Gavel className="w-3.5 h-3.5" strokeWidth={1.75} /> Governing law not yet determined</span>}
+                {record && <span className="pill pill-neutral">{record.governingLaw.confidence} confidence</span>}
+                {decision.status === "approved"
+                  ? <span className="pill pill-complete"><CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> Attorney approved</span>
+                  : <span className="pill pill-progress">Needs attorney review</span>}
+              </div>
 
-        {/* Case header + working deadline / decision required */}
-        <div className="lg-card p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
-          <div className="min-w-0">
-            <div className="eyebrow mb-1">Case</div>
-            <h2 className="page-title">{caseName}</h2>
-            <div className="mono-ref mt-1">{meta.join(" · ")}</div>
-            {caseData?.summary && <p className="body-text leading-relaxed mt-3 max-w-2xl">{caseData.summary}</p>}
-            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-              {[
-                { label: "Plaintiff", value: caseData?.plaintiff ?? model.plaintiff },
-                { label: "Defendant", value: record?.defendant ?? null },
-                { label: "Jurisdiction", value: caseData?.jurisdiction ?? model.jurisdiction },
-                { label: "Date of incident", value: record ? formatDate(record.incidentDate) : null },
-              ].map((f) => (
-                <div key={f.label} className="lg-zone lg-zone-grey p-3">
-                  <dt className="eyebrow mb-1">{f.label}</dt>
-                  <dd className="text-sm font-semibold text-ink"><Muted value={f.value} /></dd>
-                </div>
-              ))}
-            </dl>
-            <div className="flex items-center gap-2 flex-wrap mt-4">
-              {record?.governingLaw.finding
-                ? <span className="pill pill-neutral"><Gavel className="w-3.5 h-3.5" strokeWidth={1.75} /> Governing law: {record.governingLaw.finding} · system finding</span>
-                : <span className="pill pill-progress"><Gavel className="w-3.5 h-3.5" strokeWidth={1.75} /> Governing law not yet determined</span>}
-              {record && <span className="pill pill-neutral">{record.governingLaw.confidence} confidence</span>}
-              {decision.status === "approved"
-                ? <span className="pill pill-complete"><CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> Attorney approved</span>
-                : <span className="pill pill-progress">Needs attorney review</span>}
+              <div className="lg-zone px-3.5 py-3">
+                <div className="eyebrow flex items-center gap-1.5 mb-1.5"><CalendarClock className="w-4 h-4 text-deep" strokeWidth={1.75} /> Working deadline</div>
+                {working ? (
+                  <>
+                    <div className="kpi-value" style={{ fontSize: "22px" }}>{formatDate(working.iso)}</div>
+                    <p className="text-xs text-[#5B6B78] mt-1">
+                      {working.row.periodLabel} from {formatDate(working.row.start)} · {working.row.confidence} confidence · {decision.status === "approved" ? "confirmed" : "uncertain until confirmed"}
+                    </p>
+                  </>
+                ) : (
+                  <div className={`text-base font-semibold ${WARN_TEXT}`}>Needs attorney review</div>
+                )}
+              </div>
+              <div className="lg-zone lg-zone-grey px-3.5 py-3">
+                <div className="eyebrow flex items-center gap-1.5 mb-1.5"><Clock className="w-4 h-4 text-deep" strokeWidth={1.75} /> Decision required</div>
+                <p className="text-sm text-ink leading-snug">
+                  {decision.status === "approved"
+                    ? "Decision recorded. The deadline is rechecked at each stage until filing."
+                    : "Confirm governing law, choose forums to plan around, and confirm the working deadline."}
+                </p>
+              </div>
             </div>
-          </div>
 
-          <div className="space-y-3">
-            <div className="lg-zone p-4">
-              <div className="eyebrow flex items-center gap-1.5 mb-1.5"><CalendarClock className="w-4 h-4 text-deep" strokeWidth={1.75} /> Working deadline</div>
-              {working ? (
-                <>
-                  <div className="kpi-value" style={{ fontSize: "26px" }}>{formatDate(working.iso)}</div>
-                  <p className="text-xs text-[#5B6B78] mt-1">
-                    {working.row.periodLabel} from {formatDate(working.row.start)} · {working.row.confidence} confidence · {decision.status === "approved" ? "confirmed" : "uncertain until confirmed"}
-                  </p>
-                </>
+            <DecisionPanel record={record} decision={decision} onChange={onDecisionChange} highlight={highlightDecision} />
+          </aside>
+
+          {/* ── RIGHT — flags, then the six tabs ── */}
+          <div className="min-w-0 space-y-6">
+            {/* Flags, most severe first */}
+            <div className="lg-card p-6">
+              <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+                <h3 className="section-header flex items-center gap-2"><Flag className="w-5 h-5 text-deep" strokeWidth={1.75} /> Flags</h3>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {counts.filter((c) => c.n > 0).map((c) => (
+                    <span key={c.s} className={`pill ${SEVERITY_PILL[c.s]}`}>{c.n} {c.s}</span>
+                  ))}
+                </div>
+              </div>
+              {flags.length === 0 ? (
+                <p className="secondary-text">No material jurisdiction flags identified yet.</p>
               ) : (
-                <div className={`text-base font-semibold ${WARN_TEXT}`}>Needs attorney review</div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                  {flags.map((f) => (
+                    <div key={f.id} className="rounded-xl border border-line bg-white p-4 min-w-0">
+                      <div className="flex items-start gap-2 mb-1.5">
+                        <span className={`pill ${SEVERITY_PILL[f.severity]} shrink-0`}>{f.severity}</span>
+                        <h4 className="card-title leading-snug">{f.title}</h4>
+                      </div>
+                      <p className="body-text leading-relaxed">{f.detail}</p>
+                      {f.sources.length > 0 && (
+                        <p className="text-xs text-[#5B6B78] mt-2 flex items-start gap-1.5">
+                          <FileText className="w-3.5 h-3.5 shrink-0 mt-px" strokeWidth={1.75} />
+                          <span className="min-w-0 break-words">{f.sources.join(" · ")}</span>
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-            <div className="lg-zone lg-zone-grey p-4">
-              <div className="eyebrow flex items-center gap-1.5 mb-1.5"><Clock className="w-4 h-4 text-deep" strokeWidth={1.75} /> Decision required</div>
-              <p className="text-sm text-ink leading-relaxed">
-                {decision.status === "approved"
-                  ? "Decision recorded. The deadline is rechecked at each stage until filing."
-                  : "Confirm governing law, choose forums to plan around, and confirm the working deadline."}
-              </p>
-            </div>
-          </div>
-        </div>
 
-        {/* Flags, most severe first */}
-        <div className="lg-card p-6">
-          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-            <h3 className="section-header flex items-center gap-2"><Flag className="w-5 h-5 text-deep" strokeWidth={1.75} /> Flags</h3>
-            <div className="flex items-center gap-1.5">
-              {counts.filter((c) => c.n > 0).map((c) => (
-                <span key={c.s} className={`pill ${SEVERITY_PILL[c.s]}`}>{c.n} {c.s}</span>
-              ))}
-            </div>
-          </div>
-          {flags.length === 0 ? (
-            <p className="secondary-text">No material jurisdiction flags identified yet.</p>
-          ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              {flags.map((f) => (
-                <div key={f.id} className="rounded-xl border border-line bg-white p-4">
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className={`pill ${SEVERITY_PILL[f.severity]}`}>{f.severity}</span>
-                    <h4 className="card-title leading-snug">{f.title}</h4>
-                  </div>
-                  <p className="body-text leading-relaxed">{f.detail}</p>
-                  {f.sources.length > 0 && (
-                    <p className="text-xs text-[#5B6B78] mt-2 flex items-start gap-1.5">
-                      <FileText className="w-3.5 h-3.5 shrink-0 mt-px" strokeWidth={1.75} />
-                      {f.sources.join(" · ")}
-                    </p>
-                  )}
+            {/* The six tabs. The attorney decision, in the left column, keeps its
+                values whichever tab is open. */}
+            <div>
+              <div className="lg-card p-6 min-w-0">
+                <div role="tablist" className="flex items-center gap-2 flex-wrap mb-5">
+                  {TABS.map((t) => {
+                    const on = tab === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        role="tab"
+                        aria-selected={on}
+                        onClick={() => setTab(t.id)}
+                        className={`px-3.5 py-2 rounded-lg text-sm font-medium border whitespace-nowrap transition-colors ${
+                          on ? "bg-tint border-brand text-deep" : "bg-white border-line text-[#5B6B78] hover:border-soft hover:text-ink"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    );
+                  })}
                 </div>
-              ))}
+                {renderTab()}
+              </div>
             </div>
-          )}
-        </div>
-
-        {/* Six tabs + the attorney decision, which stays beside every tab */}
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
-          <div className="lg-card p-6 min-w-0">
-            <div role="tablist" className="flex items-center gap-2 flex-wrap mb-5">
-              {TABS.map((t) => {
-                const on = tab === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    role="tab"
-                    aria-selected={on}
-                    onClick={() => setTab(t.id)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium border whitespace-nowrap transition-colors ${
-                      on ? "bg-tint border-brand text-deep" : "bg-white border-line text-[#5B6B78] hover:border-soft hover:text-ink"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                );
-              })}
-            </div>
-            {renderTab()}
           </div>
-
-          <DecisionPanel record={record} decision={decision} onChange={onDecisionChange} highlight={highlightDecision} />
         </div>
       </div>
     </div>

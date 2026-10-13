@@ -73,6 +73,8 @@ interface TabProps {
   onGenerateDemand?: (strategyLabel: string, amount: number) => void;
   /** Opens the case's Insurance Policy Analysis — the shared insurance pages. */
   onOpenInsurance?: () => void;
+  /** Opens the case's Defendant Analysis with this defendant selected. */
+  onOpenDefendants?: (defendantName: string) => void;
 }
 
 function formatUSD(n: number) {
@@ -283,7 +285,7 @@ const KEY_FINDINGS: { title: string; kind: "strength" | "risk"; description: str
   },
 ];
 
-export function OverviewTab({ model, documents, goTo, onOpenInsurance }: TabProps) {
+export function OverviewTab({ model, documents, goTo, onOpenInsurance, onOpenDefendants }: TabProps) {
   const [bioOpen, setBioOpen] = useState(false);
 
   // Shared Document Workspace state (reused from the Analysis stage). Each finding
@@ -358,7 +360,13 @@ export function OverviewTab({ model, documents, goTo, onOpenInsurance }: TabProp
                 <p className="secondary-text leading-relaxed mt-2.5 pt-2.5 border-t border-line">{plaintiffBio}</p>
               )}
             </div>
-            <InfoTile icon={Building2} label="Defendant" value={model.defendant} />
+            <InfoTile
+              icon={Building2}
+              label="Defendant"
+              value={model.defendant}
+              onClick={onOpenDefendants ? () => onOpenDefendants(model.defendant) : undefined}
+              hint="Open Defendant Analysis"
+            />
             <InfoTile
               icon={ShieldCheck}
               label="Insurance Carrier"

@@ -4,6 +4,7 @@ import {
   type Draft, type DraftSet, type Places,
 } from "./mediaUploadParts";
 import { addVideoEvidence, addPhotoSetEvidence, type SetKind } from "./mediaEvidenceStore";
+import { analyseVideo, analyseSet } from "./mediaAnalysis";
 import { MEDIA_OPTIONS, type RequestedMedia } from "./intakeMessage";
 
 // ── Client-side video & photos ───────────────────────────────────────────────
@@ -51,7 +52,11 @@ export async function uploadClientMedia(
   const setIds: string[] = [];
   const keepVideos: Draft[] = [];
   for (const v of requested.videos ? d.videos : []) {
-    try { videoIds.push(addVideoEvidence(caseId, await storeDraft(v), uploadedBy, origin).id); }
+    try {
+      const video = addVideoEvidence(caseId, await storeDraft(v), uploadedBy, origin);
+      videoIds.push(video.id);
+      void analyseVideo(video);
+    }
     catch { keepVideos.push(v); }
   }
   const sendSets = async (sets: DraftSet[], on: boolean) => {
@@ -59,7 +64,9 @@ export async function uploadClientMedia(
     for (const s of on ? sets : []) {
       if (s.files.length === 0) continue;
       try {
-        setIds.push(addPhotoSetEvidence(caseId, s.kind, await Promise.all(s.files.map(storeDraft)), uploadedBy, s.kind === "medical" ? s.study : undefined, origin).id);
+        const set = addPhotoSetEvidence(caseId, s.kind, await Promise.all(s.files.map(storeDraft)), uploadedBy, s.kind === "medical" ? s.study : undefined, origin);
+        setIds.push(set.id);
+        void analyseSet(set);
       } catch { keep.push(s); }
     }
     return keep;

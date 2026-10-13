@@ -20,11 +20,14 @@ export function DocActions({
   onInsights,
   onDownload,
   size = "md",
+  disabled,
 }: {
   onPreview?: () => void;
   onInsights?: () => void;
   onDownload?: () => void;
   size?: "sm" | "md";
+  /** Why an action is unavailable right now — the button is disabled and says so. */
+  disabled?: { preview?: string; insights?: string; download?: string };
 }) {
   const pad = size === "sm" ? "p-1.5" : "p-2";
   const icon = size === "sm" ? "w-3.5 h-3.5" : "w-4 h-4";
@@ -34,26 +37,29 @@ export function DocActions({
     <div className="flex items-center justify-end gap-1.5">
       <button
         type="button"
-        title="Preview"
+        title={disabled?.preview ?? "Preview"}
+        disabled={!!disabled?.preview}
         onClick={(e) => { e.stopPropagation(); onPreview?.(); }}
-        className={`${labelPad} bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-colors flex items-center gap-1.5`}
+        className={`${labelPad} bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white`}
       >
         <Eye className={icon} strokeWidth={1.75} /> Preview
       </button>
       <button
         type="button"
-        title="Insights"
+        title={disabled?.insights ?? "Insights"}
+        disabled={!!disabled?.insights}
         onClick={(e) => { e.stopPropagation(); onInsights?.(); }}
-        className={`${labelPad} bg-white border border-line text-deep rounded-lg text-sm font-medium hover:bg-tint transition-colors flex items-center gap-1.5`}
+        className={`${labelPad} bg-white border border-line text-deep rounded-lg text-sm font-medium hover:bg-tint transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white`}
       >
         <Sparkles className={icon} strokeWidth={1.75} /> Insights
       </button>
       <button
         type="button"
-        title="Download"
+        title={disabled?.download ?? "Download"}
         aria-label="Download"
+        disabled={!!disabled?.download}
         onClick={(e) => { e.stopPropagation(); onDownload?.(); }}
-        className={`${base} text-ink hover:bg-tint`}
+        className={`${base} text-ink hover:bg-tint disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent`}
       >
         <Download className={icon} strokeWidth={1.75} />
       </button>
@@ -63,7 +69,7 @@ export function DocActions({
 
 // Simulated document intelligence — in production this reflects real extraction.
 // Insights are computed across ALL supporting documents in the set, not just one.
-type DocInsights = {
+export type DocInsights = {
   summary: string;
   keyPoints: string[];
   entities: { label: string; value: string }[];
@@ -516,6 +522,32 @@ function MediaPage({ doc, kind, zoom }: { doc: any; kind: Exclude<FileKind, "doc
   const moments = intel?.moments ?? [];
   const [playing, setPlaying] = useState(false);
   const [at, setAt] = useState(0);
+  // A stored original, when the caller has one: shown as it is. When it cannot
+  // be shown here, the caller says why.
+  const src: string | undefined = doc?.mediaUrl;
+  const unavailable: string | undefined = doc?.mediaUnavailable;
+  const [broken, setBroken] = useState(false);
+  if (src || unavailable) {
+    return (
+      <div className="flex-1 overflow-auto bg-track flex justify-center items-start p-8">
+        <div className="w-full max-w-3xl">
+          {src && !broken && kind === "video" && <video src={src} controls className="w-full rounded-xl bg-ink" onError={() => setBroken(true)} />}
+          {src && !broken && kind !== "video" && (
+            <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center" }} className="transition-transform duration-200">
+              <img src={src} alt={name} className="w-full rounded-xl shadow-sm border border-line bg-white" onError={() => setBroken(true)} />
+            </div>
+          )}
+          {(!src || broken) && (
+            <div className="bg-white rounded-xl shadow-sm border border-line aspect-[4/3] flex flex-col items-center justify-center gap-3 p-6 text-center">
+              <FileTypeIcon name={name} className="w-12 h-12 text-[#9BDAEC]" />
+              <p className="text-xs text-[#5B6B78] font-mono">{name}</p>
+              <p className="secondary-text max-w-sm">{unavailable ?? "This file cannot be shown in the browser. Download the original to open it in a suitable viewer."}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex-1 overflow-auto bg-track flex justify-center items-start p-8">
       <div className="w-full max-w-2xl space-y-4">
@@ -672,7 +704,7 @@ function WorkspaceInner({
   const [view, setView] = useState<"preview" | "insights" | "chat">(initialView);
   const isPreview = view === "preview";
   const activeDoc = docs[activeTab] ?? docs[0];
-  const activeKind = fileKind(String(activeDoc?.name ?? ""));
+  const activeKind: FileKind = activeDoc?.mediaKind ?? fileKind(String(activeDoc?.name ?? ""));
   const [zoom, setZoom] = useState(100);
 
   // Register evidence/document context so a note taken from here auto-attaches it.
