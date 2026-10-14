@@ -142,6 +142,22 @@ export interface FaultException {
   detail: string;
 }
 
+/** One way the case connects to a state: where the plaintiff lives, where the
+ *  defendant is based, or where the incident happened. A candidate for the
+ *  attorney to weigh — not a confirmed filing forum. */
+export interface JurisdictionConnection {
+  type: "plaintiff" | "defendant" | "incident";
+  /** The state, only when the record establishes it. */
+  state: string | null;
+  location: string | null;
+  /** Why this location — or why it is not known. */
+  basis: string;
+  /** The deadline row for this state's limitations rule, when it has been analysed. */
+  deadlineId?: string;
+  /** Where the finding is shown in this review. */
+  source?: { label: string; tab: "facts" | "parties" | "deadlines" };
+}
+
 export interface CaseJurisdiction {
   caseRefs: string[];
   defendant: string;
@@ -164,6 +180,7 @@ export interface CaseJurisdiction {
   assumptions: AssumptionItem[];
   flags: JurisdictionFlag[];
   liability: { summary: string; bestPath: string };
+  connections?: JurisdictionConnection[];
 }
 
 // ── Records ──────────────────────────────────────────────────────────────────
@@ -340,6 +357,30 @@ export const CASE_JURISDICTIONS: CaseJurisdiction[] = [
         title: "Firm admission not on record",
         detail: "Confirm the firm's admission to the Northern District of Illinois before a federal forum is planned around.",
         sources: ["Firm record"],
+      },
+    ],
+    connections: [
+      {
+        type: "plaintiff",
+        state: null,
+        location: null,
+        basis: "Evelyn Miller's domicile is not on the intake record.",
+        source: { label: "Parties & regimes · Evelyn Miller", tab: "parties" },
+      },
+      {
+        type: "defendant",
+        state: null,
+        location: null,
+        basis: "Memory Care Facility LLC's registered location and principal place of business are not on record; its members are not listed.",
+        source: { label: "Parties & regimes · Memory Care Facility LLC", tab: "parties" },
+      },
+      {
+        type: "incident",
+        state: "Illinois",
+        location: "Cook County, IL · memory care facility",
+        basis: "From the jurisdiction on record; the facility address is not on file.",
+        deadlineId: "il-pi",
+        source: { label: "Facts & sources · incident location", tab: "facts" },
       },
     ],
     liability: {

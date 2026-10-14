@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   ChevronLeft, ChevronRight, ArrowRight, Scale, Gavel, CalendarClock, AlertTriangle,
-  CheckCircle, Circle, FileText, HelpCircle, ShieldCheck, Flag, Clock, Info,
+  CheckCircle, Circle, FileText, HelpCircle, ShieldCheck, Flag, Info,
 } from "lucide-react";
 import { StageNavigator } from "../components/StageNavigator";
 import { useWorkspaceModel } from "../workspace/useWorkspaceModel";
@@ -656,7 +656,6 @@ export function JurisdictionReviewPage({ caseData, decision: stored, onDecisionC
   const counts = (["HIGH", "MEDIUM", "LOW"] as Severity[]).map((s) => ({ s, n: flags.filter((f) => f.severity === s).length }));
 
   const caseName = caseData?.caseName ?? model.caseName;
-  const meta = [caseRef, caseData?.caseType, caseData?.caseSubType].filter(Boolean);
 
   const renderTab = () => {
     if (!record) {
@@ -721,8 +720,6 @@ export function JurisdictionReviewPage({ caseData, decision: stored, onDecisionC
               <div>
                 <h3 className="card-title mb-1.5">Case Overview</h3>
                 <h2 className="text-base font-semibold text-ink leading-snug">{caseName}</h2>
-                <div className="mono-ref mt-0.5 break-words">{meta.join(" · ")}</div>
-                {caseData?.summary && <p className="text-sm text-[#5B6B78] leading-snug mt-1.5">{caseData.summary}</p>}
               </div>
               <dl className="grid grid-cols-2 gap-2">
                 {[
@@ -760,13 +757,56 @@ export function JurisdictionReviewPage({ caseData, decision: stored, onDecisionC
                   <div className={`text-base font-semibold ${WARN_TEXT}`}>Needs attorney review</div>
                 )}
               </div>
-              <div className="lg-zone lg-zone-grey px-3.5 py-3">
-                <div className="eyebrow flex items-center gap-1.5 mb-1.5"><Clock className="w-4 h-4 text-deep" strokeWidth={1.75} /> Decision required</div>
-                <p className="text-sm text-ink leading-snug">
-                  {decision.status === "approved"
-                    ? "Decision recorded. The deadline is rechecked at each stage until filing."
-                    : "Confirm governing law, choose forums to plan around, and confirm the working deadline."}
-                </p>
+              {/* Each way the case connects to a state, with that state's
+                  limitations period and deadline only where the review has
+                  analysed them. Candidates, not confirmed forums. */}
+              <div className="pt-1 space-y-2">
+                <div className="eyebrow flex items-center gap-1.5"><Scale className="w-4 h-4 text-deep" strokeWidth={1.75} /> Jurisdictions &amp; Statutes of Limitations</div>
+                {(record?.connections ?? []).length === 0 && (
+                  <p className="text-xs text-[#5B6B78]">Not available — attorney review required.</p>
+                )}
+                {(record?.connections ?? []).map((c, i, all) => {
+                  const label = { plaintiff: "Plaintiff's location", defendant: "Defendant's location", incident: "Incident location" }[c.type];
+                  const row = c.deadlineId ? record?.deadlines.find((d) => d.id === c.deadlineId) : undefined;
+                  const sameAs = c.state ? all.slice(0, i).find((p) => p.state === c.state) : undefined;
+                  const confirmed = !!row && row.working && decision.status === "approved" && decision.deadlineConfirmed;
+                  const status = !c.state ? "Not available" : confirmed ? "Confirmed" : !row ? "Needs attorney review" : row.status === "Uncertain" ? "Needs attorney review" : "Provisional";
+                  const pill = { Confirmed: "pill-complete", Provisional: "pill-neutral", "Needs attorney review": "pill-progress", "Not available": "bg-[#F1F3F5] text-[#5B6B78] border-line" }[status];
+                  return (
+                    <div key={c.type} className="lg-zone lg-zone-grey px-3 py-2.5 space-y-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="eyebrow">{label}</span>
+                        <span className={`pill shrink-0 ${pill}`}>{status}</span>
+                      </div>
+                      {c.state ? (
+                        <>
+                          <div className="text-sm font-semibold text-ink leading-snug">{c.state} · {c.location}</div>
+                          {sameAs ? (
+                            <p className="text-xs text-[#5B6B78]">Same state as the {sameAs.type} location — same limitations rule.</p>
+                          ) : row ? (
+                            <dl className="text-xs space-y-0.5">
+                              <div className="flex gap-1.5"><dt className="text-[#5B6B78] shrink-0">Limitations:</dt><dd className="text-ink">{row.periodLabel} · {row.ruleSource}</dd></div>
+                              <div className="flex gap-1.5"><dt className="text-[#5B6B78] shrink-0">Deadline:</dt><dd className="text-ink">{formatDate(deadlineDate(row))} · {confirmed ? "confirmed" : "provisional"} · runs from {formatDate(row.start)}, incident date unconfirmed</dd></div>
+                            </dl>
+                          ) : (
+                            <p className="text-xs text-[#B45309]">Limitations period not yet analysed for this state.</p>
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-sm font-semibold text-[#5B6B78]">Not available — attorney review required</div>
+                      )}
+                      <p className="text-xs text-[#5B6B78] leading-snug">{c.basis}</p>
+                      {c.source && (
+                        <button
+                          onClick={() => { setTab(c.source!.tab); document.querySelector("[role=tablist]")?.scrollIntoView({ behavior: "smooth", block: "center" }); }}
+                          className="text-xs text-deep underline underline-offset-2 decoration-[#9BDAEC] hover:decoration-deep text-left"
+                        >
+                          {c.source.label}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

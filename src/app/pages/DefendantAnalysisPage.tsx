@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
-  ChevronLeft, ChevronRight, Users, CalendarClock, Gavel, Activity, MapPin, AlertTriangle,
-  CheckCircle, FileText, HelpCircle, Lightbulb, ArrowRight, History, Building2, Scale, X,
+  ChevronLeft, ChevronRight, Users, Gavel, AlertTriangle, User, Calendar,
+  CheckCircle, FileText, HelpCircle, Lightbulb, ArrowRight, History, Building2, Scale, X, ChevronDown, FileSearch, Database, Info,
 } from "lucide-react";
 import { StageNavigator } from "../components/StageNavigator";
 import { DocActions, DocumentWorkspaceModal } from "../components/DocumentWorkspace";
+import { FileTypeTag } from "../components/fileType";
 import {
   jurisdictionForCase, workingDeadline, formatDate, governingLawSummary, type AttorneyDecision,
 } from "../jurisdiction/jurisdictionData";
@@ -35,9 +36,9 @@ const REC_PILL: Record<Recommendation, string> = {
   "set-aside": "bg-[#F1F3F5] text-[#5B6B78] border-line",
 };
 const REC_COLUMN: Record<Recommendation, { tone: string; sub: string }> = {
-  name: { tone: "border-t-deep bg-[#F6FDFF]", sub: "Liability shown or strongly indicated" },
-  investigate: { tone: "border-t-[#F59E0B] bg-[#FFFBF5]", sub: "Pointed to by the record; fault or identity not yet shown" },
-  "set-aside": { tone: "border-t-[#9BA8B4] bg-offwhite", sub: "Nothing in the record points to fault" },
+  name: { tone: "border-t-brand", sub: "Liability shown or strongly indicated" },
+  investigate: { tone: "border-t-[#FDBA74]", sub: "Pointed to by the record; fault or identity not yet shown" },
+  "set-aside": { tone: "border-t-[#CBD5DD]", sub: "Nothing in the record points to fault" },
 };
 const ELEMENT_PILL: Record<ElementStatus, string> = {
   Shown: "pill-complete",
@@ -55,12 +56,88 @@ const WHY_HEADING: Record<Recommendation, string> = {
 
 const SECTIONS = [
   { id: "recommendation", label: "Recommendation" },
-  { id: "sources", label: "Sources" },
   { id: "hierarchy", label: "Hierarchy" },
   { id: "defendant-analysis", label: "Each defendant" },
   { id: "defendant-decisions", label: "Your decision" },
+  { id: "sources", label: "Evidence" },
 ];
-const goTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+/** Scrolls a section into view — instantly when the attorney prefers reduced
+ *  motion — and moves keyboard focus to it. Each section's scroll margin keeps
+ *  its heading clear of the sticky header and stage navigation. */
+const goTo = (id: string, focus = false) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  if (focus) el.focus({ preventScroll: true });
+};
+const TAB = "px-4 py-2 rounded-lg text-sm font-medium border whitespace-nowrap transition-colors";
+const TAB_ON = "bg-tint border-brand text-deep";
+const TAB_OFF = "bg-white border-line text-[#5B6B78] hover:border-soft hover:text-ink";
+/** "How it works" for Your Decision: a small popover, closed by clicking
+ *  outside it or pressing Escape. */
+function DecisionHelp() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onClick = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest("[data-decision-help]")) setOpen(false); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("mousedown", onClick); };
+  }, [open]);
+  const options: [string, string][] = [
+    ["Name", "Select this when the available evidence supports naming the entity as a defendant. It will be included in the named-defendant decisions."],
+    ["Investigate", "Select this when the record suggests potential responsibility but additional evidence or identity confirmation is needed."],
+    ["Do not pursue", "Select this when you decide not to pursue the entity based on the current assessment."],
+  ];
+  return (
+    <div className="relative shrink-0" data-decision-help>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-line text-deep rounded-lg text-sm font-medium hover:bg-tint transition-colors"
+      >
+        <Info className="w-4 h-4" strokeWidth={1.75} /> How it works
+      </button>
+      {open && (
+        <div role="dialog" aria-label="Understanding your decision" className="fixed left-4 right-4 top-24 max-h-[calc(100vh-120px)] overflow-y-auto sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[380px] sm:max-h-none sm:overflow-visible z-30 rounded-xl border border-line bg-white shadow-sm p-4 space-y-3 text-left">
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="card-title">Understanding Your Decision</h3>
+            <button onClick={() => setOpen(false)} aria-label="Close" className="p-1 -m-1 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+          </div>
+          <dl className="space-y-2">
+            {options.map(([k, v]) => (
+              <div key={k}>
+                <dt className="text-sm font-semibold text-ink">{k}</dt>
+                <dd className="secondary-text leading-snug">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="pt-3 border-t border-line space-y-2 secondary-text leading-snug">
+            <p>The dashed option indicates the system's recommendation. The final decision belongs to the attorney.</p>
+            <p>Use the reason field to document why you selected a different option or to record important context for the decision. A reason is required only when you choose a different option from the system's recommendation.</p>
+            <p>Records and insurance requests are directed only to defendants you choose to name or investigate. Nothing is sent from this page — the application has no request workflow yet.</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A section's heading and one-line description, as on the Analysis stage. */
+function SectionHead({ title, sub, right }: { title: string; sub?: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
+      <div className="min-w-0">
+        <h2 className="section-header mb-1">{title}</h2>
+        {sub && <p className="secondary-text max-w-3xl">{sub}</p>}
+      </div>
+      {right}
+    </div>
+  );
+}
 
 function TierBadge({ tier }: { tier?: Tier }) {
   return (
@@ -153,7 +230,7 @@ export function DefendantAnalysisPage({ caseData, caseRef, jurisdictionDecision,
 function PageTitle({ right }: { right?: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 flex-wrap">
-      <div className="min-w-0">
+      <div className="min-w-[260px] flex-1 basis-0">
         <h1 className="page-title" style={{ fontSize: "24px" }}>Defendant Analysis</h1>
         <p className="secondary-text mt-1">Who could answer for the harm, what the record shows about each, and the attorney's decision on whom to pursue.</p>
       </div>
@@ -185,19 +262,35 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
     const s = sourceById(cite.sourceId);
     if (!s) return;
     if (s.files.length) { setOpenSource({ source: s, view: "preview" }); return; }
-    // A record with no file: bring its card into view instead.
-    document.getElementById(`source-${s.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-    setFlashSource(s.id);
+    // A record with no file: open its row in Evidence instead.
+    showInEvidence(s.id);
+  };
+  // "View Details": one panel for every source-backed finding on the page.
+  const [details, setDetails] = useState<{ title: string; explanation?: string; cites: Cite[] } | null>(null);
+  // The Evidence row expanded to show its facts.
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const showInEvidence = (id: string) => {
+    setDetails(null);
+    setExpandedSource(id);
+    setFlashSource(id);
+    window.setTimeout(() => document.getElementById(`source-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
     window.setTimeout(() => setFlashSource(null), 1600);
   };
-  const CiteLink = ({ cite }: { cite: Cite }) => {
-    const s = sourceById(cite.sourceId);
+  const ViewDetails = ({ title, explanation, cites, className = "" }: { title: string; explanation?: string; cites: (Cite | undefined)[]; className?: string }) => {
+    const list = cites.filter((c): c is Cite => !!c);
+    if (list.length === 0) return null;
     return (
-      <button onClick={() => openCite(cite)} className="text-xs text-deep underline underline-offset-2 decoration-[#9BDAEC] hover:decoration-deep text-left">
-        {s?.name ?? "Source not on record"} · {cite.note}
+      <button
+        onClick={(e) => { e.stopPropagation(); setDetails({ title, explanation, cites: list }); }}
+        className={`inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink transition-colors shrink-0 ${className}`}
+      >
+        View Details <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.75} />
       </button>
     );
   };
+  // The liability element expanded.
+  const [expandedEl, setExpandedEl] = useState<string | null>(null);
+  const [missingOpen, setMissingOpen] = useState(false);
   const select = (id: string) => {
     setSelectedId(id);
     window.setTimeout(() => document.getElementById("defendant-analysis")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
@@ -279,13 +372,32 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
   const confirmedAt = stored?.confirmedAt;
   const toRequest = record.candidates.filter((c) => rows[c.id].choice !== "do-not-pursue" && c.requests.length > 0);
 
+  // The section in view, for the section tabs.
+  const [inView, setInView] = useState(SECTIONS[0].id);
+  useEffect(() => {
+    const main = document.querySelector("main");
+    if (!main) return;
+    const onScroll = () => {
+      let current = SECTIONS[0].id;
+      for (const x of SECTIONS) {
+        const el = document.getElementById(x.id);
+        if (el && el.getBoundingClientRect().top <= 280) current = x.id;
+      }
+      // The last section never reaches the top — at the end of the page it is the one in view.
+      if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) current = SECTIONS[SECTIONS.length - 1].id;
+      setInView(current);
+    };
+    main.addEventListener("scroll", onScroll, { passive: true });
+    return () => main.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
     <>
       {/* The Jurisdiction review's layout: the case summary on the left, held
           below the stage navigation; the analysis on the right, scrolling with
           the page. The summary scrolls on its own only in a window too short
           for it. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,300px)_minmax(0,1fr)] xl:grid-cols-[minmax(300px,320px)_minmax(0,1fr)] gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[270px_minmax(0,1fr)] gap-5 items-start">
         {/* ── LEFT — case summary ──
             One light panel. It sticks below the stage navigation and, only in a
             window too short for it, scrolls on its own; its height matches the
@@ -295,91 +407,96 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
           id="case-context"
           className={`min-w-0 ${embedded ? "" : "lg:sticky lg:top-[176px] lg:max-h-[calc(100vh-256px)] lg:overflow-y-auto"}`}
         >
-          {/* The Case Intelligence Summary's design: grouped fields on light
-              surfaces, cyan icons, muted labels — sized for a sidebar. */}
+          {/* The Case Intelligence Summary's grid: small icons, muted labels,
+              clear values — sized for a sidebar. */}
           <div className="lg-card p-4 space-y-3">
-            <div className="space-y-1.5">
-              <h3 className="card-title">Case Summary</h3>
+            <div>
+              <div className="eyebrow mb-1">Case Summary</div>
               <h2 className="text-[15px] font-semibold text-ink leading-snug">{caseData?.caseName ?? "Case"}</h2>
-              {meta.length > 0 && <div className="mono-ref text-[11px] break-words">{meta.join(" · ")}</div>}
-              {caseData?.summary && <p className="text-xs text-[#5B6B78] leading-relaxed">{caseData.summary}</p>}
             </div>
-
-            <div className="lg-zone lg-zone-grey p-3 space-y-1.5">
-              <div className="eyebrow flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Incident</div>
-              <div className="text-sm font-semibold text-ink leading-snug">{record.incident.value}</div>
-              <p className="text-xs text-[#5B6B78] leading-relaxed">{record.incident.note}</p>
-              {record.incident.cite && <div className="break-words leading-snug"><CiteLink cite={record.incident.cite} /></div>}
-            </div>
-
-            <div className="lg-zone lg-zone-grey p-3 space-y-1.5">
-              <div className="eyebrow flex items-center gap-1.5"><Activity className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Injury</div>
-              <div className="text-sm font-semibold text-ink leading-snug">{record.injury.value}</div>
-              {record.injury.cite && <div className="break-words leading-snug"><CiteLink cite={record.injury.cite} /></div>}
-            </div>
-
-            <div className="lg-zone lg-zone-grey p-3 space-y-1.5">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="min-w-0 space-y-1.5">
-                  <div className="eyebrow flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Defendant</div>
-                  <div className="text-sm font-semibold text-ink leading-snug break-words">{lead?.name ?? "Needs attorney review"}</div>
-                </div>
-                <div className="min-w-0 space-y-1.5">
-                  <div className="eyebrow flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Jurisdiction</div>
-                  <div className="text-sm font-semibold text-ink leading-snug break-words">{caseData?.jurisdiction ?? "Not available"}</div>
-                </div>
+            <dl className="grid grid-cols-2 gap-2">
+              <div className="lg-zone lg-zone-grey px-2.5 py-2.5 min-w-0">
+                <dt className="eyebrow text-[11px] tracking-[0.02em] flex items-center gap-1 mb-1 min-w-0"><User className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} /> Plaintiff</dt>
+                <dd className="text-sm font-semibold text-ink leading-snug break-words">{caseData?.plaintiff ?? "Not available"}</dd>
               </div>
-              <p className="text-xs text-[#5B6B78] leading-relaxed pt-0.5">Defendant not yet verified — the caption names Logistics Co. Jurisdiction analysis {approved ? "approved by the attorney" : "awaiting the attorney's decision"}.</p>
-            </div>
-
-            <div className="lg-zone lg-zone-grey p-3 space-y-1.5">
-              <div className="eyebrow flex items-center gap-1.5"><Gavel className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Governing law</div>
-              <div className="text-sm font-semibold text-ink">{law.value}{jx?.governingLaw.finding && !approved ? " · System finding" : ""}</div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {jx && !approved && <span className="pill pill-neutral">{jx.governingLaw.confidence} confidence</span>}
-                {approved
-                  ? <span className="pill pill-complete"><CheckCircle className="w-3 h-3" strokeWidth={1.75} /> Attorney approved</span>
-                  : <span className="pill pill-progress">Needs attorney review</span>}
+              <div className="lg-zone lg-zone-grey px-2.5 py-2.5 min-w-0">
+                <dt className="eyebrow text-[11px] tracking-[0.02em] flex items-center gap-1 mb-1 min-w-0"><Building2 className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} /> Defendant</dt>
+                <dd className="text-sm font-semibold text-ink leading-snug break-words">{lead?.name ?? "Needs attorney review"}</dd>
               </div>
-            </div>
-
-            <div className="lg-zone p-3 space-y-1.5">
-              <div className="eyebrow flex items-center gap-1.5"><CalendarClock className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Working deadline</div>
-              {working ? (
-                <>
-                  <div className="text-sm font-semibold text-ink">{formatDate(working.iso)}</div>
-                  <p className="text-xs text-[#5B6B78] leading-relaxed">{approved ? "Confirmed by the attorney" : "Calculated · not yet confirmed"} · no defendant-specific deadline on record</p>
-                </>
-              ) : <div className="text-sm font-semibold text-[#B45309]">Needs attorney review</div>}
-            </div>
+              <div className="lg-zone lg-zone-grey px-2.5 py-2.5 min-w-0">
+                <dt className="eyebrow text-[11px] tracking-[0.02em] flex items-center gap-1 mb-1 min-w-0"><Scale className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} /> Jurisdiction</dt>
+                <dd className="text-sm font-semibold text-ink leading-snug break-words">{caseData?.jurisdiction ?? "Not available"}</dd>
+              </div>
+              <div className="lg-zone lg-zone-grey px-2.5 py-2.5 min-w-0">
+                <dt className="eyebrow text-[11px] tracking-[0.02em] flex items-center gap-1 mb-1 min-w-0"><Calendar className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} /> Date of incident</dt>
+                <dd className="text-sm font-semibold text-ink leading-snug break-words">{jx ? formatDate(jx.incidentDate) : "Not available"}</dd>
+                {record.incident.cite && (
+                  <dd className="mt-1">
+                    <button
+                      onClick={() => openCite(record.incident.cite!)}
+                      title={`Conflicts with the timeline — open the source: ${record.incident.cite.note}`}
+                      className="text-[11px] text-[#B45309] underline underline-offset-2 decoration-[#FDE6C8] hover:decoration-[#B45309] text-left"
+                    >
+                      Timeline: Feb 7, 2026
+                    </button>
+                  </dd>
+                )}
+              </div>
+              <div className="lg-zone lg-zone-grey px-2.5 py-2.5 min-w-0 col-span-2">
+                <dt className="eyebrow text-[11px] tracking-[0.02em] flex items-center gap-1 mb-1 min-w-0"><Gavel className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} /> Governing law</dt>
+                <dd className="text-sm font-semibold text-ink leading-snug break-words">{law.value}</dd>
+                <dd className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                  {jx?.governingLaw.finding && !approved && <span className="pill pill-neutral">System finding</span>}
+                  {jx && !approved && <span className="pill pill-neutral">{jx.governingLaw.confidence} confidence</span>}
+                  {approved
+                    ? <span className="pill pill-complete"><CheckCircle className="w-3 h-3" strokeWidth={1.75} /> Attorney approved</span>
+                    : <span className="pill pill-progress">Needs attorney review</span>}
+                </dd>
+              </div>
+            </dl>
           </div>
         </aside>
 
         {/* ── RIGHT — the five sections, in order ── */}
         <div className="min-w-0 space-y-6">
           <PageTitle
-            right={confirmedAt
-              ? <span className="pill pill-complete"><CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> Decisions confirmed · {confirmedAt}</span>
-              : <span className="pill pill-progress">Awaiting attorney decisions</span>}
+            right={
+              <div className="flex items-center justify-end gap-2 flex-wrap shrink-0">
+                {confirmedAt
+                  ? <span className="pill pill-complete"><CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> Decisions confirmed · {confirmedAt}</span>
+                  : <span className="pill pill-progress">Awaiting attorney decisions</span>}
+                <button
+                  onClick={() => { setInView("defendant-decisions"); goTo("defendant-decisions", true); }}
+                  aria-label="Go to Your Decision"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-brand hover:bg-deep text-white rounded-lg text-sm font-semibold transition-colors"
+                >
+                  Go to Your Decision <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
+                </button>
+              </div>
+            }
           />
 
 
-      <nav aria-label="Sections" className="flex items-center gap-1.5 flex-wrap">
+      <nav aria-label="Sections" className="flex items-center gap-2 flex-wrap">
         {SECTIONS.map((x) => (
-          <button key={x.id} onClick={() => goTo(x.id)} className="px-3 py-1.5 rounded-lg border border-line bg-white text-xs font-medium text-[#5B6B78] hover:text-ink hover:border-soft transition-colors">
+          <button
+            key={x.id}
+            onClick={() => { setInView(x.id); goTo(x.id); }}
+            aria-current={inView === x.id ? "true" : undefined}
+            className={`${TAB} ${inView === x.id ? TAB_ON : TAB_OFF}`}
+          >
             {x.label}
           </button>
         ))}
       </nav>
 
       {/* ── B · System recommendation ── */}
-      <div id="recommendation" className="lg-card overflow-hidden scroll-mt-[170px]">
-        <div className="p-6 space-y-4">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <h3 className="section-header">System recommendation</h3>
-            <span className="mono-ref">From the {record.generatedFrom.toLowerCase()} · {confirmedAt ? "decided by the attorney" : "awaiting the attorney's decision"}</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-6 gap-3">
+      <div id="recommendation" className="lg-card p-6 scroll-mt-[170px]">
+          <SectionHead
+            title="System recommendation"
+            sub={`From the ${record.generatedFrom.toLowerCase()} · ${confirmedAt ? "decided by the attorney" : "awaiting the attorney's decision"}`}
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {[
               { label: "Potential defendants", value: n },
               { label: "Named in evidence", value: named, note: `${n - named} by role only` },
@@ -388,37 +505,44 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
               { label: "Set aside", value: count("set-aside") },
               { label: "Evidence sources", value: record.sources.length },
             ].map((x) => (
-              <div key={x.label} className="lg-zone lg-zone-grey px-3.5 py-3">
-                <div className="eyebrow mb-0.5">{x.label}</div>
-                <div className="kpi-value" style={{ fontSize: "22px" }}>{x.value}</div>
-                {x.note && <div className="text-xs text-[#5B6B78]">{x.note}</div>}
+              <div key={x.label} className="lg-zone lg-zone-grey px-4 py-3">
+                <div className="eyebrow leading-snug">{x.label}</div>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="kpi-value" style={{ fontSize: "22px" }}>{x.value}</span>
+                  {x.note && <span className="text-xs text-[#5B6B78]">{x.note}</span>}
+                </div>
               </div>
             ))}
           </div>
-          <p className="body-text leading-relaxed max-w-4xl">
-            <strong className="font-semibold">Name {count("name")} now, investigate {count("investigate")}, set aside {count("set-aside")}.</strong> {record.explanation}
-          </p>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 border-t border-line divide-y lg:divide-y-0 lg:divide-x divide-line">
+          <div className="mt-4 rounded-xl border border-[#D6F2F7] bg-[#F6FDFF] px-4 py-3">
+            <p className="body-text leading-relaxed">
+              <strong className="font-semibold">Name {count("name")} now, investigate {count("investigate")}, set aside {count("set-aside")}.</strong> {record.explanation}
+            </p>
+          </div>
+        <div className="mt-4 space-y-3">
           {groups.map(({ rec, candidates }) => (
-            <div key={rec} className={`p-5 border-t-4 ${REC_COLUMN[rec].tone}`}>
-              <div className="flex items-baseline gap-2 mb-3">
+            <div key={rec} className={`rounded-xl border border-line border-t-4 bg-offwhite p-4 ${REC_COLUMN[rec].tone}`}>
+              <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="kpi-value" style={{ fontSize: "26px" }}>{candidates.length}</span>
-                <div>
-                  <div className="text-sm font-semibold text-ink">{REC_LABEL[rec]}</div>
-                  <div className="text-xs text-[#5B6B78]">{REC_COLUMN[rec].sub}</div>
-                </div>
+                <span className="text-sm font-semibold text-ink">{REC_LABEL[rec]}</span>
+                <span className="text-xs text-[#5B6B78]">· {REC_COLUMN[rec].sub}</span>
+                {candidates.length === 0 && <span className="text-sm text-[#8A98A3] ml-auto">None.</span>}
               </div>
-              <div className="space-y-3">
-                {candidates.length === 0 && <p className="text-sm text-[#8A98A3]">None.</p>}
+              <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 ${candidates.length ? "mt-3" : "hidden"}`}>
                 {candidates.map((c) => (
-                  <div key={c.id} className="rounded-lg bg-white border border-line p-3">
-                    <button onClick={() => select(c.id)} className="flex items-center gap-2 text-left group">
+                  <div key={c.id} className="lg-card-i rounded-xl bg-white border border-line p-4 min-w-0 min-h-[190px] flex flex-col">
+                    <div className="eyebrow flex items-center gap-1.5 mb-2">
                       <TierBadge tier={c.tier} />
-                      <span className="text-sm font-semibold text-ink group-hover:text-deep">{c.name}</span>
+                      <span className="truncate">{c.tier ?? "Relationship not established"} · {c.identified}</span>
+                    </div>
+                    <button onClick={() => select(c.id)} className="text-left group">
+                      <h3 className="card-title leading-snug group-hover:text-deep transition-colors">{c.name}</h3>
                     </button>
-                    <p className="text-sm text-[#5B6B78] mt-1 leading-snug">{c.summary}</p>
-                    <div className="mt-1"><CiteLink cite={c.identifiedFrom} /></div>
+                    <p className="secondary-text mt-1.5 mb-3 leading-relaxed">{c.summary}</p>
+                    <div className="mt-auto pt-3 border-t border-line flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-xs text-[#5B6B78]"><FileText className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} /> 1 source</span>
+                      <ViewDetails title={`${c.name} — why it is on the list`} explanation={c.summary} cites={[c.identifiedFrom]} />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -426,99 +550,30 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
           ))}
         </div>
         {record.decideFirst.length > 0 && (
-          <div className="px-6 py-4 border-t border-[#FDE6C8] bg-[#FFF7ED] flex items-start gap-3">
+          <div className="mt-4 rounded-xl border border-[#FDE6C8] bg-[#FFF7ED] px-4 py-3 flex items-start gap-3">
             <span className="text-sm font-semibold text-[#B45309] shrink-0 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" strokeWidth={1.75} /> Decide first</span>
             <ul className="space-y-1">
               {record.decideFirst.map((d) => (
-                <li key={d.text} className="text-sm text-ink leading-snug">{d.text} {d.cite && <CiteLink cite={d.cite} />}</li>
+                <li key={d.text} className="text-sm text-ink leading-snug">{d.text} {d.cite && <ViewDetails className="ml-1 align-middle" title="Decide first" explanation={d.text} cites={[d.cite]} />}</li>
               ))}
             </ul>
           </div>
         )}
       </div>
 
-      {/* ── Sources ── */}
-      <div id="sources" className="lg-card p-6 space-y-5 scroll-mt-[170px]">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <h3 className="section-header">Sources this analysis is based on</h3>
-          <span className="secondary-text max-w-xl">Evidence on file, the case record and the jurisdiction analysis. "For {selected?.short}" shows what each source gives the defendant selected above.</span>
-        </div>
-        {Array.from(new Set(record.sources.map((s) => s.group))).map((group) => (
-          <div key={group} className="space-y-3">
-            <div className="eyebrow">{group}</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {record.sources.filter((s) => s.group === group).map((s) => {
-                const cites = (c: Candidate) => [c.identifiedFrom, ...c.why.facts.map((f) => f.cite), ...c.elements.map((e) => e.cite)].filter((x): x is Cite => x?.sourceId === s.id);
-                const usedBy = record.candidates.filter((c) => cites(c).length > 0);
-                const forSelected = selected ? Array.from(new Set(cites(selected).map((x) => x.note))) : [];
-                return (
-                  <div key={s.id} id={`source-${s.id}`} className={`rounded-xl border p-4 flex flex-col transition-colors scroll-mt-[170px] ${flashSource === s.id ? "border-brand bg-tint" : "border-line bg-white"}`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-ink">{s.name}</div>
-                        <div className="text-xs text-[#5B6B78]">{[s.type, s.date].filter(Boolean).join(" · ")}</div>
-                      </div>
-                      <span className="mono-ref shrink-0">{s.files.length ? `${s.files.length} ${s.files.length === 1 ? "file" : "files"}` : "No file"}</span>
-                    </div>
-                    {s.files.length > 0 && <div className="mono-ref mt-1 break-words">{s.files.join(" · ")} · no document ID on record</div>}
-                    <div className="eyebrow mt-3 mb-1">Facts used</div>
-                    <ul className="space-y-1">
-                      {s.facts.map((f) => (
-                        <li key={f.text} className="text-sm text-ink leading-snug flex gap-2">
-                          {f.at && <span className="mono-ref shrink-0 w-[72px]">{f.at}</span>}
-                          <span>{f.text}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="mt-2 flex-1">
-                      <div className="eyebrow mb-0.5">For {selected?.short}</div>
-                      <p className="text-xs text-[#5B6B78] leading-snug">{forSelected.length ? forSelected.join(" · ") : "Not cited for this defendant."}</p>
-                      {usedBy.length > 0 && <p className="text-xs text-[#8A98A3] mt-1">Cited for: {usedBy.map((c) => c.short).join(", ")}</p>}
-                    </div>
-                    <div className="mt-3 pt-3 border-t border-line">
-                      <DocActions
-                        size="sm"
-                        onPreview={() => setOpenSource({ source: s, view: "preview" })}
-                        onInsights={() => setOpenSource({ source: s, view: "insights" })}
-                        disabled={{
-                          preview: s.files.length ? undefined : "A case record, not a document file",
-                          insights: s.files.length ? undefined : "A case record, not a document file",
-                          download: s.files.length ? "The original file is not stored in this prototype" : "A case record, not a document file",
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        <div className="rounded-xl border border-dashed border-[#FDE6C8] bg-[#FFFBF5] p-4">
-          <div className="eyebrow mb-1.5 text-[#B45309]">Not yet on file · to be requested</div>
-          <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
-            {Array.from(new Set(record.candidates.flatMap((c) => c.requests))).map((r) => (
-              <li key={r} className="text-sm text-ink leading-snug flex gap-2"><ArrowRight className="w-3.5 h-3.5 text-[#B45309] mt-1 shrink-0" strokeWidth={1.75} />{r}</li>
-            ))}
-          </ul>
-          <p className="text-xs text-[#5B6B78] mt-2">Nothing has been requested from any defendant yet.</p>
-        </div>
-      </div>
-
       {/* ── C · Hierarchy ── */}
-      <div id="hierarchy" className="lg-card p-6 space-y-4 scroll-mt-[170px]">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h3 className="section-header">Defendant hierarchy</h3>
-            <p className="secondary-text mt-1 max-w-3xl">How each potential defendant connects to the injury. Indented candidates are answerable through the one above them; dashed cards are not being pursued. Select a card to open its analysis.</p>
-          </div>
-          <div className="flex items-center gap-3 flex-wrap text-xs text-[#5B6B78]">
+      <div id="hierarchy" className="lg-card bg-offwhite p-6 scroll-mt-[170px]">
+        <SectionHead
+          title="Defendant hierarchy"
+          sub="How each potential defendant connects to the injury. Indented candidates are answerable through the one above them; dashed cards are not being pursued. Select a card to open its analysis."
+        />
+          <div className="flex items-center gap-x-4 gap-y-1.5 flex-wrap text-xs text-[#5B6B78] -mt-2 mb-4">
             {(["Primary", "Secondary", "Tertiary"] as Tier[]).map((t) => (
               <span key={t} className="flex items-center gap-1.5"><TierBadge tier={t} /> {t === "Primary" ? "Primary: caused the harm" : t === "Secondary" ? "Secondary: answers for an actor" : "Tertiary: upstream cause"}</span>
             ))}
             <span className="flex items-center gap-1.5"><TierBadge /> Relationship not established</span>
           </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
           {record.groups.map((g) => {
             const inGroup = record.candidates.filter((c) => c.groupId === g.id);
             const tops = inGroup.filter((c) => !c.parentId || !inGroup.some((p) => p.id === c.parentId));
@@ -526,8 +581,9 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
               <button
                 key={c.id}
                 onClick={() => select(c.id)}
-                className={`w-full text-left rounded-lg border p-3 transition-colors ${
-                  c.id === selected?.id ? "border-brand bg-tint" : c.recommendation === "set-aside" ? "border-dashed border-[#9BA8B4] bg-offwhite hover:border-soft" : "border-line bg-white hover:border-soft"
+                aria-pressed={c.id === selected?.id}
+                className={`w-full text-left rounded-lg border px-3 py-2.5 transition-colors ${
+                  c.id === selected?.id ? "border-brand bg-tint" : c.recommendation === "set-aside" ? "border-dashed border-[#CBD5DD] bg-offwhite hover:border-soft" : "border-line bg-offwhite hover:border-soft hover:bg-wash"
                 }`}
               >
                 <div className="flex items-center gap-2"><TierBadge tier={c.tier} /><span className="text-sm font-semibold text-ink">{c.name}</span></div>
@@ -544,15 +600,15 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
               return (
                 <div key={c.id} className="space-y-2">
                   {card(c)}
-                  {kids.length > 0 && <div className="pl-4 ml-2 border-l-2 border-line space-y-2">{kids.map(tree)}</div>}
+                  {kids.length > 0 && <div className="pl-4 ml-2.5 border-l-2 border-[#D6F2F7] space-y-2">{kids.map(tree)}</div>}
                 </div>
               );
             };
             return (
-              <div key={g.id} className="rounded-xl border border-line p-4 space-y-3 min-w-0">
+              <div key={g.id} className="rounded-xl border border-line bg-white p-4 space-y-2.5 min-w-0">
                 <div>
-                  <div className="text-sm font-semibold text-ink">{g.title}</div>
-                  <div className="text-xs text-[#5B6B78]">{g.subtitle}</div>
+                  <h3 className="card-title leading-snug">{g.title}</h3>
+                  <div className="secondary-text">{g.subtitle}</div>
                 </div>
                 {tops.map(tree)}
               </div>
@@ -563,16 +619,13 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
 
       {/* ── D · Each defendant ── */}
       <div id="defendant-analysis" className="lg-card p-6 space-y-5 scroll-mt-[170px]">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <h3 className="section-header">Analysis of each defendant</h3>
-          <span className="secondary-text">One tab per defendant, grouped by recommendation. Every fact links to its source.</span>
-        </div>
-        <div className="overflow-x-auto -mx-1 px-1">
-          <div role="tablist" className="flex items-end gap-6 min-w-max border-b border-line">
+        <SectionHead title="Analysis of each defendant" sub="One tab per defendant, grouped by recommendation. Every fact links to its source." />
+        <div className="overflow-x-auto -mx-1 px-1 -mt-1">
+          <div role="tablist" className="flex items-end gap-5 min-w-max pb-1">
             {groups.filter((g) => g.candidates.length).map(({ rec, candidates }) => (
               <div key={rec}>
-                <div className={`eyebrow mb-1.5 ${rec === "investigate" ? "text-[#B45309]" : ""}`}>{REC_LABEL[rec]} · {candidates.length}</div>
-                <div className="flex items-center gap-1">
+                <div className="eyebrow mb-1.5">{REC_LABEL[rec]} · {candidates.length}</div>
+                <div className="flex items-center gap-2">
                   {candidates.map((c) => {
                     const on = c.id === selected?.id;
                     return (
@@ -581,7 +634,7 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
                         role="tab"
                         aria-selected={on}
                         onClick={() => setSelectedId(c.id)}
-                        className={`px-3 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${on ? "border-deep text-deep font-semibold bg-tint rounded-t-lg" : "border-transparent text-[#5B6B78] hover:text-ink"}`}
+                        className={`${TAB} ${on ? TAB_ON : TAB_OFF}`}
                       >
                         {c.short}
                       </button>
@@ -594,41 +647,50 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
         </div>
 
         {selected && (
-          <div role="tabpanel" className="space-y-5">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div className="min-w-0">
-                <h4 className="page-title" style={{ fontSize: "22px" }}>{selected.name}</h4>
-                <p className="secondary-text mt-0.5">{selected.role}</p>
-                <p className="text-xs text-[#5B6B78] mt-1">Identified from <CiteLink cite={selected.identifiedFrom} /></p>
-              </div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="flex items-center gap-1.5 text-xs text-[#5B6B78]"><TierBadge tier={selected.tier} /> {selected.tier ?? "Relationship not established"}</span>
-                <IdentifiedPill c={selected} />
-                <span className="mono-ref">{shownCount(selected)} of {selected.elements.length} elements shown</span>
-                <RecPill rec={selected.recommendation} />
+          <div role="tabpanel" className="space-y-5 pt-5 border-t border-line">
+            <div>
+              <h3 className="section-header">{selected.name}</h3>
+              <p className="secondary-text mt-0.5">{selected.role}</p>
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.7fr)] gap-2">
+                {[
+                  { label: "Role", body: <span className="flex items-center gap-1.5"><TierBadge tier={selected.tier} /> {selected.tier ?? "Not established"}</span> },
+                  { label: "Identified", body: <IdentifiedPill c={selected} /> },
+                  { label: "Liability elements", body: <>{shownCount(selected)} of {selected.elements.length} shown</> },
+                  { label: "Recommendation", body: <RecPill rec={selected.recommendation} /> },
+                  { label: "Identified from", body: <span className="flex items-center justify-between gap-x-2 gap-y-0.5 w-full flex-wrap"><span className="min-w-0 leading-snug">{sourceById(selected.identifiedFrom.sourceId)?.name ?? "Not on record"}</span><ViewDetails title={`${selected.name} — where it is identified`} cites={[selected.identifiedFrom]} /></span> },
+                ].map((x) => (
+                  <div key={x.label} className="lg-zone lg-zone-grey px-3 py-2 min-w-0">
+                    <div className="eyebrow mb-1">{x.label}</div>
+                    <div className="text-sm font-medium text-ink flex items-center min-h-[22px]">{x.body}</div>
+                  </div>
+                ))}
               </div>
             </div>
 
-            <div className="rounded-xl border-l-4 border-deep bg-offwhite p-4 space-y-3">
-              <div className="text-sm font-semibold text-ink">
+            <div className="rounded-xl border border-[#D6F2F7] bg-[#F6FDFF] p-4 space-y-3">
+              <div className="card-title flex items-center gap-2">
+                <Scale className="w-4 h-4 text-deep" strokeWidth={1.75} />
                 {WHY_HEADING[selected.recommendation]}
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                <div className="rounded-lg bg-white border border-line p-3 flex flex-col">
                   <div className="eyebrow flex items-center gap-1.5 mb-1.5"><FileText className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Facts in the record</div>
-                  <ul className="space-y-2">
+                  <ul className="space-y-2 mb-3">
                     {selected.why.facts.map((f) => (
-                      <li key={f.text} className="text-sm text-ink leading-snug">{f.text}{f.cite && <div><CiteLink cite={f.cite} /></div>}</li>
+                      <li key={f.text} className="text-sm text-ink leading-snug">{f.text}</li>
                     ))}
                   </ul>
+                  <div className="mt-auto pt-2.5 border-t border-line flex justify-end">
+                    <ViewDetails title={`Facts in the record — ${selected.name}`} explanation={selected.why.facts.map((f) => f.text).join(" ")} cites={selected.why.facts.map((f) => f.cite)} />
+                  </div>
                 </div>
-                <div>
+                <div className="rounded-lg bg-white border border-line p-3">
                   <div className="eyebrow flex items-center gap-1.5 mb-1.5"><Lightbulb className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Preliminary system assessment</div>
                   {selected.why.inferences.length
                     ? <ul className="space-y-2">{selected.why.inferences.map((t) => <li key={t} className="text-sm text-ink leading-snug">{t}</li>)}</ul>
                     : <p className="text-sm text-[#8A98A3]">None — the system draws no inference here.</p>}
                 </div>
-                <div>
+                <div className="rounded-lg bg-white border border-line p-3">
                   <div className="eyebrow flex items-center gap-1.5 mb-1.5"><HelpCircle className="w-3.5 h-3.5 text-[#B45309]" strokeWidth={1.75} /> Missing or unresolved</div>
                   {selected.why.open.length
                     ? <ul className="space-y-2">{selected.why.open.map((t) => <li key={t} className="text-sm text-ink leading-snug">{t}</li>)}</ul>
@@ -640,29 +702,60 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-6">
               <div>
                 <div className="eyebrow mb-2">Liability elements · {selected.elementsLabel}</div>
-                <div className="rounded-xl border border-line divide-y divide-line">
-                  {selected.elements.map((e) => (
-                    <div key={e.name} className="p-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-sm font-medium text-ink">{e.name}</span>
-                        <span className={`pill shrink-0 ${ELEMENT_PILL[e.status]}`}>{e.status}</span>
+                <div className="rounded-xl border border-line divide-y divide-line overflow-hidden">
+                  {selected.elements.map((e) => {
+                    const key = `${selected.id}:${e.name}`;
+                    const open = expandedEl === key;
+                    const src = e.cite ? sourceById(e.cite.sourceId) : undefined;
+                    return (
+                      <div key={e.name}>
+                        <button
+                          onClick={() => setExpandedEl(open ? null : key)}
+                          aria-expanded={open}
+                          className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-white hover:bg-wash transition-colors text-left"
+                        >
+                          <span className="text-sm font-medium text-ink">{e.name}</span>
+                          <span className="flex items-center gap-2 shrink-0">
+                            <span className={`pill ${ELEMENT_PILL[e.status]}`}>{e.status}</span>
+                            <ChevronDown className={`w-4 h-4 text-[#5B6B78] transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
+                          </span>
+                        </button>
+                        {open && (
+                          <div className="px-4 py-3 bg-offwhite border-t border-line space-y-2">
+                            {e.cite && (
+                              <div>
+                                <div className="eyebrow mb-0.5">Supporting evidence</div>
+                                <p className="text-sm text-ink">{src?.name ?? "Source not on record"} — {e.cite.note}</p>
+                              </div>
+                            )}
+                            {e.missing && (
+                              <div>
+                                <div className="eyebrow mb-0.5">{e.status === "Shown" ? "Note" : "Unresolved"}</div>
+                                <p className={`text-sm ${e.status === "Shown" ? "text-[#5B6B78]" : "text-[#B45309]"}`}>{e.missing}</p>
+                              </div>
+                            )}
+                            {!e.cite && !e.missing && <p className="text-sm text-[#8A98A3]">No further detail on record.</p>}
+                            {e.cite && <div className="flex justify-end"><ViewDetails title={e.name} explanation={e.missing} cites={[e.cite]} /></div>}
+                          </div>
+                        )}
                       </div>
-                      {e.cite && <div className="mt-0.5"><CiteLink cite={e.cite} /></div>}
-                      {e.missing && <p className={`text-xs mt-0.5 ${e.status === "Shown" ? "text-[#5B6B78]" : "text-[#B45309]"}`}>{e.missing}</p>}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
-              <div className="space-y-5">
-                <div>
-                  <div className="eyebrow mb-2">Stage 2 will request</div>
+              <div className="space-y-4">
+                <div className="rounded-xl border border-line bg-white">
+                  <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-line">
+                    <div className="eyebrow">Stage 2 will request</div>
+                    {selected.requests.length > 0 && <span className="text-xs text-[#5B6B78]">{selected.requests.length} · not yet requested</span>}
+                  </div>
                   {selected.requests.length
-                    ? <ul className="space-y-1.5">{selected.requests.map((r) => <li key={r} className="text-sm text-ink leading-snug flex gap-2"><ArrowRight className="w-3.5 h-3.5 text-deep mt-1 shrink-0" strokeWidth={1.75} />{r}</li>)}</ul>
-                    : <p className="text-sm text-[#8A98A3]">None — no records are requested from this party as a defendant.</p>}
+                    ? <ul className="divide-y divide-line">{selected.requests.map((r) => <li key={r} className="px-4 py-2 text-sm text-ink leading-snug flex gap-2"><FileSearch className="w-4 h-4 text-deep mt-0.5 shrink-0" strokeWidth={1.75} />{r}</li>)}</ul>
+                    : <p className="px-4 py-3 text-sm text-[#8A98A3]">None — no records are requested from this party as a defendant.</p>}
                 </div>
-                <div>
+                <div className="lg-zone lg-zone-grey p-4">
                   <div className="eyebrow mb-2">What could undo or change this</div>
-                  <p className="text-sm text-ink leading-relaxed">{selected.couldUndo}</p>
+                  <p className="body-text leading-relaxed">{selected.couldUndo}</p>
                 </div>
               </div>
             </div>
@@ -670,7 +763,8 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
             <div>
               <div className="eyebrow mb-2">Investigation plan</div>
               <div className="overflow-x-auto rounded-xl border border-line">
-                <table className="w-full min-w-[720px] border-collapse">
+                <table className="w-full min-w-[720px] table-fixed border-collapse">
+                  <colgroup><col className="w-[56px]" /><col /><col /><col className="w-[20%]" /><col /></colgroup>
                   <thead className="bg-wash">
                     <tr>
                       {["Step", "Question to answer", "Request or evidence needed", "Source or responsible party", "Expected result"].map((h) => (
@@ -693,10 +787,11 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
               </div>
             </div>
 
-            <div className="pt-4 border-t border-line">
+            <div>
               <div className="eyebrow mb-2">Rule trail</div>
               <div className="overflow-x-auto rounded-xl border border-line">
-                <table className="w-full min-w-[720px] border-collapse">
+                <table className="w-full min-w-[720px] table-fixed border-collapse">
+                  <colgroup><col className="w-[120px]" /><col /><col /><col /></colgroup>
                   <thead className="bg-wash">
                     <tr>
                       {["Rule ID", "Rule or decision applied", "Triggering fact", "Result"].map((h) => (
@@ -723,12 +818,9 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
       </div>
 
       {/* ── Your decision ── */}
-      <div id="defendant-decisions" className="lg-card p-6 space-y-4 scroll-mt-[170px]">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <h3 className="section-header">Your decision</h3>
-          <span className="secondary-text max-w-xl">The dashed option is the system's recommendation. Records and insurance requests go only to defendants you name or investigate.</span>
-        </div>
-        <div className="rounded-xl border border-line divide-y divide-line">
+      <div id="defendant-decisions" tabIndex={-1} aria-label="Your decision" className="lg-card p-6 space-y-4 scroll-mt-[170px] outline-none">
+        <SectionHead title="Your decision" sub="The dashed option is the system's recommendation. Records and insurance requests go only to defendants you name or investigate." right={<DecisionHelp />} />
+        <div className="rounded-xl border border-line divide-y divide-line -mt-1">
           {ordered.map((c) => {
             const row = rows[c.id];
             const rec = choiceFor(c.recommendation);
@@ -834,6 +926,147 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
         )}
       </div>
 
+
+      {/* ── Sources ── */}
+      <div id="sources" className="lg-card p-6 scroll-mt-[170px]">
+        <SectionHead
+          title="Sources this analysis is based on"
+          sub={<>Evidence on file, the case record and the jurisdiction analysis. Each source shows how it supports the selected defendant's analysis — <strong className="font-medium text-ink">{selected?.short}</strong>.</>}
+        />
+        <div className="rounded-xl border border-line bg-white overflow-x-auto">
+          <table className="w-full min-w-[880px] table-fixed">
+            <colgroup><col className="w-[24%]" /><col className="w-[17%]" /><col /><col className="w-[124px]" /><col className="w-[268px]" /></colgroup>
+            <thead className="bg-wash border-b border-line">
+              <tr>
+                {["Document / source", "Category", "Relevance", "Status", "Actions"].map((h, i) => (
+                  <th key={h} className={`px-4 py-3 eyebrow ${i === 4 ? "text-right" : "text-left"}`}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {record.sources.map((s) => {
+                const cites = (c: Candidate) => [c.identifiedFrom, ...c.why.facts.map((f) => f.cite), ...c.elements.map((e) => e.cite)].filter((x): x is Cite => x?.sourceId === s.id);
+                const usedBy = record.candidates.filter((c) => cites(c).length > 0);
+                const forSelected = selected ? Array.from(new Set(cites(selected).map((x) => x.note))) : [];
+                const hasFile = s.files.length > 0;
+                const noFile = "A case record, not a document file";
+                const open = expandedSource === s.id;
+                return (
+                  <Fragment key={s.id}>
+                    <tr id={`source-${s.id}`} className={`lg-row transition-colors scroll-mt-[170px] ${flashSource === s.id ? "bg-tint" : ""}`}>
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-start gap-2">
+                          {hasFile ? <FileText className="w-4 h-4 text-[#5B6B78] shrink-0 mt-0.5" strokeWidth={1.75} /> : <Database className="w-4 h-4 text-[#5B6B78] shrink-0 mt-0.5" strokeWidth={1.75} />}
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-ink">{s.name}</div>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              {hasFile && <FileTypeTag name={s.files[0]} />}
+                              <span className="text-xs text-[#5B6B78]">{hasFile ? `${s.files.length} ${s.files.length === 1 ? "file" : "files"}` : s.type}{s.date ? ` · ${s.date}` : ""}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 align-top"><span className="pill pill-neutral whitespace-normal text-left">{s.group}</span></td>
+                      <td className="px-4 py-3 align-top text-sm text-ink leading-snug">
+                        {forSelected.length
+                          ? <>{forSelected[0].charAt(0).toUpperCase() + forSelected[0].slice(1)}{forSelected.length > 1 && <span className="text-[#5B6B78]"> · +{forSelected.length - 1} more</span>}</>
+                          : <span className="text-[#8A98A3]">Not cited for this defendant</span>}
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        {hasFile
+                          ? <span className="pill pill-complete"><CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> On file</span>
+                          : <span className="pill pill-neutral">Internal record</span>}
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-center justify-end gap-2">
+                          <DocActions
+                            size="sm"
+                            onPreview={() => setOpenSource({ source: s, view: "preview" })}
+                            onInsights={() => setOpenSource({ source: s, view: "insights" })}
+                            disabled={{
+                              preview: hasFile ? undefined : noFile,
+                              insights: hasFile ? undefined : noFile,
+                              download: hasFile ? "The original file is not stored in this prototype" : noFile,
+                            }}
+                          />
+                          <button
+                            onClick={() => setExpandedSource(open ? null : s.id)}
+                            aria-expanded={open}
+                            aria-label={`${open ? "Hide" : "View"} details for ${s.name}`}
+                            className="p-1.5 rounded-lg hover:bg-tint transition-colors"
+                          >
+                            <ChevronDown className={`w-4 h-4 text-deep transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr className="bg-offwhite">
+                        <td colSpan={5} className="px-4 py-4">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                              <div className="eyebrow mb-1.5">Facts used</div>
+                              <ul className="space-y-1">
+                                {s.facts.map((f) => (
+                                  <li key={f.text} className="text-sm text-ink leading-snug flex gap-2">
+                                    {f.at && <span className="mono-ref shrink-0 min-w-[64px] whitespace-nowrap">{f.at}</span>}
+                                    <span>{f.text}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                            <div>
+                              <div className="eyebrow mb-1.5">For {selected?.short}</div>
+                              <p className="text-sm text-ink leading-snug">{forSelected.length ? forSelected.join(" · ") : "Not cited for this defendant."}</p>
+                              <div className="eyebrow mt-3 mb-1">Cited for</div>
+                              <p className="text-sm text-ink">{usedBy.length ? usedBy.map((c) => c.short).join(", ") : "No defendant — background record."}</p>
+                            </div>
+                            <div>
+                              <div className="eyebrow mb-1.5">Document</div>
+                              <dl className="text-sm space-y-0.5">
+                                <div className="flex gap-2"><dt className="text-[#5B6B78] w-14 shrink-0">Type</dt><dd className="text-ink">{s.type}</dd></div>
+                                <div className="flex gap-2"><dt className="text-[#5B6B78] w-14 shrink-0">Date</dt><dd className="text-ink">{s.date ?? "Not available"}</dd></div>
+                                <div className="flex gap-2"><dt className="text-[#5B6B78] w-14 shrink-0">Files</dt><dd className="text-ink mono-ref break-words min-w-0">{hasFile ? s.files.join(" · ") : "None — an internal record"}</dd></div>
+                                <div className="flex gap-2"><dt className="text-[#5B6B78] w-14 shrink-0">ID</dt><dd className="text-ink">Not on record</dd></div>
+                              </dl>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {(() => {
+          const missing = Array.from(new Set(record.candidates.flatMap((c) => c.requests)));
+          return (
+            <div className="mt-4 rounded-xl border border-[#FDE6C8] bg-[#FFF7ED]">
+              <button onClick={() => setMissingOpen((o) => !o)} aria-expanded={missingOpen} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left">
+                <span className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-[#B45309]" strokeWidth={1.75} />
+                  <span className="text-sm font-semibold text-[#B45309]">Not yet on file · to be requested</span>
+                  <span className="pill pill-progress">{missing.length}</span>
+                </span>
+                <ChevronDown className={`w-4 h-4 text-[#B45309] transition-transform ${missingOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
+              </button>
+              {missingOpen && (
+                <div className="px-4 pb-4">
+                  <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5">
+                    {missing.map((r) => (
+                      <li key={r} className="text-sm text-ink leading-snug flex gap-2"><ArrowRight className="w-3.5 h-3.5 text-[#B45309] mt-1 shrink-0" strokeWidth={1.75} />{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="text-xs text-[#5B6B78] px-4 pb-3 -mt-1">Nothing has been requested from any defendant yet.</p>
+            </div>
+          );
+        })()}
+      </div>
+
         </div>
       </div>
 
@@ -865,6 +1098,65 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
               <button onClick={commit} className="btn btn-primary">Confirm decisions</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {details && (
+        <div className="fixed inset-0 bg-ink/40 z-50 flex justify-end" onClick={() => setDetails(null)}>
+          <aside role="dialog" aria-modal="true" aria-label="Source details" className="bg-white w-full max-w-[480px] h-full flex flex-col shadow-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-line">
+              <div className="min-w-0">
+                <div className="eyebrow mb-0.5">Source details</div>
+                <h2 className="card-title leading-snug">{details.title}</h2>
+              </div>
+              <button onClick={() => setDetails(null)} aria-label="Close" className="p-1.5 hover:bg-tint rounded-lg shrink-0"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {details.explanation && (
+                <div className="rounded-lg bg-tint border border-[#D6F2F7] p-3">
+                  <div className="eyebrow text-deep mb-1">Finding</div>
+                  <p className="body-text leading-relaxed">{details.explanation}</p>
+                </div>
+              )}
+              <div className="eyebrow">{details.cites.length === 1 ? "Supporting source" : `Supporting sources · ${details.cites.length}`}</div>
+              {details.cites.map((c, i) => {
+                const src = sourceById(c.sourceId);
+                if (!src) return <p key={i} className="text-sm text-[#8A98A3]">Source not on record.</p>;
+                const hasFile = src.files.length > 0;
+                return (
+                  <div key={i} className="rounded-xl border border-line p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-ink">{src.name}</div>
+                        <div className="text-xs text-[#5B6B78]">{[src.type, src.date].filter(Boolean).join(" · ")}</div>
+                      </div>
+                      <span className={`pill shrink-0 ${hasFile ? "pill-complete" : "pill-neutral"}`}>{hasFile ? "On file" : "Internal record"}</span>
+                    </div>
+                    <div>
+                      <div className="eyebrow mb-0.5">What it shows</div>
+                      <p className="text-sm text-ink">{c.note}</p>
+                    </div>
+                    <div>
+                      <div className="eyebrow mb-0.5">Facts used from it</div>
+                      <ul className="space-y-0.5">{src.facts.map((f) => <li key={f.text} className="text-sm text-[#5B6B78]">{f.at ? `${f.at}: ` : ""}{f.text}</li>)}</ul>
+                    </div>
+                    {hasFile && <div className="mono-ref break-words">{src.files.join(" · ")}</div>}
+                    <div className="pt-2 flex items-center justify-between gap-2 flex-wrap border-t border-line">
+                      <button onClick={() => showInEvidence(src.id)} className="text-xs font-semibold text-deep hover:text-ink">Show in Evidence</button>
+                      {hasFile ? (
+                        <DocActions
+                          size="sm"
+                          onPreview={() => { setDetails(null); setOpenSource({ source: src, view: "preview" }); }}
+                          onInsights={() => { setDetails(null); setOpenSource({ source: src, view: "insights" }); }}
+                          disabled={{ download: "The original file is not stored in this prototype" }}
+                        />
+                      ) : <span className="text-xs text-[#8A98A3]">No document to preview — a case record</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </aside>
         </div>
       )}
 
