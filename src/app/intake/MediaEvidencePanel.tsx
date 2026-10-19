@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import {
   Camera, ChevronDown, Download, Loader2, ScanLine, Video, Image as ImageIcon,
-  AlertTriangle, CheckCircle, X, Info, Upload,
+  AlertTriangle, CheckCircle, X, Info, Upload, Trash2,
 } from "lucide-react";
 import type { CaseDocument } from "../types/case";
 import { classifyDocuments } from "../types/case";
 import {
-  useMediaEvidence, fileStatus, setStatus, STALLED_AFTER_MS,
-  type MediaFile, type MediaStatus, type PhotoSetEvidence, type VideoEvidence,
+  useMediaEvidence, fileStatus, setStatus, STALLED_AFTER_MS, updateMediaFileDetails, removeMediaFileRecord,
+  type MediaFile, type MediaStatus, type PhotoSetEvidence, type VideoEvidence, type MediaRef,
 } from "./mediaEvidenceStore";
 import { analyseVideo, analyseSet, CHECK_VERSION } from "./mediaAnalysis";
-import { getMediaFile, downloadMediaFile } from "./mediaFileStore";
-import { DocActions, DocumentWorkspaceModal, type DocInsights } from "../components/DocumentWorkspace";
+import { inFilter, mediaDocStatus, type DocFilter } from "./docProcessing";
+import { getMediaFile, downloadMediaFile, deleteMediaFile } from "./mediaFileStore";
+import { DocActions, DocumentWorkspaceModal, RowActionGroup, type DocInsights } from "../components/DocumentWorkspace";
 
 // ── Media evidence ───────────────────────────────────────────────────────────
 // A case's videos, photo sets and medical image studies, apart from its
@@ -61,18 +62,21 @@ const outline = "inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border 
 
 /** The dashboard's standard evidence actions — Preview | Insights | Download —
  *  each disabled, with the reason, when this file cannot support it. */
-function FileActions({ file, onPreview, onInsights }: { file: MediaFile; onPreview: () => void; onInsights: () => void }) {
+function FileActions({ file, label, onPreview, onInsights, onEdit, onDelete }: { file: MediaFile; label: string; onPreview: () => void; onInsights: () => void; onEdit: () => void; onDelete: () => void }) {
   // Always offered. Preview and Insights explain an unavailable file in their
   // own view; a download that finds no file says so here.
   const [downloadFailed, setDownloadFailed] = useState(false);
   return (
     <div className="flex flex-col items-end gap-1">
-      <DocActions
-        size="sm"
-        onPreview={onPreview}
-        onInsights={onInsights}
-        onDownload={async () => setDownloadFailed(!(await downloadMediaFile(file.storageKey, file.name)))}
-      />
+      <RowActionGroup name={label} onEdit={onEdit} onDelete={onDelete}>
+        <DocActions
+          size="row"
+          onPreview={onPreview}
+          onInsights={onInsights}
+          onDownload={async () => setDownloadFailed(!(await downloadMediaFile(file.storageKey, file.name)))}
+          disabled={{ download: file.storageKey ? undefined : "The original file is not stored on this device" }}
+        />
+      </RowActionGroup>
       {downloadFailed && <span role="alert" className="text-xs text-[#B91C1C]">The original file is not stored on this device.</span>}
     </div>
   );
@@ -140,6 +144,8 @@ interface InsightsTarget {
   label: string;
   source: string;
   uploadedAt: string;
+  /** The date as the attorney edited it, when they did. */
+  date?: string;
   /** The set or study the file belongs to, and what it can be compared with. */
   group?: { title: string; study?: string; compareWith: string[]; missing?: string };
 }
@@ -169,7 +175,7 @@ function insightsFor(t: InsightsTarget): DocInsights {
       { label: "Evidence", value: t.label },
       ...(t.group ? [{ label: t.kind === "image" && t.group.study !== undefined ? "Study" : "Set", value: t.group.study ? `${t.group.title} · ${t.group.study}` : t.group.title }] : []),
       { label: "Source", value: t.source },
-      { label: "Uploaded", value: formatDate(t.uploadedAt) },
+      { label: t.date ? "Date" : "Uploaded", value: t.date ?? formatDate(t.uploadedAt) },
       { label: "File size", value: t.file.size ? `${(t.file.size / 1024 / 1024).toFixed(1)} MB` : "Not available" },
       { label: "Status", value: statusLabel },
     ],
@@ -198,7 +204,7 @@ function MediaInsights({ target, onClose }: { target: InsightsTarget; onClose: (
     id: `${target.label}-${target.file.storageKey ?? target.file.name}`,
     name: target.file.name,
     source: target.source,
-    date: formatDate(target.uploadedAt),
+    date: target.date ?? formatDate(target.uploadedAt),
     category: target.label,
     mediaKind: target.kind,
     mediaUrl: url ?? undefined,
@@ -243,11 +249,11 @@ function Category({
           <table className="w-full min-w-[760px] table-fixed">
             {/* The same column widths in every category, so they line up. */}
             <colgroup>
-              <col className="w-[29%]" />
-              <col className="w-[10%]" />
-              <col className="w-[12%]" />
-              <col className="w-[14%]" />
-              <col className="w-[35%]" />
+              <col />
+              <col className="w-[104px]" />
+              <col className="w-[124px]" />
+              <col className="w-[150px]" />
+              <col className="w-[152px]" />
             </colgroup>
             <thead className="bg-white border-b border-line">
               <tr>
@@ -269,8 +275,8 @@ function Category({
 function NameCell({ label, file }: { label: string; file: MediaFile }) {
   const note = fileNote(file);
   return (
-    <td className="px-4 py-3 align-top">
-      <div className="text-sm font-semibold text-ink">{label}</div>
+    <td className="px-4 py-3 align-middle">
+      <div className="text-sm font-semibold text-ink truncate" title={file.label ?? label}>{file.label ?? label}</div>
       <div className="mono-ref truncate max-w-[280px]" title={file.name}>{file.name}</div>
       {note && (
         <div className={`text-xs mt-0.5 flex items-center gap-1 ${NOTE_TONE[note.tone]}`}>
@@ -282,8 +288,121 @@ function NameCell({ label, file }: { label: string; file: MediaFile }) {
   );
 }
 
+/** One media file, with its default details and the details shown. */
+interface MediaTarget {
+  ref: MediaRef;
+  file: MediaFile;
+  defaults: { label: string; source: "Attorney" | "Client"; date: string };
+  shown: { label: string; source: "Attorney" | "Client"; date: string };
+}
+
+function targetOf(ref: MediaRef, file: MediaFile, label: string, source: "Attorney" | "Client" | undefined, uploadedAt: string): MediaTarget {
+  const defaults = { label, source: source ?? "Attorney", date: formatDate(uploadedAt) };
+  return { ref, file, defaults, shown: { label: file.label ?? defaults.label, source: file.source ?? defaults.source, date: file.date ?? defaults.date } };
+}
+
+/** Edit a media file's details — never the image, video or audio itself. */
+function EditMediaModal({ target, onClose }: { target: MediaTarget; onClose: () => void }) {
+  const [form, setForm] = useState(target.shown);
+  const [error, setError] = useState<string | null>(null);
+  const save = () => {
+    const label = form.label.trim();
+    const date = form.date.trim();
+    if (!label) { setError("A display name is required."); return; }
+    if (!date) { setError("A date is required."); return; }
+    const changed = [label !== target.shown.label && "name", form.source !== target.shown.source && "source", date !== target.shown.date && "date"].filter(Boolean);
+    if (!changed.length) { onClose(); return; }
+    try {
+      // Stored only where it differs from the default, so a reset is a reset.
+      updateMediaFileDetails(target.ref, {
+        label: label === target.defaults.label ? undefined : label,
+        source: form.source === target.defaults.source ? undefined : form.source,
+        date: date === target.defaults.date ? undefined : date,
+      }, `Details edited: ${changed.join(", ")}`);
+      onClose();
+    } catch {
+      setError("The change could not be saved in this browser. Nothing was changed.");
+    }
+  };
+  return (
+    <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label="Edit media details" className="bg-white rounded-xl w-full max-w-md shadow-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+          <h2 className="card-title">Edit media details</h2>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <label className="block">
+            <span className="eyebrow block mb-1">Display name</span>
+            <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-line text-sm focus:outline-none focus:border-brand" />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="eyebrow block mb-1">Source</span>
+              <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value as "Attorney" | "Client" })} className="w-full px-3 py-2 rounded-lg border border-line text-sm bg-white focus:outline-none focus:border-brand">
+                <option value="Attorney">Attorney</option>
+                <option value="Client">Client</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="eyebrow block mb-1">Date</span>
+              <input value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-line text-sm focus:outline-none focus:border-brand" />
+            </label>
+          </div>
+          <p className="text-xs text-[#5B6B78]">Details only — the file <span className="mono-ref">{target.file.name}</span> and its check are not changed, and nothing is reprocessed.</p>
+          {error && <p role="alert" className="text-sm text-[#B91C1C]">{error}</p>}
+        </div>
+        <div className="flex items-center justify-end gap-2 px-6 py-4 bg-wash border-t border-line rounded-b-xl">
+          <button onClick={onClose} className="btn btn-secondary">Cancel</button>
+          <button onClick={save} className="btn btn-primary">Save changes</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Confirm, then remove the stored original and the file's record. */
+function DeleteMediaModal({ target, onClose }: { target: MediaTarget; onClose: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      if (target.file.storageKey) await deleteMediaFile(target.file.storageKey);
+    } catch {
+      setBusy(false);
+      setError("The stored file could not be removed from this browser. The file was not deleted.");
+      return;
+    }
+    try {
+      removeMediaFileRecord(target.ref);
+      onClose();
+    } catch {
+      setBusy(false);
+      setError("The stored file was removed, but its record could not be updated in this browser. It now shows as not stored.");
+    }
+  };
+  return (
+    <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div role="alertdialog" aria-modal="true" aria-label="Delete media file" className="bg-white rounded-xl w-full max-w-md shadow-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-5 space-y-2">
+          <h2 className="card-title flex items-center gap-2"><Trash2 className="w-4 h-4 text-[#B91C1C]" strokeWidth={1.75} /> Delete this file?</h2>
+          <p className="body-text">
+            <span className="font-semibold text-ink">{target.shown.label}</span> (<span className="mono-ref text-ink">{target.file.name}</span>) will be removed from this case{target.file.storageKey ? ", and its stored file deleted from this browser" : ""}. This cannot be undone.
+          </p>
+          {error && <p role="alert" className="text-sm text-[#B91C1C]">{error}</p>}
+        </div>
+        <div className="flex items-center justify-end gap-2 px-6 py-4 bg-wash border-t border-line rounded-b-xl">
+          <button onClick={onClose} className="btn btn-secondary">Cancel</button>
+          <button onClick={() => void confirm()} disabled={busy} className="btn bg-[#B91C1C] border border-[#B91C1C] text-white hover:bg-[#991B1B] disabled:opacity-60">Delete file</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SetBand({
-  set, word, comparison, onPreview, onInsights,
+  set, word, comparison, onPreview, onInsights, onEdit, onDelete,
 }: {
   set: PhotoSetEvidence;
   word: string;
@@ -291,6 +410,8 @@ function SetBand({
   comparison: { docs: string[]; missing?: string };
   onPreview: (f: MediaFile) => void;
   onInsights: (f: MediaFile & { number: number }, groupTitle: string, study?: string) => void;
+  onEdit: (t: MediaTarget) => void;
+  onDelete: (t: MediaTarget) => void;
 }) {
   const [open, setOpen] = useState(true);
   const status = setStatus(set.files);
@@ -331,20 +452,23 @@ function SetBand({
             </span>
           </button>
         </td>
-        <td className="px-4 py-3 align-top"><StatusBadge status={status} /></td>
-        <td className="px-4 py-3 align-top" />
+        <td className="px-4 py-3 align-middle"><StatusBadge status={status} /></td>
+        <td className="px-4 py-3 align-middle" />
       </tr>
-      {open && set.files.map((f) => (
-        <tr key={f.number} className="bg-white">
-          <NameCell label={`${word} ${f.number}`} file={f} />
-          <td className="px-4 py-3 align-top text-sm text-[#5B6B78]">{set.source ?? "Attorney"}</td>
-          <td className="px-4 py-3 align-top text-sm text-[#5B6B78] whitespace-nowrap">{formatDate(set.uploadedAt)}</td>
-          <td className="px-4 py-3 align-top"><StatusBadge status={fileStatus(f)} /></td>
-          <td className="px-4 py-3 align-top">
-            <div className="flex items-center justify-end gap-1.5"><FileActions file={f} onPreview={() => onPreview(f)} onInsights={() => onInsights(f, groupTitle, studyText)} /></div>
-          </td>
-        </tr>
-      ))}
+      {open && set.files.map((f) => {
+        const t = targetOf({ setId: set.id, number: f.number }, f, `${word} ${f.number}`, set.source, set.uploadedAt);
+        return (
+          <tr key={f.number} className="bg-white">
+            <NameCell label={t.defaults.label} file={f} />
+            <td className="px-4 py-3 align-middle text-sm text-[#5B6B78]">{t.shown.source}</td>
+            <td className="px-4 py-3 align-middle text-sm text-[#5B6B78] whitespace-nowrap">{t.shown.date}</td>
+            <td className="px-4 py-3 align-middle"><StatusBadge status={fileStatus(f)} /></td>
+            <td className="px-4 py-3 align-middle">
+              <FileActions file={f} label={t.shown.label} onPreview={() => onPreview(f)} onInsights={() => onInsights(f, groupTitle, studyText)} onEdit={() => onEdit(t)} onDelete={() => onDelete(t)} />
+            </td>
+          </tr>
+        );
+      })}
     </>
   );
 }
@@ -352,11 +476,20 @@ function SetBand({
 // ── Panel ────────────────────────────────────────────────────────────────────
 
 export function MediaEvidencePanel({
-  caseId, documents = [], onUpload,
-}: { caseId: string; documents?: CaseDocument[]; onUpload?: () => void }) {
-  const { videos, sets } = useMediaEvidence(caseId);
+  caseId, documents = [], onUpload, statusFilter = "all",
+}: { caseId: string; documents?: CaseDocument[]; onUpload?: () => void; statusFilter?: DocFilter }) {
+  const { videos: allVideos, sets: allSets } = useMediaEvidence(caseId);
+  // The Documents status filter, applied to each file by its check status.
+  const shows = (f: MediaFile) => inFilter(mediaDocStatus(fileStatus(f)), statusFilter);
+  const videos = allVideos.filter((v) => shows(v.file));
+  const sets = allSets
+    .map((x) => ({ ...x, files: x.files.filter(shows) }))
+    .filter((x) => x.files.length > 0);
+  const totalFiles = allVideos.length + allSets.reduce((t, x) => t + x.files.length, 0);
   const [preview, setPreview] = useState<{ file: MediaFile; kind: "video" | "image" } | null>(null);
   const [insights, setInsights] = useState<InsightsTarget | null>(null);
+  const [editing, setEditing] = useState<MediaTarget | null>(null);
+  const [deleting, setDeleting] = useState<MediaTarget | null>(null);
   // Re-read the clock so a check that stops making progress shows as stalled.
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -368,9 +501,9 @@ export function MediaEvidencePanel({
   // checked now — once. A file that is not stored here fails the check.
   useEffect(() => {
     const unchecked = (f: MediaFile) => !f.analysisStatus || (f.analysisStatus === "failed" && (f.checkVersion ?? 1) < CHECK_VERSION);
-    videos.filter((v) => unchecked(v.file)).forEach((v) => { void analyseVideo(v); });
-    sets.filter((x) => x.files.some(unchecked)).forEach((x) => { void analyseSet(x); });
-  }, [videos, sets]);
+    allVideos.filter((v) => unchecked(v.file)).forEach((v) => { void analyseVideo(v); });
+    allSets.filter((x) => x.files.some(unchecked)).forEach((x) => { void analyseSet(x); });
+  }, [allVideos, allSets]);
 
   const scene = sets.filter((s) => s.kind === "scene");
   const medical = sets.filter((s) => s.kind === "medical");
@@ -414,7 +547,13 @@ export function MediaEvidencePanel({
         )}
       </div>
 
-      {allFiles.length === 0 ? (
+      {totalFiles > 0 && allFiles.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-line rounded-xl bg-white">
+          <Camera className="w-8 h-8 text-[#9BDAEC] mb-3" strokeWidth={1.75} />
+          <p className="text-sm text-[#5B6B78]">No media files match this filter.</p>
+          <p className="text-xs text-[#5B6B78] mt-1">{totalFiles} {totalFiles === 1 ? "file is" : "files are"} on this case under other statuses.</p>
+        </div>
+      ) : allFiles.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center border border-dashed border-line rounded-xl bg-white">
           <Camera className="w-8 h-8 text-[#9BDAEC] mb-3" strokeWidth={1.75} />
           <p className="text-sm text-[#5B6B78]">No video or photos on this case yet.</p>
@@ -427,20 +566,22 @@ export function MediaEvidencePanel({
               <tr><td colSpan={5} className="px-4 py-4 text-sm text-[#8A98A3]">No videos.</td></tr>
             ) : videos.map((v: VideoEvidence) => {
               const status = fileStatus(v.file);
+              const t = targetOf({ videoId: v.id }, v.file, `Video ${v.number}`, v.source, v.uploadedAt);
               return (
                 <tr key={v.id} className="bg-white">
-                  <NameCell label={`Video ${v.number}`} file={v.file} />
-                  <td className="px-4 py-3 align-top text-sm text-[#5B6B78]">{v.source ?? "Attorney"}</td>
-                  <td className="px-4 py-3 align-top text-sm text-[#5B6B78] whitespace-nowrap">{formatDate(v.uploadedAt)}</td>
-                  <td className="px-4 py-3 align-top"><StatusBadge status={status} /></td>
-                  <td className="px-4 py-3 align-top">
-                    <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                      <FileActions
-                        file={v.file}
-                        onPreview={() => setPreview({ file: v.file, kind: "video" })}
-                        onInsights={() => setInsights({ file: v.file, kind: "video", label: `Video ${v.number}`, source: v.source ?? "Attorney", uploadedAt: v.uploadedAt })}
-                      />
-                    </div>
+                  <NameCell label={t.defaults.label} file={v.file} />
+                  <td className="px-4 py-3 align-middle text-sm text-[#5B6B78]">{t.shown.source}</td>
+                  <td className="px-4 py-3 align-middle text-sm text-[#5B6B78] whitespace-nowrap">{t.shown.date}</td>
+                  <td className="px-4 py-3 align-middle"><StatusBadge status={status} /></td>
+                  <td className="px-4 py-3 align-middle">
+                    <FileActions
+                      file={v.file}
+                      label={t.shown.label}
+                      onPreview={() => setPreview({ file: v.file, kind: "video" })}
+                      onInsights={() => setInsights({ file: v.file, kind: "video", label: t.shown.label, source: t.shown.source, uploadedAt: v.uploadedAt, date: v.file.date })}
+                      onEdit={() => setEditing(t)}
+                      onDelete={() => setDeleting(t)}
+                    />
                   </td>
                 </tr>
               );
@@ -454,9 +595,11 @@ export function MediaEvidencePanel({
                   key={s.id} set={s} word="Scene Image" comparison={sceneComparison}
                   onPreview={(f) => setPreview({ file: f, kind: "image" })}
                   onInsights={(f, title, study) => setInsights({
-                    file: f, kind: "image", label: `Scene Image ${f.number}`, source: s.source ?? "Attorney", uploadedAt: s.uploadedAt,
+                    file: f, kind: "image", label: f.label ?? `Scene Image ${f.number}`, source: f.source ?? s.source ?? "Attorney", uploadedAt: s.uploadedAt, date: f.date,
                     group: { title, study, compareWith: sceneComparison.docs, missing: sceneComparison.missing },
                   })}
+                  onEdit={setEditing}
+                  onDelete={setDeleting}
                 />)}
           </Category>
 
@@ -467,9 +610,11 @@ export function MediaEvidencePanel({
                   key={s.id} set={s} word="Medical Image" comparison={medicalComparison}
                   onPreview={(f) => setPreview({ file: f, kind: "image" })}
                   onInsights={(f, title, study) => setInsights({
-                    file: f, kind: "image", label: `Medical Image ${f.number}`, source: s.source ?? "Attorney", uploadedAt: s.uploadedAt,
+                    file: f, kind: "image", label: f.label ?? `Medical Image ${f.number}`, source: f.source ?? s.source ?? "Attorney", uploadedAt: s.uploadedAt, date: f.date,
                     group: { title, study, compareWith: medicalComparison.docs, missing: medicalComparison.missing },
                   })}
+                  onEdit={setEditing}
+                  onDelete={setDeleting}
                 />)}
           </Category>
 
@@ -482,6 +627,8 @@ export function MediaEvidencePanel({
 
       {preview && <PreviewModal file={preview.file} kind={preview.kind} onClose={() => setPreview(null)} />}
       {insights && <MediaInsights target={insights} onClose={() => setInsights(null)} />}
+      {editing && <EditMediaModal target={editing} onClose={() => setEditing(null)} />}
+      {deleting && <DeleteMediaModal target={deleting} onClose={() => setDeleting(null)} />}
     </div>
   );
 }

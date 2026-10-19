@@ -35,10 +35,10 @@ const REC_PILL: Record<Recommendation, string> = {
   investigate: "bg-[#FFF7ED] text-[#B45309] border-[#FDE6C8]",
   "set-aside": "bg-[#F1F3F5] text-[#5B6B78] border-line",
 };
-const REC_COLUMN: Record<Recommendation, { tone: string; sub: string }> = {
-  name: { tone: "border-t-brand", sub: "Liability shown or strongly indicated" },
-  investigate: { tone: "border-t-[#FDBA74]", sub: "Pointed to by the record; fault or identity not yet shown" },
-  "set-aside": { tone: "border-t-[#CBD5DD]", sub: "Nothing in the record points to fault" },
+const REC_COLUMN: Record<Recommendation, { sub: string }> = {
+  name: { sub: "Liability shown or strongly indicated" },
+  investigate: { sub: "Pointed to by the record; fault or identity not yet shown" },
+  "set-aside": { sub: "Nothing in the record points to fault" },
 };
 const ELEMENT_PILL: Record<ElementStatus, string> = {
   Shown: "pill-complete",
@@ -127,9 +127,9 @@ function DecisionHelp() {
 }
 
 /** A section's heading and one-line description, as on the Analysis stage. */
-function SectionHead({ title, sub, right }: { title: string; sub?: React.ReactNode; right?: React.ReactNode }) {
+function SectionHead({ title, sub, right, compact }: { title: string; sub?: React.ReactNode; right?: React.ReactNode; compact?: boolean }) {
   return (
-    <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
+    <div className={`flex items-start justify-between gap-4 flex-wrap ${compact ? "mb-4" : "mb-5"}`}>
       <div className="min-w-0">
         <h2 className="section-header mb-1">{title}</h2>
         {sub && <p className="secondary-text max-w-3xl">{sub}</p>}
@@ -291,6 +291,8 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
   // The liability element expanded.
   const [expandedEl, setExpandedEl] = useState<string | null>(null);
   const [missingOpen, setMissingOpen] = useState(false);
+  // The recommendation group shown — Name first.
+  const [recTab, setRecTab] = useState<Recommendation>("name");
   const select = (id: string) => {
     setSelectedId(id);
     window.setTimeout(() => document.getElementById("defendant-analysis")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
@@ -493,10 +495,13 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
       {/* ── B · System recommendation ── */}
       <div id="recommendation" className="lg-card p-6 scroll-mt-[170px]">
           <SectionHead
+            compact
             title="System recommendation"
             sub={`From the ${record.generatedFrom.toLowerCase()} · ${confirmedAt ? "decided by the attorney" : "awaiting the attorney's decision"}`}
           />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {/* The defendant overview's cards: grey zone, small label, value below.
+              Six across where they stay readable, fewer where they would not. */}
+          <div className="grid grid-cols-1 min-[640px]:grid-cols-3 min-[1400px]:grid-cols-6 gap-2">
             {[
               { label: "Potential defendants", value: n },
               { label: "Named in evidence", value: named, note: `${n - named} by role only` },
@@ -505,52 +510,93 @@ function Analysis({ record, jx, caseData, jurisdictionDecision, focusName, embed
               { label: "Set aside", value: count("set-aside") },
               { label: "Evidence sources", value: record.sources.length },
             ].map((x) => (
-              <div key={x.label} className="lg-zone lg-zone-grey px-4 py-3">
-                <div className="eyebrow leading-snug">{x.label}</div>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="kpi-value" style={{ fontSize: "22px" }}>{x.value}</span>
+              <div key={x.label} className="lg-zone lg-zone-grey px-3 py-2 min-w-0 flex flex-col">
+                <div className="eyebrow leading-snug mb-1">{x.label}</div>
+                <div className="mt-auto flex items-baseline gap-1.5 flex-wrap min-h-[22px]">
+                  <span className="text-base font-semibold text-ink leading-tight">{x.value}</span>
                   {x.note && <span className="text-xs text-[#5B6B78]">{x.note}</span>}
                 </div>
               </div>
             ))}
           </div>
-          <div className="mt-4 rounded-xl border border-[#D6F2F7] bg-[#F6FDFF] px-4 py-3">
+          <div className="mt-3 rounded-xl border border-[#D6F2F7] bg-[#F6FDFF] px-4 py-2.5">
             <p className="body-text leading-relaxed">
               <strong className="font-semibold">Name {count("name")} now, investigate {count("investigate")}, set aside {count("set-aside")}.</strong> {record.explanation}
             </p>
           </div>
-        <div className="mt-4 space-y-3">
-          {groups.map(({ rec, candidates }) => (
-            <div key={rec} className={`rounded-xl border border-line border-t-4 bg-offwhite p-4 ${REC_COLUMN[rec].tone}`}>
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="kpi-value" style={{ fontSize: "26px" }}>{candidates.length}</span>
-                <span className="text-sm font-semibold text-ink">{REC_LABEL[rec]}</span>
-                <span className="text-xs text-[#5B6B78]">· {REC_COLUMN[rec].sub}</span>
-                {candidates.length === 0 && <span className="text-sm text-[#8A98A3] ml-auto">None.</span>}
-              </div>
-              <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 ${candidates.length ? "mt-3" : "hidden"}`}>
-                {candidates.map((c) => (
-                  <div key={c.id} className="lg-card-i rounded-xl bg-white border border-line p-4 min-w-0 min-h-[190px] flex flex-col">
-                    <div className="eyebrow flex items-center gap-1.5 mb-2">
-                      <TierBadge tier={c.tier} />
-                      <span className="truncate">{c.tier ?? "Relationship not established"} · {c.identified}</span>
-                    </div>
-                    <button onClick={() => select(c.id)} className="text-left group">
-                      <h3 className="card-title leading-snug group-hover:text-deep transition-colors">{c.name}</h3>
-                    </button>
-                    <p className="secondary-text mt-1.5 mb-3 leading-relaxed">{c.summary}</p>
-                    <div className="mt-auto pt-3 border-t border-line flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5 text-xs text-[#5B6B78]"><FileText className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} /> 1 source</span>
-                      <ViewDetails title={`${c.name} — why it is on the list`} explanation={c.summary} cites={[c.identifiedFrom]} />
-                    </div>
+        {/* One recommendation group at a time, behind the Intake workspace's tab bar. */}
+        <div className="mt-3">
+          <div
+            role="tablist"
+            aria-label="Recommendation groups"
+            className="rounded-xl border border-line bg-white p-1.5 flex items-center gap-1.5"
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+              const i = groups.findIndex((g) => g.rec === recTab);
+              const next = groups[(i + (e.key === "ArrowRight" ? 1 : groups.length - 1)) % groups.length].rec;
+              setRecTab(next);
+              (document.getElementById(`rec-tab-${next}`) as HTMLButtonElement | null)?.focus();
+            }}
+          >
+            {groups.map(({ rec, candidates }) => {
+              const on = rec === recTab;
+              return (
+                <button
+                  key={rec}
+                  id={`rec-tab-${rec}`}
+                  role="tab"
+                  aria-selected={on}
+                  aria-controls="rec-panel"
+                  tabIndex={on ? 0 : -1}
+                  onClick={() => setRecTab(rec)}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 ${
+                    on ? "bg-brand text-white shadow-sm" : "text-[#5B6B78] hover:text-ink hover:bg-wash"
+                  }`}
+                >
+                  {REC_LABEL[rec]} ({candidates.length})
+                </button>
+              );
+            })}
+          </div>
+          {(() => {
+            const { rec, candidates } = groups.find((g) => g.rec === recTab) ?? groups[0];
+            return (
+              <div id="rec-panel" role="tabpanel" aria-labelledby={`rec-tab-${rec}`} className="mt-2.5">
+                {candidates.length === 0 ? (
+                  <div className="rounded-xl border border-line bg-offwhite px-3.5 py-2.5 flex items-baseline gap-2 flex-wrap">
+                    <span className="kpi-value leading-tight" style={{ fontSize: "18px" }}>0</span>
+                    <span className="text-xs text-[#5B6B78]">{REC_COLUMN[rec].sub}</span>
+                    <span className="text-sm text-[#8A98A3] ml-auto">None.</span>
                   </div>
-                ))}
+                ) : (
+                  <>
+                    <p className="text-xs text-[#5B6B78] mb-2">{REC_COLUMN[rec].sub}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+                      {candidates.map((c) => (
+                        <div key={c.id} className="lg-card-i rounded-xl bg-white border border-line p-3.5 min-w-0 flex flex-col">
+                          <div className="eyebrow flex items-center gap-1.5 mb-2">
+                            <TierBadge tier={c.tier} />
+                            <span className="truncate">{c.tier ?? "Relationship not established"} · {c.identified}</span>
+                          </div>
+                          <button onClick={() => select(c.id)} className="text-left group">
+                            <h3 className="card-title leading-snug group-hover:text-deep transition-colors">{c.name}</h3>
+                          </button>
+                          <p className="secondary-text mt-1 mb-2.5 leading-snug">{c.summary}</p>
+                          <div className="mt-auto pt-2.5 border-t border-line flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 text-xs text-[#5B6B78]"><FileText className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} /> 1 source</span>
+                            <ViewDetails title={`${c.name} — why it is on the list`} explanation={c.summary} cites={[c.identifiedFrom]} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })()}
         </div>
         {record.decideFirst.length > 0 && (
-          <div className="mt-4 rounded-xl border border-[#FDE6C8] bg-[#FFF7ED] px-4 py-3 flex items-start gap-3">
+          <div className="mt-3 rounded-xl border border-[#FDE6C8] bg-[#FFF7ED] px-4 py-3 flex items-start gap-3">
             <span className="text-sm font-semibold text-[#B45309] shrink-0 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" strokeWidth={1.75} /> Decide first</span>
             <ul className="space-y-1">
               {record.decideFirst.map((d) => (

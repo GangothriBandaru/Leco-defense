@@ -35,6 +35,13 @@ export interface MediaFile {
   analysisError?: string;
   /** Which version of the file check produced the status (absent: the first). */
   checkVersion?: number;
+  /** Details the attorney edited — shown in place of the defaults (Medical
+   *  Image 2, the upload's source and date). The file itself is never changed. */
+  label?: string;
+  source?: "Attorney" | "Client";
+  date?: string;
+  /** What was changed on this file, and when. */
+  history?: { at: string; event: string }[];
 }
 
 /** The analysis fields of a file. */
@@ -150,6 +157,34 @@ export function updateSetFileAnalysis(setId: string, index: number, patch: Analy
   save({
     ...state,
     sets: state.sets.map((x) => (x.id === setId ? { ...x, files: x.files.map((f, i) => (i === index ? { ...f, ...patch } : f)) } : x)),
+  });
+}
+
+/** One media file: a video, or one image of a set. */
+export type MediaRef = { videoId: string } | { setId: string; number: number };
+export type MediaDetails = Pick<MediaFile, "label" | "source" | "date">;
+
+const isFile = (ref: MediaRef, f: { number?: number }, owner: string) =>
+  "videoId" in ref ? ref.videoId === owner : ref.setId === owner && ref.number === f.number;
+
+/** Edits a file's details only — its stored original and its check stand.
+ *  Throws when the change cannot be saved. */
+export function updateMediaFileDetails(ref: MediaRef, details: MediaDetails, event: string) {
+  const edit = <T extends MediaFile>(f: T): T => ({ ...f, ...details, history: [...(f.history ?? []), { at: new Date().toISOString(), event }] });
+  save({
+    videos: state.videos.map((v) => ("videoId" in ref && isFile(ref, {}, v.id) ? { ...v, file: edit(v.file) } : v)),
+    sets: state.sets.map((x) => ({ ...x, files: x.files.map((f) => ("setId" in ref && isFile(ref, f, x.id) ? edit(f) : f)) })),
+  });
+}
+
+/** Removes one file's record; a set left with no images is removed with it.
+ *  Throws when the change cannot be saved — nothing is removed then. */
+export function removeMediaFileRecord(ref: MediaRef) {
+  save({
+    videos: state.videos.filter((v) => !("videoId" in ref && isFile(ref, {}, v.id))),
+    sets: state.sets
+      .map((x) => ({ ...x, files: x.files.filter((f) => !("setId" in ref && isFile(ref, f, x.id))) }))
+      .filter((x) => x.files.length > 0),
   });
 }
 

@@ -425,3 +425,9 @@
   70% { background-color: var(--lg-tint); box-shadow: 0 0 0 2px var(--lg-ring) inset; }
   100% { background-color: transparent; box-shadow: 0 0 0 0 transparent inset; }
 }
+
+/* A brief emphasis on the evidence passage an insight was opened at. */
+@keyframes hlpulse {
+  0% { box-shadow: 0 0 0 7px rgba(242, 201, 76, 0.55); }
+  100% { box-shadow: 0 0 0 2px #F2C94C; }
+}

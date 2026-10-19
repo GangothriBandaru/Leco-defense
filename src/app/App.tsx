@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { DashboardSidebar } from "./components/DashboardSidebar";
 import { DashboardTopbar } from "./components/DashboardTopbar";
 import { GlobalCaseRepoPage } from "./pages/GlobalCaseRepoPage";
@@ -9,7 +9,7 @@ import { TemplatesPage } from "./pages/TemplatesPage";
 import { CaseIntakePage } from "./pages/CaseIntakePage";
 import { IntakeWorkflowPage } from "./pages/IntakeWorkflowPage";
 import { ClassificationPage } from "./pages/ClassificationPage";
-import { AnalysisPage } from "./pages/AnalysisPage";
+import { AnalysisPage, type AnalysisDetail } from "./pages/AnalysisPage";
 import { InsuranceSummaryPage } from "./pages/InsuranceSummaryPage";
 import { InsuranceDetailPage } from "./pages/InsuranceDetailPage";
 import { ValuationPage } from "./pages/ValuationPage";
@@ -93,6 +93,10 @@ export default function App() {
   // The Case Ready deliverable open on its own page, and the workspace stage to
   // land on when a deliverable links into one it does not show.
   const [deliverable, setDeliverable] = useState<DeliverableKind>("chronology");
+  // Which stage a deliverable was opened from, and which findings set an
+  // Analysis findings page shows.
+  const [deliverableOrigin, setDeliverableOrigin] = useState<"analysis" | "case-ready">("case-ready");
+  const [analysisDetail, setAnalysisDetail] = useState<AnalysisDetail>("liability");
   const [workspaceTab, setWorkspaceTab] = useState<string | undefined>(undefined);
   // Chronology entries the attorney added by hand — held here so the Case
   // Workspace's Chronology and the Medical Chronology deliverable share them.
@@ -115,8 +119,9 @@ export default function App() {
     setActivePage(defendantOrigin);
   };
   const jurisdictionDecision = jurisdictionDecisions[caseKey];
-  const openDeliverable = (kind: DeliverableKind) => {
+  const openDeliverable = (kind: DeliverableKind, origin: "analysis" | "case-ready" = "case-ready") => {
     setDeliverable(kind);
+    setDeliverableOrigin(origin);
     setActivePage("deliverable");
     document.querySelector("main")?.scrollTo(0, 0);
   };
@@ -124,6 +129,38 @@ export default function App() {
     setReturnToSection("generated-deliverables");
     setActivePage("case-ready");
   };
+  const openAnalysisDetail = (d: AnalysisDetail) => {
+    setAnalysisDetail(d);
+    setActivePage("analysis-detail");
+  };
+  const backToAnalysis = () => {
+    setReturnToSection("analysis-deliverables");
+    setActivePage("analysis");
+  };
+  // Browser Back from an Analysis sub-page returns to Analysis: entering one
+  // adds a history entry; leaving it in the app takes that entry back off.
+  const onAnalysisSubpage = activePage === "analysis-detail" || (activePage === "deliverable" && deliverableOrigin === "analysis");
+  const subpageEntry = useRef(false);
+  const backToAnalysisRef = useRef(backToAnalysis);
+  backToAnalysisRef.current = backToAnalysis;
+  useEffect(() => {
+    if (onAnalysisSubpage && !subpageEntry.current) {
+      window.history.pushState({ lecoSubpage: true }, "");
+      subpageEntry.current = true;
+    } else if (!onAnalysisSubpage && subpageEntry.current) {
+      subpageEntry.current = false;
+      if (window.history.state?.lecoSubpage) window.history.back();
+    }
+  }, [onAnalysisSubpage]);
+  useEffect(() => {
+    const onPop = () => {
+      if (!subpageEntry.current) return;
+      subpageEntry.current = false;
+      backToAnalysisRef.current();
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   const openWorkspace = (tab?: string) => {
     setWorkspaceTab(tab);
     setActivePage("workspace");
@@ -135,7 +172,7 @@ export default function App() {
     setActivePage("insurance");
   };
   const backToInsuranceOrigin = () => {
-    setReturnToSection(insuranceOrigin === "case-ready" ? "insurance-deliverable" : "insurance-analysis");
+    setReturnToSection(insuranceOrigin === "case-ready" ? "insurance-deliverable" : "analysis-deliverables");
     setActivePage(insuranceOrigin);
   };
   const INSURANCE_BACK_LABEL = {
@@ -147,7 +184,7 @@ export default function App() {
     if (activePage !== "analysis" && activePage !== "case-ready") setReturnToSection(undefined);
     // The insurance pages are full pages, so each opens at the top of the
     // scrolling main area rather than wherever the previous page was left.
-    if (activePage === "insurance" || activePage === "insurance-detail" || activePage === "deliverable" || activePage === "jurisdiction" || activePage === "defendants") {
+    if (activePage === "insurance" || activePage === "insurance-detail" || activePage === "deliverable" || activePage === "jurisdiction" || activePage === "defendants" || activePage === "analysis-detail") {
       document.querySelector("main")?.scrollTo(0, 0);
     }
   }, [activePage]);
@@ -201,6 +238,7 @@ export default function App() {
             caseData={selectedCase}
             pipeline={pipeline}
             onPipelineUpdate={updatePipeline}
+            onDocumentsUpdate={(fn) => setPipeline((prev) => ({ ...prev, documents: fn(prev.documents) }))}
             onContinue={() => setActivePage("analysis")}
             onStageClick={handleStageNavigation}
             onBackToIntake={() => setActivePage("intake")}
@@ -232,6 +270,31 @@ export default function App() {
             onOpenDefendants={(name) => openDefendantsFrom("analysis", name)}
             governingLaw={jurisdictionDecision?.status === "approved" ? jurisdictionDecision.governingLaw : undefined}
             scrollToSection={returnToSection}
+            onOpenDetail={openAnalysisDetail}
+            onDocumentsUpdate={(fn) => setPipeline((prev) => ({ ...prev, documents: fn(prev.documents) }))}
+            onOpenChronology={() => openDeliverable("chronology", "analysis")}
+          />
+        );
+      case "analysis-detail":
+        return (
+          <AnalysisPage
+            caseData={selectedCase}
+            documents={pipeline.documents}
+            onStageClick={handleStageNavigation}
+            onBackToIntake={() => setActivePage("intake")}
+            onProceedToValuation={() => {
+              updatePipeline({ analysisDone: true });
+              setActivePage("valuation");
+            }}
+            onOpenInsurance={() => openInsuranceFrom("analysis")}
+            onOpenJurisdiction={() => setActivePage("jurisdiction")}
+            onOpenDefendants={(name) => openDefendantsFrom("analysis", name)}
+            governingLaw={jurisdictionDecision?.status === "approved" ? jurisdictionDecision.governingLaw : undefined}
+            detail={analysisDetail}
+            onBackToAnalysis={backToAnalysis}
+            onOpenDetail={openAnalysisDetail}
+            onDocumentsUpdate={(fn) => setPipeline((prev) => ({ ...prev, documents: fn(prev.documents) }))}
+            onOpenChronology={() => openDeliverable("chronology", "analysis")}
           />
         );
       case "jurisdiction":
@@ -281,6 +344,7 @@ export default function App() {
         return (
           <ValuationPage
             caseData={selectedCase}
+            documents={pipeline.documents}
             analysisFindings={analysisFindings}
             onStageClick={handleStageNavigation}
             onBackToIntake={() => setActivePage("intake")}
@@ -316,9 +380,10 @@ export default function App() {
             documents={pipeline.documents}
             userChronology={userChronology}
             onUserChronologyChange={setUserChronology}
-            onBack={backToCaseReady}
+            onBack={deliverableOrigin === "analysis" ? backToAnalysis : backToCaseReady}
+            origin={deliverableOrigin}
             onStageClick={handleStageNavigation}
-            onOpenDeliverable={openDeliverable}
+            onOpenDeliverable={(k) => openDeliverable(k, deliverableOrigin)}
             onOpenWorkspaceTab={(tab) => openWorkspace(tab)}
             onOpenValuation={() => setActivePage("valuation")}
             onOpenInsurance={() => openInsuranceFrom("case-ready")}

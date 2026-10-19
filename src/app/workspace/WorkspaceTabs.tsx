@@ -3127,7 +3127,7 @@ function SettlementExplainer({
 
 // The editable shape of a damage. Only the fields the record actually holds —
 // there is no second model behind the form.
-interface DamageDraft {
+export interface DamageDraft {
   label: string;
   category: string;
   amount: string;
@@ -3142,7 +3142,7 @@ interface DamageDraft {
   subcategory: string;
 }
 
-const draftOf = (d: DamageItem): DamageDraft => ({
+export const draftOf = (d: DamageItem): DamageDraft => ({
   label: d.label,
   category: d.category,
   amount: String(d.amount),
@@ -3154,12 +3154,20 @@ const draftOf = (d: DamageItem): DamageDraft => ({
   subcategory: d.subcategory ?? "",
 });
 
-const blankDraft = (group: EconomicCategory = "Other Damages", subcategory = ""): DamageDraft => ({
+export const blankDraft = (group: EconomicCategory = "Other Damages", subcategory = ""): DamageDraft => ({
   label: "", category: "", amount: "", description: "", reasoning: "", notes: "", docs: "", group, subcategory,
 });
 
-const parseDocs = (s: string) => s.split(",").map((d) => d.trim()).filter(Boolean);
-const parseMoney = (s: string) => Math.max(0, Math.round(Number(s.replace(/[^0-9.]/g, "")) || 0));
+export const parseDocs = (s: string) => s.split(",").map((d) => d.trim()).filter(Boolean);
+export const parseMoney = (s: string) => Math.max(0, Math.round(Number(s.replace(/[^0-9.]/g, "")) || 0));
+/** Why an amount as typed is not a valid figure, or null. */
+export const amountError = (s: string): string | null => {
+  const t = s.trim().replace(/^\$/, "");
+  if (!t) return "Enter an amount.";
+  if (t.startsWith("-")) return "The amount cannot be negative.";
+  if (!/^\d{1,3}(,\d{3})*(\.\d{1,2})?$|^\d+(\.\d{1,2})?$/.test(t)) return "Enter the amount as a number, e.g. 12,500.";
+  return null;
+};
 
 // A labelled field in the damage form.
 function Field({
@@ -3194,7 +3202,7 @@ function Field({
 // come apart. The multiplier itself is held separately, because the drawer's
 // existing preset buttons and settlement preview already drive it.
 
-interface FactorDraft {
+export interface FactorDraft {
   name: string;
   description: string;
   severity: Severity;
@@ -3202,7 +3210,7 @@ interface FactorDraft {
   rangeHigh: string;
 }
 
-const draftOfFactor = (f: FactorItem): FactorDraft => ({
+export const draftOfFactor = (f: FactorItem): FactorDraft => ({
   name: f.category,
   description: f.rationale,
   severity: f.severity,
@@ -3211,7 +3219,7 @@ const draftOfFactor = (f: FactorItem): FactorDraft => ({
 });
 
 // A new factor starts on the Moderate band, which is what its severity implies.
-const blankFactorDraft = (): FactorDraft => ({
+export const blankFactorDraft = (): FactorDraft => ({
   name: "",
   description: "",
   severity: "Moderate",
@@ -3220,7 +3228,7 @@ const blankFactorDraft = (): FactorDraft => ({
 });
 
 // The band as entered, kept the right way round and never negative.
-const draftRange = (d: FactorDraft): [number, number] => {
+export const draftRange = (d: FactorDraft): [number, number] => {
   const lo = Math.max(0, Number(d.rangeLow) || 0);
   const hi = Math.max(0, Number(d.rangeHigh) || 0);
   return lo <= hi ? [lo, hi] : [hi, lo];
@@ -3234,7 +3242,7 @@ const FACTOR_PROVENANCE_PILL: Record<FactorProvenance, string> = {
   "user-modified": "pill pill-progress",
 };
 
-function FactorProvenanceBadge({ provenance }: { provenance: FactorProvenance }) {
+export function FactorProvenanceBadge({ provenance }: { provenance: FactorProvenance }) {
   const Icon = provenance.startsWith("ai") ? Sparkles : UserPlus;
   return (
     <span className={FACTOR_PROVENANCE_PILL[provenance]}>
@@ -3244,7 +3252,7 @@ function FactorProvenanceBadge({ provenance }: { provenance: FactorProvenance })
 }
 
 // Removing a factor changes the multiplier, so it is always confirmed.
-function DeleteFactorDialog({
+export function DeleteFactorDialog({
   factor, impact, onCancel, onConfirm,
 }: { factor: FactorItem; impact: string; onCancel: () => void; onConfirm: () => void }) {
   return (
@@ -3277,7 +3285,7 @@ function DeleteFactorDialog({
 }
 
 // One factor's change history, in the drawer pattern the stage already uses.
-function FactorHistoryDrawer({
+export function FactorHistoryDrawer({
   factor, entries, onClose,
 }: { factor: FactorItem; entries: { id: string; action: string; previous?: string; next?: string; changedBy: string; at: string; reason?: string }[]; onClose: () => void }) {
   const newestFirst = [...entries].reverse();
@@ -3346,10 +3354,13 @@ function FactorHistoryDrawer({
 // one. Same fields either way, so the two never drift apart. Editing an existing
 // damage also offers its history and its deletion — secondary actions that would
 // clutter the row but belong here.
-function DamageForm({
-  title, draft, setDraft, onCancel, onSave, saveLabel, lockBucket = false, onDelete, onHistory,
+export function DamageForm({
+  title, draft, setDraft, onCancel, onSave, saveLabel, lockBucket = false, onDelete, onHistory, bucket = "economic",
 }: {
   title: string;
+  /** Non-economic damages are not filed under the economic categories, so the
+   *  form leaves those fields out for them. */
+  bucket?: DamageBucket;
   draft: DamageDraft;
   setDraft: (d: DamageDraft) => void;
   onCancel: () => void;
@@ -3361,7 +3372,13 @@ function DamageForm({
   onHistory?: () => void;
 }) {
   const set = (k: keyof DamageDraft) => (v: string) => setDraft({ ...draft, [k]: v });
-  const valid = draft.label.trim().length > 0 && parseMoney(draft.amount) >= 0;
+  // Problems are shown once the attorney tries to save, not while they type.
+  const [tried, setTried] = useState(false);
+  const errors = [
+    !draft.label.trim() && "Enter the damage name.",
+    amountError(draft.amount),
+  ].filter(Boolean) as string[];
+  const save = () => { setTried(true); if (errors.length === 0) onSave(); };
   return (
     <div className="rounded-xl border border-[#D6F2F7] bg-[#F6FDFF] p-4">
       <div className="flex items-center gap-2 mb-3">
@@ -3370,6 +3387,7 @@ function DamageForm({
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* Where the damage is filed, then how much, then what it is */}
+        {bucket === "economic" && (<>
         <div>
           <label className="eyebrow block mb-1">Category</label>
           <select
@@ -3399,6 +3417,7 @@ function DamageForm({
             ))}
           </select>
         </div>
+        </>)}
         <Field label="Amount" value={draft.amount} onChange={set("amount")} prefix="$" />
         <Field label="Damage" value={draft.label} onChange={set("label")} />
         <Field label="Damage Type" value={draft.category} onChange={set("category")} />
@@ -3414,6 +3433,11 @@ function DamageForm({
         />
         <Field label="Notes" value={draft.notes} onChange={set("notes")} multiline />
       </div>
+      {tried && errors.length > 0 && (
+        <div role="alert" className="mt-3 text-xs text-[#B42318] space-y-0.5">
+          {errors.map((e) => <p key={e}>{e}</p>)}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 mt-4 flex-wrap">
         <div className="flex items-center gap-3">
           {onHistory && (
@@ -3429,7 +3453,7 @@ function DamageForm({
         </div>
         <div className="flex items-center gap-2">
           <button onClick={onCancel} className="btn btn-secondary px-3 py-2 text-sm">Cancel</button>
-          <button onClick={onSave} disabled={!valid} className="btn btn-primary px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+          <button onClick={save} className="btn btn-primary px-3 py-2 text-sm">
             {saveLabel}
           </button>
         </div>
@@ -3439,7 +3463,7 @@ function DamageForm({
 }
 
 // Deleting is destructive, so it is always confirmed and always says what goes.
-function DeleteDamageDialog({
+export function DeleteDamageDialog({
   item, onCancel, onConfirm,
 }: { item: DamageItem; onCancel: () => void; onConfirm: () => void }) {
   return (
@@ -3472,7 +3496,7 @@ function DeleteDamageDialog({
 }
 
 // The change history for one damage — every action, who made it and when.
-function DamageHistoryDrawer({
+export function DamageHistoryDrawer({
   item, entries, onClose,
 }: { item: DamageItem; entries: DamageAudit[]; onClose: () => void }) {
   const newestFirst = [...entries].reverse();
@@ -3597,6 +3621,7 @@ function DamageRow({
     return (
       <div className="py-2.5">
         <DamageForm
+          bucket={row.item.bucket}
           title={`Edit ${row.label}`}
           draft={draft}
           setDraft={setDraft}
@@ -4507,6 +4532,7 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
                   {addingTo === "noneconomic" && (
                     <div className="mb-3">
                       <DamageForm
+                        bucket="noneconomic"
                         title="Add Non-Economic Damage"
                         draft={addDraft}
                         setDraft={setAddDraft}

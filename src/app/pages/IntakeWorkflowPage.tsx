@@ -2,10 +2,16 @@ import React, { useState, useRef, useEffect } from "react";
 import { FileTypeIcon, FileTypeTag } from "../components/fileType";
 import { StageNavigator } from "../components/StageNavigator";
 import { CaseSnapshot } from "../components/CaseSnapshot";
-import { Send, Upload, CheckCircle, Circle, ArrowRight, Check, X, FileText, Copy, Download, Eye, Search, ChevronLeft, ChevronDown, Mail, MessageSquare, AlertCircle, AlertTriangle, ListChecks, Bot, Pencil, RefreshCw, Plus, Clock, Info } from "lucide-react";
+import { Send, Upload, CheckCircle, Circle, ArrowRight, Check, X, FileText, Copy, Download, Eye, Search, ChevronLeft, ChevronDown, Mail, MessageSquare, AlertCircle, AlertTriangle, ListChecks, Bot, Pencil, RefreshCw, Plus, Clock, Info, Trash2, RotateCcw, ClipboardCheck } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { DocActions, DocumentWorkspaceModal } from "../components/DocumentWorkspace";
-import { PipelineState, CaseDocument, classifyDocuments, detectMissingEvidence } from "../types/case";
+import { DocActions, DocumentWorkspaceModal, RowActionGroup } from "../components/DocumentWorkspace";
+import { EditDocumentDialog, DeleteDocumentDialog } from "../components/DocumentDialogs";
+import { PipelineState, CaseDocument, classifyDocuments, detectMissingEvidence, DOCUMENT_CATEGORIES } from "../types/case";
+import { putMediaFile, getMediaFile, downloadMediaFile, deleteMediaFile } from "../intake/mediaFileStore";
+import {
+  checkDocument, NeedsAttorney, DOC_STATUS_PILL, inFilter, mediaDocStatus, processingFinished, isUnseen, now as nowLabel,
+  type DocFilter,
+} from "../intake/docProcessing";
 import {
   useIntakeRequests, createIntakeRequest, updateIntakeRequest, adoptExistingIntakeRequest, formatShortDate,
   type IntakeRequest, type UploadedDocument,
@@ -14,7 +20,7 @@ import { RequestLinkRow } from "../intake/RequestLinkRow";
 import { Camera, Loader2 } from "lucide-react";
 import { VideoPhotoUploadModal, type MediaUploadResult } from "../intake/VideoPhotoUploadModal";
 import { MediaEvidencePanel } from "../intake/MediaEvidencePanel";
-import { useMediaEvidence } from "../intake/mediaEvidenceStore";
+import { useMediaEvidence, fileStatus as mediaFileStatus } from "../intake/mediaEvidenceStore";
 import { MEDIA_OPTIONS, NO_MEDIA, intakeMessageText, selectedMediaOptions, type RequestedMedia } from "../intake/intakeMessage";
 import { Video as VideoIcon, ScanLine } from "lucide-react";
 
@@ -44,6 +50,8 @@ interface IntakeWorkflowPageProps {
   };
   pipeline: PipelineState;
   onPipelineUpdate: (updates: Partial<PipelineState>) => void;
+  /** Updates the case's documents from their latest value. */
+  onDocumentsUpdate?: (fn: (docs: CaseDocument[]) => CaseDocument[]) => void;
   onContinue?: () => void;
   onStageClick?: (stageName: string) => void;
   onBackToIntake?: () => void;
@@ -144,7 +152,7 @@ function NextStepBox({ text, ctaLabel, onClick }: { text: string; ctaLabel: stri
   );
 }
 
-export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onContinue, onStageClick, onBackToIntake }: IntakeWorkflowPageProps) {
+export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDocumentsUpdate, onContinue, onStageClick, onBackToIntake }: IntakeWorkflowPageProps) {
   // Default case data if none provided
   const defaultCaseData = {
     caseName: "Estate of Miller vs Logistics Co.",
@@ -171,15 +179,10 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
   });
   const toggleAccordion = (key: "retainer" | "request" | "documents") =>
     setAccordionOpen((prev) => ({ ...prev, [key]: !prev[key] }));
-  // Workspace tabs: the three collection sections are shown one at a time via a
-  // top tab bar instead of stacked accordions, so switching the tab swaps the
-  // panel below rather than forcing a long vertical scroll.
-  const [activeTab, setActiveTab] = useState<"retainer" | "request" | "documents">(
-    pipeline.retainerStatus !== "signed"
-      ? "retainer"
-      : pipeline.documents.length > 0
-        ? "documents"
-        : "retainer"
+  // Workspace tabs: Intake Request (the retainer, the intake request and the
+  // missing documents) and Documents, shown one at a time.
+  const [activeTab, setActiveTab] = useState<"request" | "documents">(
+    pipeline.retainerStatus === "signed" && pipeline.documents.length > 0 ? "documents" : "request"
   );
   const [documents, setDocuments] = useState(documentCategories);
   const [showIntakeModal, setShowIntakeModal] = useState(false);
@@ -227,6 +230,14 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
   const [agreementUploaded, setAgreementUploaded] = useState(false);
   const [showUploadAgreementModal, setShowUploadAgreementModal] = useState(false);
   const [showGenerateNewRetainerModal, setShowGenerateNewRetainerModal] = useState(false);
+  // How the retainer came to be signed, and the signed file when the attorney
+  // uploaded one. A file alone never marks it signed — the attorney confirms.
+  const [retainerSource, setRetainerSource] = useState<"client" | "attorney">("client");
+  const [retainerFile, setRetainerFile] = useState<{ name: string; storageKey: string; size: number } | null>(null);
+  const [retainerPickedFile, setRetainerPickedFile] = useState<File | null>(null);
+  const [retainerConfirmed, setRetainerConfirmed] = useState(false);
+  const [retainerUploadError, setRetainerUploadError] = useState<string | null>(null);
+  const today = () => formatShortDate(new Date().toISOString());
   const [demoRetainerState, setDemoRetainerState] = useState<"sent" | "signed">(pipeline.retainerStatus === "signed" ? "signed" : "sent");
   // Retainer versioning — each generated retainer is its own version, newest first.
   type RetainerVersion = { id: number; status: "Awaiting Signature" | "Signed"; recipient: string; template: string; sentDate: string; signedDate?: string; signedDocName?: string; sentDocName?: string };
@@ -531,13 +542,13 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
           sentDocName: "PI_Retainer_Agreement.pdf",
         }];
         const nextId = Math.max(...base.map((r) => r.id)) + 1;
-        return [...base, { id: nextId, status: "Awaiting Signature", recipient, template: templateName, sentDate: "Jun 12, 2026", sentDocName: "PI_Retainer_Agreement.pdf" }];
+        return [...base, { id: nextId, status: "Awaiting Signature", recipient, template: templateName, sentDate: today(), sentDocName: "PI_Retainer_Agreement.pdf" }];
       });
       setRetainerStatus("signed");
     } else {
       setRetainerStatus("sent");
       setDemoRetainerState("sent");
-      setRetainerSentDate("Jun 9, 2026");
+      setRetainerSentDate(today());
     }
     setRetainerModalMode("initial");
     setShowSendRetainerModal(false);
@@ -548,24 +559,47 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
     setShowPreviewModal(true);
   };
 
+  const resetRetainerPick = () => { setRetainerPickedFile(null); setRetainerConfirmed(false); setRetainerUploadError(null); };
   const handleMarkAsSigned = () => {
+    resetRetainerPick();
     setShowMarkSignedModal(true);
   };
+  const openUploadAgreement = () => { resetRetainerPick(); setShowUploadAgreementModal(true); };
 
-  const handleConfirmSigned = () => {
+  /** The attorney confirms the retainer is signed — with the signed file when
+   *  they upload one, which is stored first. Returns false if nothing changed. */
+  const markRetainerSigned = async (file?: File): Promise<boolean> => {
+    let stored: { name: string; storageKey: string; size: number } | null = null;
+    if (file) {
+      try {
+        stored = { name: file.name, storageKey: await putMediaFile(file), size: file.size };
+      } catch {
+        setRetainerUploadError("The file could not be stored in this browser. Nothing was changed.");
+        return false;
+      }
+    }
+    const date = today();
     setRetainerStatus("signed");
     setDemoRetainerState("signed");
-    setRetainerSignedDate("Jun 9, 2026");
-    setAgreementUploaded(true);
-    setShowMarkSignedModal(false);
+    setRetainerSignedDate(date);
+    setRetainerSource("attorney");
+    setRetainerFile(stored);
+    setAgreementUploaded(!!stored);
+    if (stored) setRetainerDocs((ds) => [...ds, { id: `ret-up-${Date.now()}`, name: stored!.name, date, status: "Signed", source: "Attorney" }]);
+    setRetainerVersions((prev) => {
+      if (prev.length === 0) return prev;
+      const maxId = Math.max(...prev.map((r) => r.id));
+      return prev.map((r) => (r.id === maxId ? { ...r, status: "Signed", signedDate: date, signedDocName: stored?.name } : r));
+    });
+    return true;
   };
 
-  const handleAddLater = () => {
-    setRetainerStatus("signed");
-    setDemoRetainerState("signed");
-    setRetainerSignedDate("Jun 9, 2026");
-    setAgreementUploaded(false);
-    setShowMarkSignedModal(false);
+  const handleConfirmSigned = async () => {
+    if (await markRetainerSigned(retainerPickedFile ?? undefined)) setShowMarkSignedModal(false);
+  };
+
+  const handleAddLater = async () => {
+    if (await markRetainerSigned()) setShowMarkSignedModal(false);
   };
 
   const handleUploadAgreement = () => {
@@ -573,7 +607,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
   };
 
   const handleResendRetainer = () => {
-    setRetainerSentDate("Jun 9, 2026");
+    setRetainerSentDate(today());
   };
 
   // Preview and Insights open the same unified Document Workspace into different views:
@@ -584,11 +618,13 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
     setShowDocumentPreview(true);
     setOpenActionMenu(null);
   };
-  const handlePreviewDocument = (document: any) => openDocumentWorkspace(document, "preview");
-  const handleOpenInsights = (document: any) => openDocumentWorkspace(document, "insights");
+  const handlePreviewDocument = (document: any) => { if (document?.history) acknowledge(document); openDocumentWorkspace(document, "preview"); };
+  const handleOpenInsights = (document: any) => { if (document?.history) acknowledge(document); openDocumentWorkspace(document, "insights"); };
 
-  const handleDownloadDocument = (_document: any) => {
-    // Prototype: direct download is a no-op stand-in for the real file export.
+  const handleDownloadDocument = (document: any) => {
+    // The stored original, when there is one; records without a stored file
+    // offer no download.
+    if (document?.storageKey) void downloadMediaFile(document.storageKey, document.name);
     setOpenActionMenu(null);
   };
 
@@ -599,25 +635,206 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
   const [uploadedFileNames, setUploadedFileNames] = useState<string[]>([]);
   const [showUploadSuccess, setShowUploadSuccess] = useState(false);
 
+  // Documents are updated from their latest value, so a check finishing never
+  // overwrites another document's change.
+  const updateDocs = (fn: (docs: CaseDocument[]) => CaseDocument[]) =>
+    onDocumentsUpdate ? onDocumentsUpdate(fn) : onPipelineUpdate({ documents: fn(sharedDocs) });
+  const patchDoc = (id: string, patch: Partial<CaseDocument>, event?: string) =>
+    updateDocs((ds) => ds.map((d) => (d.id === id
+      ? { ...d, ...patch, history: event ? [...(d.history ?? []), { at: nowLabel(), event }] : d.history }
+      : d)));
+
+  /** Runs the file check on a stored document and records the outcome. */
+  const runCheck = async (doc: CaseDocument, file: Blob) => {
+    patchDoc(doc.id, { status: "Processing", checkError: undefined, checkResult: undefined, reviewReason: undefined }, "File check started");
+    try {
+      const result = await checkDocument(file, doc.name);
+      // A file the system cannot file under a category needs the attorney to decide.
+      const category = doc.category ?? classifyDocuments([doc])[0]?.name;
+      if (category === "General Documents") {
+        patchDoc(doc.id, { status: "Attorney Review Required", checkResult: result, reviewReason: "The category could not be determined from the file name — set its category." }, "Needs attorney review: category not determined");
+      } else {
+        patchDoc(doc.id, { status: "Processed", checkResult: result }, "File check passed");
+      }
+    } catch (e) {
+      if (e instanceof NeedsAttorney) patchDoc(doc.id, { status: "Attorney Review Required", reviewReason: e.message }, "Needs attorney review: file type not checkable");
+      else patchDoc(doc.id, { status: "Failed", checkError: (e as Error).message }, `File check failed: ${(e as Error).message}`);
+    }
+  };
+
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     if (files.length === 0) return;
     const existing = new Set(sharedDocs.map((d) => d.name));
-    const newDocs: typeof sharedDocs = files
-      .filter((f) => !existing.has(f.name))
-      .map((f) => ({
-        id: `${Date.now()}-${f.name}`,
-        name: f.name,
-        source: "Attorney" as const,
-        date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-        status: "Processed" as const,
-      }));
+    const fresh = files.filter((f) => !existing.has(f.name));
+    const date = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const newDocs: CaseDocument[] = fresh.map((f, i) => ({
+      id: `${Date.now()}-${i}-${f.name}`,
+      name: f.name,
+      source: "Attorney",
+      date,
+      size: f.size,
+      status: "Queued",
+      history: [{ at: nowLabel(), event: "Uploaded" }],
+    }));
     if (newDocs.length > 0) {
-      onPipelineUpdate({ documents: [...sharedDocs, ...newDocs] });
+      updateDocs((ds) => [...ds, ...newDocs]);
       setUploadedFileNames(newDocs.map((d) => d.name));
       setShowUploadSuccess(true);
+      // Store each original, then check it — one at a time per file.
+      newDocs.forEach(async (doc, i) => {
+        try {
+          const storageKey = await putMediaFile(fresh[i]);
+          patchDoc(doc.id, { storageKey }, "Original stored in this browser");
+          await runCheck(doc, fresh[i]);
+        } catch {
+          patchDoc(doc.id, { status: "Failed", checkError: "The file could not be stored in this browser" }, "Storing the file failed");
+        }
+      });
     }
     e.target.value = "";
+  };
+
+  /** Retry: the stored original is checked again. */
+  const retryDoc = async (doc: CaseDocument) => {
+    const blob = await getMediaFile(doc.storageKey).catch(() => undefined);
+    if (!blob) {
+      patchDoc(doc.id, { status: "Failed", checkError: "The original file is not stored in this browser — upload it again" }, "Retry failed: original not stored");
+      return;
+    }
+    patchDoc(doc.id, { status: "Queued" }, "Retry requested");
+    await runCheck(doc, blob);
+  };
+
+  // ── Client submissions → case documents ──
+  // Each file a client submits through a request becomes one case document,
+  // sourced to the client and tied to its request — the same record the
+  // Documents tab lists and the request progress reads. Added once; one the
+  // attorney deletes is not added again.
+  const syncedUploads = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const onFile = new Set(sharedDocs.map((d) => d.intakeUploadId).filter(Boolean) as string[]);
+    const fresh: { doc: CaseDocument; storageKey?: string }[] = [];
+    for (const r of storedRequests) {
+      const removed = new Set(r.removedUploadIds ?? []);
+      for (const s of r.submissions ?? []) {
+        for (const id of s.documentIds) {
+          if (onFile.has(id) || removed.has(id) || syncedUploads.current.has(id)) continue;
+          const u = r.uploads.find((x) => x.id === id);
+          if (!u) continue;
+          syncedUploads.current.add(id);
+          fresh.push({
+            storageKey: u.storageKey,
+            doc: {
+              id: `intake-${id}`,
+              name: u.name,
+              source: "Plaintiff",
+              date: formatShortDate(s.submittedAt),
+              size: u.size,
+              status: u.storageKey ? "Queued" : "Failed",
+              checkError: u.storageKey ? undefined : "The client's original file was not stored, so it could not be checked — ask the client to upload it again.",
+              storageKey: u.storageKey,
+              requestId: r.id,
+              intakeUploadId: id,
+              receivedAt: s.submittedAt,
+              history: [{ at: nowLabel(), event: `Received from the client with ${r.id}` }],
+            },
+          });
+        }
+      }
+    }
+    if (fresh.length === 0) return;
+    updateDocs((ds) => [...ds, ...fresh.filter((f) => !ds.some((d) => d.intakeUploadId === f.doc.intakeUploadId)).map((f) => f.doc)]);
+    fresh.forEach(async (f) => {
+      if (!f.storageKey) return;
+      const blob = await getMediaFile(f.storageKey).catch(() => undefined);
+      if (!blob) {
+        patchDoc(f.doc.id, { status: "Failed", checkError: "The client's original file is not stored in this browser." }, "Original not found");
+        return;
+      }
+      await runCheck(f.doc, blob);
+    });
+  }, [storedRequests, sharedDocs.length]);
+
+  // ── Retainer documents — held on the page; editing changes details only ──
+  type RetainerDoc = (typeof allRetainerDocuments)[number] & { id: string };
+  const [retainerDocs, setRetainerDocs] = useState<RetainerDoc[]>(() => allRetainerDocuments.map((d, i) => ({ ...d, id: `ret-${i}` })));
+  const [retainerEdit, setRetainerEdit] = useState<RetainerDoc | null>(null);
+  const [retainerEditError, setRetainerEditError] = useState<string | null>(null);
+  const [retainerDelete, setRetainerDelete] = useState<RetainerDoc | null>(null);
+  const saveRetainerEdit = () => {
+    if (!retainerEdit) return;
+    const name = retainerEdit.name.trim();
+    if (!name) { setRetainerEditError("A document name is required."); return; }
+    if (!/\.[a-z0-9]+$/i.test(name)) { setRetainerEditError("Keep the file extension, for example .pdf."); return; }
+    if (retainerDocs.some((d) => d.id !== retainerEdit.id && d.name === name)) { setRetainerEditError("Another retainer document already has that name."); return; }
+    if (!retainerEdit.date.trim()) { setRetainerEditError("A date is required."); return; }
+    setRetainerDocs((ds) => ds.map((d) => (d.id === retainerEdit.id ? { ...d, name, source: retainerEdit.source, date: retainerEdit.date.trim() } : d)));
+    setRetainerEdit(null);
+  };
+
+  // ── Edit, delete, review ──
+  const [editDoc, setEditDoc] = useState<CaseDocument | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", category: "", source: "Attorney" as CaseDocument["source"], date: "" });
+  const [editError, setEditError] = useState<string | null>(null);
+  const [deleteDoc, setDeleteDoc] = useState<CaseDocument | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [reviewDoc, setReviewDoc] = useState<CaseDocument | null>(null);
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewCategory, setReviewCategory] = useState("");
+  /** The attorney has seen this document's current status. */
+  const acknowledge = (doc: CaseDocument) => { if (isUnseen(doc)) patchDoc(doc.id, { seenStatus: doc.status }); };
+  const openEdit = (doc: CaseDocument) => {
+    acknowledge(doc);
+    setEditDoc(doc);
+    setEditForm({ name: doc.name, category: doc.category ?? "", source: doc.source, date: doc.date });
+    setEditError(null);
+  };
+  const saveEdit = () => {
+    if (!editDoc) return;
+    const name = editForm.name.trim();
+    if (!name) { setEditError("A document name is required."); return; }
+    if (!/\.[a-z0-9]+$/i.test(name)) { setEditError("Keep the file extension, for example .pdf."); return; }
+    if (sharedDocs.some((d) => d.id !== editDoc.id && d.name === name)) { setEditError("Another document on this case already has that name."); return; }
+    if (!editForm.date.trim()) { setEditError("A date is required."); return; }
+    const changed = [
+      name !== editDoc.name && "name",
+      (editForm.category || undefined) !== editDoc.category && "category",
+      editForm.source !== editDoc.source && "source",
+      editForm.date.trim() !== editDoc.date && "date",
+    ].filter(Boolean);
+    // Details only — the stored file and its check stand.
+    patchDoc(editDoc.id, { name, category: editForm.category || undefined, source: editForm.source, date: editForm.date.trim() },
+      changed.length ? `Details edited: ${changed.join(", ")}` : undefined);
+    setEditDoc(null);
+  };
+  const confirmDelete = async () => {
+    if (!deleteDoc) return;
+    try {
+      if (deleteDoc.storageKey) await deleteMediaFile(deleteDoc.storageKey);
+      updateDocs((ds) => ds.filter((d) => d.id !== deleteDoc.id));
+      const fromRequest = deleteDoc.intakeUploadId ? storedRequests.find((r) => r.id === deleteDoc.requestId) : undefined;
+      if (fromRequest && deleteDoc.intakeUploadId) {
+        const uploadId = deleteDoc.intakeUploadId;
+        updateIntakeRequest(fromRequest.token, (r) => ({ removedUploadIds: [...(r.removedUploadIds ?? []), uploadId] }));
+      }
+      setDeleteDoc(null);
+    } catch {
+      setDeleteError("The stored file could not be removed from this browser. The document was not deleted.");
+    }
+  };
+  const openReview = (doc: CaseDocument) => {
+    acknowledge(doc);
+    setReviewDoc(doc);
+    setReviewNote("");
+    setReviewCategory(doc.category ?? "");
+  };
+  const markReviewed = () => {
+    if (!reviewDoc) return;
+    const patch: Partial<CaseDocument> = { status: "Reviewed", seenStatus: "Reviewed" };
+    if (reviewCategory && reviewCategory !== reviewDoc.category) patch.category = reviewCategory;
+    patchDoc(reviewDoc.id, patch, `Reviewed by ${INTAKE_SENDER.name}${patch.category ? ` · category set to ${patch.category}` : ""}${reviewNote.trim() ? ` — ${reviewNote.trim()}` : ""}`);
+    setReviewDoc(null);
   };
 
   // ── Video & photos — one upload flow, opened from the header menu and from
@@ -757,7 +974,8 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
   // Classification derived from shared docs
   const classifiedCategories = classifyDocuments(sharedDocs);
   const classifiedCount = classifiedCategories.reduce((n, c) => n + c.docs.length, 0);
-  const missingEvidence = detectMissingEvidence(classifiedCategories);
+  // A file that failed its check does not count as received evidence.
+  const missingEvidence = detectMissingEvidence(classifyDocuments(sharedDocs.filter((d) => d.status !== "Failed")));
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
   const toggleCategory = (name: string) =>
     setExpandedCategories((prev) => ({ ...prev, [name]: prev[name] === false ? true : false }));
@@ -768,12 +986,20 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
   const [missingCheckedDocs, setMissingCheckedDocs] = useState<Record<string, boolean>>({});
   const [missingDeliveryMethod, setMissingDeliveryMethod] = useState<"email" | "sms">("email");
   const [missingMessageText, setMissingMessageText] = useState("");
+  // What the request asks for, and the request it follows up (if any).
+  const [missingItems, setMissingItems] = useState<{ title: string; expected?: string }[]>([]);
+  const [missingFollowUpOf, setMissingFollowUpOf] = useState<string | undefined>(undefined);
+  const [missingError, setMissingError] = useState<string | null>(null);
 
   const generateMissingMessage = (docs: string[]) =>
     `Hello ${data.plaintiff},\n\nWe are currently reviewing your case and require additional documents to continue our evaluation.\n\nRequested Documents:\n${docs.map((d) => `• ${d}`).join("\n")}\n\nPlease upload the requested documents using your secure intake link.\n\nIf you have any questions or are unable to obtain a document, please contact our office.\n\nThank you,\nJennifer Davis\nLexGuard Injury Intel`;
 
-  const openMissingRequestModal = () => {
-    const allTitles = missingEvidence.map((m) => m.title);
+  const openMissingRequestModal = (items: { title: string; expected?: string }[] = missingEvidence, followUpOf?: string) => {
+    const allTitles = items.map((m) => m.title);
+    setMissingItems(items);
+    setMissingFollowUpOf(followUpOf ?? storedRequests[storedRequests.length - 1]?.id);
+    setMissingError(null);
+    setMissingDeliveryMethod(data.plaintiffEmail ? "email" : "sms");
     setMissingCheckedDocs(Object.fromEntries(allTitles.map((t) => [t, true])));
     setMissingMessageText(generateMissingMessage(allTitles));
     setShowMissingRequestModal(true);
@@ -782,11 +1008,44 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
   const handleMissingDocCheck = (title: string, checked: boolean) => {
     const next = { ...missingCheckedDocs, [title]: checked };
     setMissingCheckedDocs(next);
-    const selected = missingEvidence.filter((m) => next[m.title]).map((m) => m.title);
+    const selected = missingItems.filter((m) => next[m.title]).map((m) => m.title);
     setMissingMessageText(generateMissingMessage(selected));
   };
 
-  const selectedMissingTitles = missingEvidence.filter((m) => missingCheckedDocs[m.title]).map((m) => m.title);
+  // Sends the follow-up as a real request — unless one still waiting for the
+  // client already asks for the same documents.
+  const handleSendMissingRequest = () => {
+    const docs = missingItems.filter((m) => missingCheckedDocs[m.title]).map((m) => m.title);
+    if (docs.length === 0) return;
+    const waiting = storedRequests.find((r) =>
+      !(r.submissions?.length) && r.status !== "Completed" && r.status !== "Cancelled" && r.status !== "Expired"
+      && docs.every((d) => r.requestedDocs.includes(d)));
+    if (waiting) {
+      setMissingError(`${waiting.id} already asks for ${docs.length === 1 ? "this document" : "these documents"} and is waiting for the client — resend it instead of creating another request.`);
+      return;
+    }
+    const email = missingDeliveryMethod === "email" ? (editableEmail || data.plaintiffEmail) : undefined;
+    const phone = missingDeliveryMethod === "sms" ? editablePhone : undefined;
+    if (!email && !phone) { setMissingError("There is no contact on file for this delivery method."); return; }
+    const created = createIntakeRequest({
+      caseId: data.caseId,
+      caseName: data.caseName,
+      plaintiff: data.plaintiff,
+      sender: INTAKE_SENDER,
+      deliveryMethod: missingDeliveryMethod,
+      recipientEmail: email,
+      recipientPhone: phone,
+      requestedDocs: docs,
+      requestedMedia: NO_MEDIA,
+      instructions: missingMessageText.trim(),
+      followUpOf: missingFollowUpOf,
+    });
+    setIntakeSent(true);
+    setProgressReqId(created.id);
+    setShowMissingRequestModal(false);
+  };
+
+  const selectedMissingTitles = missingItems.filter((m) => missingCheckedDocs[m.title]).map((m) => m.title);
 
   const handleCopyRetainerLink = () => {
     const textArea = document.createElement("textarea");
@@ -821,7 +1080,8 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
     template: selectedTemplateName || "Personal Injury Retainer Agreement v1",
     sentDate: retainerSentDate || "Jun 9, 2026",
     signedDate: retainerSignedDate || "Jun 11, 2026",
-    signedDocName: "Signed_PI_Retainer.pdf",
+    // Signed by the attorney's confirmation: the file they uploaded, if any.
+    signedDocName: retainerSource === "attorney" ? retainerFile?.name : "Signed_PI_Retainer.pdf",
     sentDocName: "PI_Retainer_Agreement.pdf",
   };
   const effectiveRetainers: RetainerVersion[] = retainerVersions.length > 0
@@ -834,7 +1094,10 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
   const intakeResponseReceived = intakeRequests.some((r) => r.status === "Completed")
     || (intakeRequests.length === 0 && intakeAlreadySent);
   const documentsReceived = sharedDocs.length > 0;
-  const processingComplete = documentsReceived && sharedDocs.every((d) => d.status === "Processed");
+  const processingComplete = documentsReceived && sharedDocs.every((d) => processingFinished(d) && d.status !== "Failed");
+  // Counted as the Processed filter counts them, so the summary, the filters
+  // and the checklist always agree.
+  const docsFinishedOk = sharedDocs.filter((d) => inFilter(d.status, "processed")).length;
   const missingDocCount = missingEvidence.length;
   const missingDocNames = missingEvidence.map((m) => m.title);
 
@@ -846,11 +1109,18 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
 
 
   // Sidebar task navigation: expand + scroll to the matching workspace section
-  const focusSection = (key: "retainer" | "request" | "documents") => {
-    setActiveTab(key);
-    setAccordionOpen((prev) => ({ ...prev, [key]: true }));
+  const focusSection = (key: "retainer" | "request" | "documents" | "missing") => {
+    setActiveTab(key === "documents" ? "documents" : "request");
+    if (key !== "missing") setAccordionOpen((prev) => ({ ...prev, [key]: true }));
+    if (key === "retainer") setCardPanel("retainer");
+    const id = {
+      retainer: "card-panel",
+      request: storedRequests.length > 0 ? "request-progress" : "collection-cards",
+      documents: missingDocCount > 0 && documentsReceived ? "missing-docs-documents" : "documents-section",
+      missing: "missing-docs-section",
+    }[key];
     setTimeout(() => {
-      document.getElementById("workspace-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 60);
   };
 
@@ -864,7 +1134,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
       if (prev.length === 0) return prev;
       const maxId = Math.max(...prev.map((r) => r.id));
       return prev.map((r) => r.id === maxId
-        ? { ...r, status: state === "signed" ? "Signed" : "Awaiting Signature", signedDate: state === "signed" ? (r.signedDate || "Jun 12, 2026") : r.signedDate, signedDocName: state === "signed" ? (r.signedDocName || "Signed_PI_Retainer.pdf") : r.signedDocName }
+        ? { ...r, status: state === "signed" ? "Signed" : "Awaiting Signature", signedDate: state === "signed" ? (r.signedDate || "Jun 12, 2026") : r.signedDate, signedDocName: state === "signed" ? (r.signedDocName || "No signed document uploaded") : r.signedDocName }
         : r);
     });
   };
@@ -900,13 +1170,374 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
       name: "Documents",
       Icon: processingComplete ? CheckCircle : documentsReceived ? AlertTriangle : Circle,
       iconColor: processingComplete ? "text-brand" : documentsReceived ? "text-amber-600" : "text-[#9BDAEC]",
-      status: !documentsReceived ? "Awaiting documents" : missingDocCount > 0 ? `${sharedDocs.length} processed · ${missingDocCount} missing` : `${sharedDocs.length} processed`,
+      status: !documentsReceived ? "Awaiting documents" : missingDocCount > 0 ? `${docsFinishedOk} processed · ${missingDocCount} missing` : `${docsFinishedOk} processed`,
       statusColor: processingComplete ? "text-deep" : documentsReceived ? "text-amber-700" : "text-[#5B6B78]",
       CtaIcon: ListChecks,
       cta: missingDocCount > 0 ? "Check missing docs" : "Review documents",
       primary: false,
     },
   ];
+
+  // ── Status filters ──
+  const [docFilter, setDocFilter] = useState<DocFilter>("all");
+  const [docSearch, setDocSearch] = useState("");
+  // Statuses of what the current Documents sub-tab lists: case documents, or
+  // media files by their file check.
+  const mediaStatuses = [...media.videos.map((v) => v.file), ...media.sets.flatMap((x) => x.files)].map((f) => mediaDocStatus(mediaFileStatus(f)));
+  const listStatuses = documentsSubTab === "media" ? mediaStatuses : sharedDocs.map((d) => d.status);
+  const filterCount = (f: DocFilter) => listStatuses.filter((st) => inFilter(st, f)).length;
+  // New activity: documents whose current status the attorney has not seen.
+  const unseenDocs = sharedDocs.filter(isUnseen);
+  const hasNew = (f: DocFilter) => f !== "all" && unseenDocs.some((d) => inFilter(d.status, f));
+  const DOC_FILTERS: { key: DocFilter; label: string }[] = [
+    { key: "all", label: "All Documents" },
+    { key: "processing", label: "Processing" },
+    { key: "processed", label: "Processed" },
+    { key: "review", label: "Needs Review" },
+    { key: "failed", label: "Failed" },
+  ];
+  const matchesSearch = (name: string) => !docSearch.trim() || name.toLowerCase().includes(docSearch.trim().toLowerCase());
+  const visibleDoc = (d: CaseDocument) => inFilter(d.status, docFilter) && matchesSearch(d.name);
+  const visibleDocCount = sharedDocs.filter(visibleDoc).length;
+  const unseenInFilter = unseenDocs.filter((d) => inFilter(d.status, docFilter));
+  const organizedCount = classifiedCategories.filter((c) => c.name !== "General Documents").reduce((n, c) => n + c.docs.length, 0);
+  const reviewCount = sharedDocs.filter((d) => d.status === "Attorney Review Required").length;
+  const runningCount = sharedDocs.filter((d) => !processingFinished(d)).length;
+  const failedCount = sharedDocs.filter((d) => d.status === "Failed").length;
+
+  // The missing-documents panel, shown in both Intake Request and Documents.
+  // Both read the same missing-evidence list and open the same request, so the
+  // count, the names and any request stay in step wherever it is used.
+  const missingDocsPanel = (id: string) =>
+    documentsReceived && missingDocCount > 0 ? (
+      <div id={id} className="rounded-xl p-5 scroll-mt-[150px]" style={{ background: "#FAEEDA", border: "1px solid #FAC775" }}>
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "#854F0B" }} strokeWidth={1.75} />
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold mb-1" style={{ color: "#854F0B" }}>
+              {missingDocCount} Document{missingDocCount === 1 ? "" : "s"} Still Missing
+            </h3>
+            <ul className="space-y-0.5 mb-4">
+              {missingDocNames.map((name) => (
+                <li key={name} className="text-sm" style={{ color: "#854F0B" }}>• {name}</li>
+              ))}
+            </ul>
+            <button
+              onClick={() => openMissingRequestModal()}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
+              style={{ background: "#B45309" }}
+            >
+              <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request All Missing
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+  // The status filters and search — shown below the processing summary on case
+  // evidence, and above the media list; retainer agreements have a signing
+  // status instead.
+  const statusFilterBar = documentsSubTab !== "retainer" && (sharedDocs.length > 0 || documentsSubTab === "media") ? (
+                    <div className="mb-4 space-y-2">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <div role="tablist" aria-label="Filter by status" className="flex-1 min-w-0 rounded-xl border border-line bg-white p-1 flex items-center gap-1 overflow-x-auto">
+                          {[...DOC_FILTERS, ...(filterCount("reviewed") > 0 || docFilter === "reviewed" ? [{ key: "reviewed" as DocFilter, label: "Reviewed" }] : [])].map((f) => {
+                            const on = docFilter === f.key;
+                            return (
+                              <button
+                                key={f.key}
+                                role="tab"
+                                aria-selected={on}
+                                onClick={() => setDocFilter(f.key)}
+                                className={`relative flex-1 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+                                  on ? "bg-brand text-white shadow-sm" : "text-[#5B6B78] hover:text-ink hover:bg-wash"
+                                }`}
+                              >
+                                {f.label} <span className={on ? "text-white/80" : "text-[#8A98A3]"}>({filterCount(f.key)})</span>
+                                {documentsSubTab !== "media" && hasNew(f.key) && (
+                                  <span aria-label="New activity" title="New activity" className={`absolute top-1 right-1.5 w-2 h-2 rounded-full ${on ? "bg-white" : "bg-[#F59E0B]"}`} />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {documentsSubTab !== "media" && (
+                          <div className="relative w-full sm:w-56">
+                            <Search className="w-4 h-4 text-[#8A98A3] absolute left-3 top-1/2 -translate-y-1/2" strokeWidth={1.75} />
+                            <input
+                              value={docSearch}
+                              onChange={(e) => setDocSearch(e.target.value)}
+                              placeholder="Search documents"
+                              aria-label="Search documents by name"
+                              className="w-full pl-9 pr-3 py-2 rounded-lg border border-line bg-white text-sm focus:outline-none focus:border-brand"
+                            />
+                          </div>
+                        )}
+                      </div>
+                      {documentsSubTab !== "media" && unseenInFilter.length > 0 && (
+                        <div className="flex justify-end text-xs">
+                          <button
+                            onClick={() => unseenInFilter.forEach((d) => patchDoc(d.id, { seenStatus: d.status }))}
+                            className="font-semibold text-deep hover:underline"
+                          >
+                            Mark {unseenInFilter.length} as seen
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : null;
+
+  // ── Intake request progress — read from the stored request records ──
+  // What satisfies a requested document: the categories its files fall under,
+  // or, for the missing-evidence items, what that check looks for. A name with
+  // no rule is never marked received automatically.
+  const REQUIREMENT_MATCH: Record<string, (d: CaseDocument, category: string) => boolean> = {
+    ...Object.fromEntries(Object.entries(REQUESTED_DOC_CATEGORIES).map(([k, cats]) => [k, (_d: CaseDocument, c: string) => cats.includes(c)])),
+    "Police Report Addendum": (d) => d.name.toLowerCase().includes("addendum"),
+    "Insurance Policy": (_d, c) => c === "Insurance Documents",
+  };
+  const categoryOf = (d: CaseDocument) => d.category ?? classifyDocuments([d]).find((c) => c.docs.length > 0)?.name ?? "General Documents";
+  // Fulfilment — has the requested item arrived? Separate from file processing.
+  type ReqState = "Received" | "On file" | "Partially received" | "Uploaded, not submitted" | "Not received" | "Not matched";
+  // Parts a requirement still needs even once files for it are on file — the
+  // case file check names them (a police report without its addendum).
+  const REQUIREMENT_PARTS: Record<string, string[]> = {
+    "Police Report": ["Police Report Addendum"],
+  };
+  interface ReqFile { key: string; name: string; at?: string; source: string; status?: CaseDocument["status"]; doc?: CaseDocument }
+  interface ReqRow { name: string; kind: "document" | "media"; state: ReqState; files: ReqFile[]; missingParts?: string[]; viaCaseFile?: boolean }
+  const REQ_STATE_LABEL: Record<ReqState, string> = {
+    Received: "Received", "On file": "Not received", "Partially received": "Partially received", "Uploaded, not submitted": "Not received",
+    "Not received": "Not received", "Not matched": "Can't be determined",
+  };
+  const REQ_STATE_PILL: Record<ReqState, string> = {
+    Received: "pill pill-complete", "On file": "pill pill-risk", "Partially received": "pill pill-progress", "Uploaded, not submitted": "pill pill-risk",
+    "Not received": "pill pill-risk", "Not matched": "pill pill-neutral",
+  };
+  const REQ_STATE_NOTE: Partial<Record<ReqState, string>> = {
+    "Uploaded, not submitted": "The client has uploaded a file but not submitted it yet.",
+    "Not matched": "This item can't be matched to files automatically — check the Documents tab.",
+    "Not received": "No file received yet.",
+    "On file": "Not received from the client — the file on record is the attorney's own upload.",
+  };
+  const REQUEST_STATUS_PILL: Record<string, string> = {
+    Completed: "pill pill-complete", "Partially received": "pill pill-progress", "In progress": "pill pill-progress",
+    Opened: "pill pill-neutral", Sent: "pill pill-neutral", Cancelled: "pill pill-risk", Expired: "pill pill-risk",
+  };
+  const atLabel = (at?: string) => (!at ? "" : at.includes("T") ? sentLabel(at) : at);
+
+  const progressOf = (r: IntakeRequest) => {
+    const submitted = (r.submissions?.length ?? 0) > 0;
+    // Answered before submissions were recorded (the sample cases): the
+    // case's own documents stand in for the client's answer, labelled as such.
+    const legacy = !submitted && r.status === "Completed";
+    const sentIds = new Set((r.submissions ?? []).flatMap((s) => s.documentIds));
+    const removed = new Set(r.removedUploadIds ?? []);
+    const clientDocs = sharedDocs.filter((d) => d.requestId === r.id);
+    const pending = r.uploads.filter((u) => !sentIds.has(u.id) && !removed.has(u.id));
+    const attorneyDocs = sharedDocs.filter((d) => d.source === "Attorney");
+    const fileOf = (d: CaseDocument, source: string): ReqFile => ({ key: d.id, name: d.name, at: d.receivedAt ?? d.date, source, status: d.status, doc: d });
+    const rows: ReqRow[] = r.requestedDocs.map((name): ReqRow => {
+      const match = REQUIREMENT_MATCH[name];
+      if (!match) return { name, kind: "document", state: "Not matched", files: [] };
+      const hits = (ds: CaseDocument[]) => ds.filter((d) => match(d, categoryOf(d)));
+      if (legacy) {
+        // Answered before the app recorded which files came through a request:
+        // there is no request-to-file link, so the matching files on the case
+        // file fulfil the item, whoever uploaded them, and the row says so.
+        // Requests with recorded submissions count only the client's files.
+        const fromClient = hits(sharedDocs.filter((d) => d.source === "Plaintiff"));
+        const fromAttorney = hits(attorneyDocs);
+        const files = [...fromClient.map((d) => fileOf(d, "Client")), ...fromAttorney.map((d) => fileOf(d, "Attorney upload"))];
+        return { name, kind: "document", state: files.length ? "Received" : "Not received", files, viaCaseFile: files.length > 0 && fromClient.length === 0 };
+      }
+      const got = hits(clientDocs);
+      if (got.length) return { name, kind: "document", state: "Received", files: got.map((d) => fileOf(d, "Client submission")) };
+      const pend = pending.filter((u) => {
+        const asDoc: CaseDocument = { id: u.id, name: u.name, source: "Plaintiff", date: "", status: "Queued" };
+        return match(asDoc, categoryOf(asDoc));
+      });
+      if (pend.length) return { name, kind: "document", state: "Uploaded, not submitted", files: pend.map((u) => ({ key: u.id, name: u.name, at: u.uploadedAt, source: "Client upload" })) };
+      const onFile = hits(attorneyDocs);
+      if (onFile.length) return { name, kind: "document", state: "On file", files: onFile.map((d) => fileOf(d, "Attorney upload")) };
+      return { name, kind: "document", state: "Not received", files: [] };
+    });
+    // A requirement with files on file is still outstanding while a part of it
+    // is missing from the case file.
+    rows.forEach((row, i) => {
+      if (row.state !== "Received") return;
+      const parts = (REQUIREMENT_PARTS[row.name] ?? []).filter((t) => missingEvidence.some((m) => m.title === t));
+      if (parts.length) rows[i] = { ...row, state: "Partially received", missingParts: parts };
+    });
+    // The video & photos it asked for, from the media records sent with it.
+    for (const o of selectedMediaOptions(r.requestedMedia)) {
+      const files: ReqFile[] = o.key === "videos"
+        ? media.videos.filter((v) => v.source === "Client" && v.requestId === r.id)
+            .map((v) => ({ key: v.id, name: v.file.name, at: v.uploadedAt, source: "Client submission", status: mediaDocStatus(mediaFileStatus(v.file)) }))
+        : media.sets.filter((x) => x.source === "Client" && x.requestId === r.id && x.kind === (o.key === "scenePhotos" ? "scene" : "medical"))
+            .flatMap((x) => x.files.map((f) => ({ key: `${x.id}-${f.number}`, name: f.name, at: x.uploadedAt, source: "Client submission", status: mediaDocStatus(mediaFileStatus(f)) })));
+      rows.push({ name: o.title, kind: "media", state: files.length ? "Received" : "Not received", files });
+    }
+    const total = rows.length;
+    // An item is received only when the client's own files fulfil it.
+    const satisfied = rows.filter((x) => x.state === "Received").length;
+    const outstanding = rows.filter((x) => x.state !== "Received");
+    const pct = total ? Math.round((satisfied / total) * 100) : 0;
+    const responded = submitted || legacy;
+    const status = r.status === "Cancelled" || r.status === "Expired" ? r.status
+      : responded ? (outstanding.length ? "Partially received" : "Completed")
+      : pending.length ? "In progress" : r.openedAt ? "Opened" : "Sent";
+
+    // Only what the record holds — nothing assumed, no invented times.
+    const recipient = (r.deliveryMethod === "sms" ? r.recipientPhone : r.recipientEmail) ?? r.plaintiff;
+    const events: { at?: string; title: string; detail?: string }[] = [];
+    events.push({
+      at: r.createdAt,
+      title: r.followUpOf ? `Follow-up to ${r.followUpOf} created and sent` : "Request created and sent",
+      detail: `${r.deliveryMethod === "sms" ? "SMS" : "Email"} to ${recipient} · ${r.requestedDocs.length} ${r.requestedDocs.length === 1 ? "document" : "documents"} requested`,
+    });
+    if (r.lastModifiedAt) events.push({ at: r.lastModifiedAt, title: `Request modified and re-sent (v${r.version})` });
+    if (r.lastSentAt && r.lastSentAt !== r.createdAt && r.lastSentAt !== r.lastModifiedAt) events.push({ at: r.lastSentAt, title: "Request re-sent", detail: "Only the latest re-send is recorded" });
+    if (r.openedAt) events.push({ at: r.openedAt, title: "Client opened the request link" });
+    const firstUpload = [...r.uploads].sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt))[0];
+    if (firstUpload) events.push({ at: firstUpload.uploadedAt, title: "Client started uploading" });
+    (r.submissions ?? []).forEach((s, i) => {
+      const m = (s.media?.videoIds.length ?? 0) + (s.media?.setIds.length ?? 0);
+      events.push({
+        at: s.submittedAt,
+        title: i === 0 ? "Documents received" : "Additional documents submitted",
+        detail: `${s.documentIds.length} ${s.documentIds.length === 1 ? "file" : "files"}${m ? ` · ${m} video or photo ${m === 1 ? "item" : "items"}` : ""}`,
+      });
+    });
+    storedRequests.filter((x) => x.followUpOf === r.id).forEach((x) =>
+      events.push({ at: x.createdAt, title: `Follow-up sent (${x.id})`, detail: x.requestedDocs.join(", ") }));
+    if (submitted && status === "Completed") {
+      events.push({ at: r.submissions![r.submissions!.length - 1].submittedAt, title: "Request completed", detail: "Every requested item has been received" });
+    }
+    if (legacy) events.push({ title: "Client response recorded", detail: "Recorded before submissions were tracked, so no time was recorded" });
+    events.sort((a, b) => (a.at && b.at ? a.at.localeCompare(b.at) : a.at ? -1 : b.at ? 1 : 0));
+    const notes = [...(r.submissions ?? [])].reverse().find((s) => s.notes)?.notes;
+    // The files the client's answer brought: the submitted uploads (or, for an
+    // answer recorded before submissions were, the case's documents).
+    const receivedFiles = legacy
+      ? sharedDocs.map((d) => d.name)
+      : r.uploads.filter((u) => sentIds.has(u.id) && !removed.has(u.id)).map((u) => u.name);
+    return { rows, total, satisfied, outstanding, pct, status, events, legacy, submitted, responded, recipient, notes, receivedFiles };
+  };
+
+  const [progressReqId, setProgressReqId] = useState<string | null>(null);
+  const [requestedListOpen, setRequestedListOpen] = useState(false);
+  const currentReq = storedRequests.find((r) => r.id === progressReqId) ?? storedRequests[storedRequests.length - 1];
+  const cur = currentReq ? progressOf(currentReq) : null;
+  const latestReq = storedRequests[storedRequests.length - 1];
+  // Whether a request has actually gone out — a draft has not.
+  const sentReq = storedRequests.some((r) => r.status !== "Draft");
+  const latestProgress = latestReq ? progressOf(latestReq) : null;
+  // One additional request at a time: another is offered once the last one
+  // the client has not answered yet is answered.
+  const waitingAdditional = storedRequests.find((r, i) => i > 0 && !r.followUpOf && !(r.submissions?.length) && r.status !== "Completed");
+  const openCreateRequest = () => { setIntakeModalMode("create"); setActiveModifyId(null); setEmailError(false); setShowIntakeModal(true); };
+  const requestOutstanding = (r: IntakeRequest, pr: ReturnType<typeof progressOf>) =>
+    openMissingRequestModal(pr.outstanding.filter((x) => x.kind === "document").flatMap((x) => x.missingParts ?? [x.name]).map((title) => ({ title })), r.id);
+  // Missing from the case file and not asked for in any request yet.
+  // The missing-evidence check and the request form name some items differently.
+  const SAME_REQUIREMENT: Record<string, string[]> = { "Insurance Policy": ["Insurance Documents"], "Wage Loss Records": ["Employment Records"] };
+  // A part of a requested requirement is outstanding under that requirement.
+  const requestedParts = new Set(storedRequests.flatMap((r) => r.requestedDocs.flatMap((d) => REQUIREMENT_PARTS[d] ?? [])));
+  const notYetRequested = missingEvidence.filter((m) => !requestedParts.has(m.title) &&
+    !storedRequests.some((r) => [m.title, ...(SAME_REQUIREMENT[m.title] ?? [])].some((t) => r.requestedDocs.includes(t))));
+  // The expanded detail panel under the four cards — one at a time.
+  const [cardPanel, setCardPanel] = useState<"retainer" | "request" | "documents" | "media" | null>(null);
+  const toggleCardPanel = (k: "retainer" | "request" | "documents" | "media") => {
+    setCardPanel((cur) => (cur === k ? null : k));
+    window.setTimeout(() => document.getElementById("card-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 60);
+  };
+
+  // ── The Documents processing summary, per sub-tab ──
+  // Case evidence: the case documents and their file checks. Retainer
+  // documents: the agreements shown in that tab — they are signed, not
+  // processed, so their signing status is what is counted. Media evidence: the
+  // media file checks, which have no categories to organise into.
+  type SummaryTone = "done" | "running" | "problem" | "idle";
+  const summaryOf = (): { tone: SummaryTone; title: string; stats: { label: string; value: number }[]; ready: string; readyOk: boolean } => {
+    if (documentsSubTab === "retainer") {
+      const shown = retainerStatus === "signed" ? retainerDocs : [];
+      const signedN = shown.filter((d) => d.status === "Signed").length;
+      return {
+        tone: shown.length === 0 ? "idle" : retainerSigned ? "done" : "running",
+        title: shown.length === 0 ? "No retainer documents yet" : `${shown.length} retainer ${shown.length === 1 ? "document" : "documents"}`,
+        stats: [
+          { label: "Signed", value: signedN },
+          { label: "Sent", value: shown.length - signedN },
+        ],
+        ready: retainerSigned ? "Agreement signed" : retainerStatus === "not-sent" ? "Not sent" : "Awaiting signature",
+        readyOk: retainerSigned,
+      };
+    }
+    if (documentsSubTab === "media") {
+      const n = mediaStatuses.length;
+      // The same rules as the media status filters.
+      const count = (f: DocFilter) => mediaStatuses.filter((st) => inFilter(st, f)).length;
+      const running = count("processing");
+      const done = count("processed");
+      const review = count("review");
+      const failed = count("failed");
+      return {
+        tone: n === 0 ? "idle" : failed ? "problem" : running ? "running" : "done",
+        title: n === 0 ? "No media files yet"
+          : running ? `Checking ${running} media ${running === 1 ? "file" : "files"}`
+          : failed ? `${failed} media ${failed === 1 ? "file" : "files"} failed`
+          : "Media File Checks Complete",
+        stats: [
+          { label: "Files", value: n },
+          { label: "Checked", value: done },
+          { label: "Review", value: review },
+          ...(failed ? [{ label: "Failed", value: failed }] : []),
+        ],
+        ready: n > 0 && !running && !failed && !review ? "Checks complete" : n === 0 ? "No media" : "Not ready",
+        readyOk: n > 0 && !running && !failed && !review,
+      };
+    }
+    const n = sharedDocs.length;
+    return {
+      tone: n === 0 ? "idle" : processingComplete ? "done" : runningCount > 0 ? "running" : "problem",
+      title: n === 0 ? "No documents yet"
+        : processingComplete ? "Document Processing Complete"
+        : runningCount > 0 ? `Processing ${runningCount} ${runningCount === 1 ? "document" : "documents"}`
+        : `${failedCount} ${failedCount === 1 ? "document" : "documents"} failed`,
+      stats: [
+        { label: "Processed", value: docsFinishedOk },
+        { label: "Organized", value: organizedCount },
+        { label: "Review", value: reviewCount },
+        ...(failedCount ? [{ label: "Failed", value: failedCount }] : []),
+      ],
+      ready: processingComplete ? "Ready For Analysis" : "Not ready",
+      readyOk: processingComplete,
+    };
+  };
+  const summary = summaryOf();
+  const docsSummary = (
+    <div id="docs-summary" className="flex items-center justify-between gap-4 flex-wrap bg-tint border border-[#9BDAEC] rounded-xl px-5 py-3">
+      <div className="flex items-center gap-2">
+        {summary.tone === "done" ? <CheckCircle className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} />
+          : summary.tone === "running" ? <Loader2 className="w-4 h-4 text-deep shrink-0 animate-spin" strokeWidth={1.75} />
+          : summary.tone === "problem" ? <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0" strokeWidth={1.75} />
+          : <Info className="w-4 h-4 text-[#5B6B78] shrink-0" strokeWidth={1.75} />}
+        <span className="text-sm font-semibold text-deep">{summary.title}</span>
+      </div>
+      <div className="flex items-center gap-6 text-xs">
+        {summary.stats.map((st) => (
+          <div key={st.label} className="text-center">
+            <div className={`font-bold ${st.label === "Failed" && st.value ? "text-[#B91C1C]" : "text-ink"}`}>{st.value}</div>
+            <div className="text-[#5B6B78]">{st.label}</div>
+          </div>
+        ))}
+        {summary.readyOk
+          ? <span className="pill pill-neutral">{summary.ready}</span>
+          : <span className="pill bg-[#F1F3F5] text-[#5B6B78] border-line">{summary.ready}</span>}
+      </div>
+    </div>
+  );
 
   const blockedParts: string[] = [];
   if (!retainerSigned) blockedParts.push("retainer unsigned");
@@ -1021,7 +1652,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
           {/* ── Workspace tab bar ── */}
           <div id="workspace-tabs" className="lg-card p-1.5 flex items-center gap-1.5 scroll-mt-[150px]">
             {([
-              { key: "retainer" as const, label: "Retainer" },
               { key: "request" as const, label: "Intake Request" },
               { key: "documents" as const, label: "Documents" },
             ]).map((tab) => (
@@ -1039,8 +1669,564 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
             ))}
           </div>
 
-          {/* ── Retainer ── */}
-          {activeTab === "retainer" && (<>
+          {/* ── Intake Request ── */}
+          {activeTab === "request" && (<>
+          {currentReq && cur && (() => {
+            const req = intakeRequests.find((x) => x.id === currentReq.id)!;
+            const answered = cur.responded;
+            // The sent card keeps the request's send status; the client's
+            // answer is its own card below.
+            const sentStatus = answered ? "Sent" : cur.status;
+            const statusColors: Record<string, string> = {
+              Draft: "pill pill-neutral",
+              Sent: "pill pill-progress",
+              Opened: "pill pill-progress",
+              "In progress": "pill pill-progress",
+              Expired: "pill pill-risk",
+              Cancelled: "pill pill-neutral",
+            };
+            const asked = selectedMediaOptions(req.requestedMedia);
+            const got = receivedMediaFor(req.id);
+            const missingNames = [...cur.outstanding.flatMap((x) => x.missingParts ?? [x.name]), ...notYetRequested.map((m) => m.title)];
+            const answer = answered ? { docs: cur.receivedFiles, missing: missingNames } : null;
+            const outstandingDocs = cur.outstanding.filter((x) => x.kind === "document");
+            type StepState = "done" | "current" | "attention" | "pending";
+            const lastSubmission = currentReq.submissions?.[currentReq.submissions.length - 1];
+            const followUps = storedRequests.filter((x) => x.followUpOf === currentReq.id);
+            // Processing of the files this request brought in.
+            const reqDocs = cur.rows.flatMap((row) => row.files.filter((f) => f.source !== "Attorney upload").map((f) => f.doc).filter(Boolean) as CaseDocument[]);
+            const procRunning = reqDocs.filter((d) => !processingFinished(d)).length;
+            const procFailed = reqDocs.filter((d) => d.status === "Failed").length;
+            const procReview = reqDocs.filter((d) => d.status === "Attorney Review Required").length;
+            const procDone = reqDocs.length > 0 && procRunning === 0 && procFailed === 0 && procReview === 0;
+            const collectionSteps: { title: string; state: StepState; when?: string; detail?: string }[] = [
+              {
+                title: currentReq.followUpOf ? `Follow-up to ${currentReq.followUpOf} sent` : "Request created and sent",
+                state: "done",
+                when: sentLabel(currentReq.lastSentAt),
+                detail: `${currentReq.deliveryMethod === "sms" ? "SMS" : "Email"} to ${cur.recipient}`,
+              },
+              answered
+                ? {
+                    title: "Client response received",
+                    state: "done",
+                    when: lastSubmission ? sentLabel(lastSubmission.submittedAt) : "Time not recorded",
+                    detail: lastSubmission
+                      ? `${currentReq.submissions!.length} ${currentReq.submissions!.length === 1 ? "submission" : "submissions"}`
+                      : "Recorded before submissions were tracked",
+                  }
+                : {
+                    title: "Client response",
+                    state: currentReq.openedAt || cur.status === "In progress" ? "current" : "pending",
+                    when: currentReq.openedAt ? `Link opened ${sentLabel(currentReq.openedAt)}` : undefined,
+                    detail: cur.status === "In progress" ? "The client has started uploading" : "Waiting for the client",
+                  },
+              {
+                title: "Requested documents collected",
+                state: !answered ? "pending" : cur.outstanding.length === 0 ? "done" : "attention",
+                detail: answered
+                  ? `${cur.satisfied} of ${cur.total} received${cur.outstanding.length ? ` · ${cur.outstanding.length} outstanding` : ""}${followUps.length ? ` · follow-up ${followUps.map((x) => x.id).join(", ")} sent` : ""}`
+                  : undefined,
+              },
+              {
+                title: "Document processing",
+                state: reqDocs.length === 0 ? "pending" : procFailed || procReview ? "attention" : procRunning ? "current" : "done",
+                detail: reqDocs.length === 0
+                  ? undefined
+                  : [procDone && `${reqDocs.length} ${reqDocs.length === 1 ? "file" : "files"} processed`, procRunning && `${procRunning} processing`, procReview && `${procReview} need review`, procFailed && `${procFailed} failed`].filter(Boolean).join(" · "),
+              },
+              {
+                title: "Collection complete",
+                // Everything requested is in and processed, and nothing is
+                // missing from the case file — the same names the column shows.
+                state: cur.status === "Completed" && procDone && missingNames.length === 0 ? "done" : "pending",
+                when: cur.status === "Completed" && procDone && missingNames.length === 0 && lastSubmission ? sentLabel(lastSubmission.submittedAt) : undefined,
+                detail: missingNames.length ? `${missingNames.length} ${missingNames.length === 1 ? "document" : "documents"} still missing` : undefined,
+              },
+            ];
+            return (
+              <div id="request-progress" className="space-y-3 scroll-mt-[150px]">
+                {storedRequests.length > 1 && (
+                  <div role="tablist" aria-label="Intake requests" className="inline-flex items-center bg-track border border-line rounded-lg p-0.5">
+                    {[...storedRequests].reverse().map((x) => (
+                      <button
+                        key={x.id}
+                        role="tab"
+                        aria-selected={x.id === currentReq.id}
+                        onClick={() => setProgressReqId(x.id)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-semibold font-mono transition-all ${x.id === currentReq.id ? "bg-white text-ink shadow-sm" : "text-[#5B6B78] hover:text-ink"}`}
+                      >
+                        {x.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                          <div key={req.id} className="space-y-3" onClick={() => intakeOverflowOpen && setIntakeOverflowOpen(null)}>
+                            <div className="eyebrow">{answered ? "1 · Request sent" : "1 · Request sent, waiting for the client"}</div>
+
+                            {/* ── SENT REQUEST CARD ── */}
+                            <div className="bg-white border border-line rounded-xl overflow-hidden">
+                              <div className="flex items-center justify-between gap-3 flex-wrap px-5 py-3 bg-white border-b border-line">
+                                <div className="flex items-center gap-2.5">
+                                  <span className="mono-ref font-bold">{req.id}</span>
+                                  {req.version > 1 && <span className="text-xs text-[#5B6B78] bg-white border border-line px-1.5 py-0.5 rounded font-mono">v{req.version}</span>}
+                                  <span className={`inline-flex items-center gap-1 ${statusColors[sentStatus] ?? "pill pill-neutral"}`}>
+                                    <Clock className="w-3 h-3" strokeWidth={1.75} />
+                                    {sentStatus}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3 flex-wrap">
+                                  <span className="mono-ref">{req.lastSentAt ? sentLabel(req.lastSentAt) : req.lastSent}</span>
+                                  <button onClick={() => handleModifyRequest(req.id)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all">
+                                    <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Modify Request
+                                  </button>
+                                  <button onClick={() => handleOpenResend(req.id)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all">
+                                    <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.4fr)] divide-x divide-line border-b border-line">
+                                <div className="px-5 py-4">
+                                  <div className="eyebrow mb-1">Recipient</div>
+                                  <div className="text-sm font-semibold text-ink truncate">{req.recipient}</div>
+                                </div>
+                                <div className="px-5 py-4">
+                                  <div className="eyebrow mb-1">Delivery</div>
+                                  <div className="text-sm font-semibold text-ink">{req.deliveryMethod === "sms" ? "SMS" : "Email"}</div>
+                                </div>
+                                <div className="px-5 py-4">
+                                  <div className="eyebrow mb-1">Documents Requested</div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-semibold text-ink">{req.requestedDocs.length}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setRequestedListOpen((o) => !o)}
+                                      aria-expanded={requestedListOpen}
+                                      className="text-xs font-semibold text-deep hover:underline"
+                                    >
+                                      {requestedListOpen ? "Hide" : "View"}
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="px-5 py-4">
+                                  <div className="eyebrow mb-1">Documents</div>
+                                  <div className="space-y-0.5">
+                                    {req.requestedDocs.slice(0, 3).map((d) => <div key={d} className="text-xs text-[#5B6B78] truncate">• {d}</div>)}
+                                    {req.requestedDocs.length > 3 && <div className="text-xs text-[#5B6B78]">+{req.requestedDocs.length - 3} more</div>}
+                                  </div>
+                                </div>
+                                {/* Always shown, so a request without media reads as one. */}
+                                <div className="px-5 py-4 bg-[#F6FDFF]">
+                                  <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Requested <NewBadge /></div>
+                                  {asked.length > 0 ? (
+                                    <div className="space-y-0.5">
+                                      {asked.map((o) => <div key={o.key} className="text-xs text-[#5B6B78] break-words">• {o.title}</div>)}
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="text-sm font-semibold text-ink">Not requested</div>
+                                      <div className="text-xs text-[#5B6B78] mt-0.5">No video or photo uploads were requested.</div>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              {req.lastModified && (
+                                <div className="px-5 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
+                                  Last modified {req.lastModified}
+                                </div>
+                              )}
+                              {requestedListOpen && (
+                                <div className="border-b border-line bg-offwhite px-5 py-3">
+                                  <div className="eyebrow mb-2">Requested in {req.id}</div>
+                                  <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
+                                    {cur.rows.map((row) => {
+                                      const label = row.state === "Received" ? "Received" : row.state === "Partially received" ? "Partially received" : "Outstanding";
+                                      const pill = row.state === "Received" ? "pill pill-complete" : row.state === "Partially received" ? "pill pill-progress" : "pill pill-risk";
+                                      return (
+                                        <li key={row.name} className="bg-white border border-line rounded-lg px-3 py-2">
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="text-sm font-semibold text-ink truncate">{row.name}</span>
+                                            <span className={`${pill} shrink-0`}>{label}</span>
+                                          </div>
+                                          {row.state !== "Uploaded, not submitted" && row.state !== "On file" && row.files.length > 0 && (
+                                            <div className="text-xs text-[#5B6B78] mt-1 break-words">Received: {row.files.map((f) => f.name).join(", ")}</div>
+                                          )}
+                                          {row.missingParts && <div className="text-xs text-[#B45309] mt-0.5">Outstanding: {row.missingParts.join(", ")}</div>}
+                                          {label === "Outstanding" && !row.missingParts && <div className="text-xs text-[#B45309] mt-0.5">{REQ_STATE_NOTE[row.state] ?? "Not received yet."}</div>}
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                </div>
+                              )}
+                              {req.token && <RequestLinkRow token={req.token} uploads={(req.uploads?.length ?? 0) + got.files} />}
+                            </div>
+
+                            {/* ── COMPLETED SUBMISSION CARD — the client's answer, no link ── */}
+                            {answer && (
+                              <>
+                                <div className="eyebrow pt-2">2 · Client has responded</div>
+                                <div className="bg-white border border-line rounded-xl overflow-hidden">
+                                  <div className="flex items-center justify-between gap-3 px-5 py-3 bg-white border-b border-line">
+                                    <span className="mono-ref font-bold">{req.id}</span>
+                                    <div className="flex items-center gap-3">
+                                      <span className={`inline-flex items-center gap-1 ${REQUEST_STATUS_PILL[cur.status] ?? "pill pill-neutral"}`}>
+                                        {cur.status === "Completed" && <CheckCircle className="w-3 h-3" strokeWidth={1.75} />} {cur.status}
+                                      </span>
+                                      <button
+                                        onClick={() => { setViewingSubmissionId(req.id); setShowViewSubmissionModal(true); }}
+                                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-sm font-semibold transition-all"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> View Submission
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)] divide-x divide-line">
+                                    <div className="px-5 py-4">
+                                      <div className="eyebrow mb-1">Status</div>
+                                      <div className="text-sm font-semibold text-ink">{cur.status}</div>
+                                    </div>
+                                    <div className="px-5 py-4">
+                                      <div className="eyebrow mb-1">Recipient</div>
+                                      <div className="text-sm font-semibold text-ink truncate">{req.recipient}</div>
+                                    </div>
+                                    <div className="px-5 py-4">
+                                      <div className="eyebrow mb-1">Documents Received</div>
+                                      <div className="kpi-value">{cur.satisfied}</div>
+                                      <div className="text-xs text-[#5B6B78]">of {cur.total} requested</div>
+                                    </div>
+                                    <div className="px-5 py-4">
+                                      <div className="eyebrow mb-1">Missing Documents</div>
+                                      <div className={`kpi-value ${answer.missing.length ? "text-amber-600" : "text-ink"}`}>{answer.missing.length}</div>
+                                      {answer.missing.slice(0, 3).map((n) => <div key={n} className="text-sm text-ink leading-snug break-words">{n}</div>)}
+                                      {answer.missing.length > 3 && <div className="text-xs text-[#5B6B78]" title={answer.missing.slice(3).join(", ")}>+{answer.missing.length - 3} more</div>}
+                                    </div>
+                                    {/* Always shown — counted from this request's own media records. */}
+                                    <div className="px-5 py-4 bg-[#F6FDFF]">
+                                      <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Received <NewBadge /></div>
+                                      {got.files > 0 ? (
+                                        <>
+                                          <div className="flex items-baseline gap-1.5 flex-wrap">
+                                            <span className="kpi-value">{got.files}</span>
+                                            <span className="text-xs text-[#5B6B78]">received media {got.files === 1 ? "file" : "files"}</span>
+                                            {got.processing && (
+                                              <span className="inline-flex items-center gap-1 text-xs text-deep self-center">
+                                                <Loader2 className="w-3.5 h-3.5 text-brand animate-spin" strokeWidth={1.75} /> Processing
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-xs text-[#5B6B78] mt-0.5">
+                                            {got.videos} {got.videos === 1 ? "video" : "videos"} · {got.sets} photo {got.sets === 1 ? "set" : "sets"} ({got.photos} {got.photos === 1 ? "photo" : "photos"})
+                                          </div>
+                                          <button type="button" onClick={viewMediaEvidence} className="mt-1 text-xs font-semibold text-deep hover:underline">
+                                            Open Media Evidence →
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <div className="text-sm font-semibold text-ink">No media received</div>
+                                          <div className="text-xs text-[#5B6B78] mt-0.5">{asked.length > 0 ? "The client sent no video or photos." : "None was requested."}</div>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {req.clientNotes && (
+                                    <div className="px-5 py-3 border-t border-line">
+                                      <div className="eyebrow mb-1">Client Notes</div>
+                                      <p className="text-sm text-ink whitespace-pre-line">{req.clientNotes}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+
+                {/* 3 · Activity and collection progress — beneath the response card */}
+                <div className="lg-card p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="eyebrow">3 · Collection progress</div>
+                    <div className="flex items-center gap-4 text-xs text-[#5B6B78] flex-wrap">
+                      <span><span className="font-semibold text-ink">{cur.total}</span> requested</span>
+                      <span><span className="font-semibold text-ink">{cur.satisfied}</span> received</span>
+                      <span><span className={`font-semibold ${cur.outstanding.length ? "text-[#B45309]" : "text-ink"}`}>{cur.outstanding.length}</span> outstanding</span>
+                      <span className="font-semibold text-ink">{cur.pct}%</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 min-[1100px]:grid-cols-[minmax(0,250px)_minmax(0,1fr)] gap-3 items-start">
+                    {/* The request's journey, read from its records — no step is
+                        marked done that the data does not show. */}
+                    <div className="rounded-xl border border-line p-3.5">
+                      <ol>
+                        {collectionSteps.map((st, i) => {
+                          const last = i === collectionSteps.length - 1;
+                          const dot = {
+                            done: "bg-[#E7F6EC] border-[#9FD8B0] text-[#1E7B3C]",
+                            current: "bg-tint border-brand text-deep",
+                            attention: "bg-[#FFF4E5] border-[#F5C27A] text-[#B45309]",
+                            pending: "bg-white border-line text-[#8A98A3]",
+                          }[st.state];
+                          return (
+                            <li key={st.title} className="flex gap-3">
+                              <div className="flex flex-col items-center shrink-0">
+                                <span className={`w-6 h-6 rounded-full border flex items-center justify-center ${dot}`}>
+                                  {st.state === "done" ? <Check className="w-3.5 h-3.5" strokeWidth={2.25} />
+                                    : st.state === "attention" ? <AlertTriangle className="w-3 h-3" strokeWidth={2} />
+                                    : st.state === "current" ? <span className="w-2 h-2 rounded-full bg-brand" />
+                                    : <span className="text-[10px] font-semibold">{i + 1}</span>}
+                                </span>
+                                {!last && <span className={`w-px flex-1 min-h-[14px] my-1 ${st.state === "done" ? "bg-[#9FD8B0]" : "bg-line"}`} />}
+                              </div>
+                              <div className={`min-w-0 ${last ? "" : "pb-3"}`}>
+                                <div className={`text-sm font-semibold leading-snug ${st.state === "pending" ? "text-[#8A98A3]" : "text-ink"}`}>{st.title}</div>
+                                {st.when && <div className="text-xs text-[#5B6B78]">{st.when}</div>}
+                                {st.detail && <div className="text-xs text-[#8A98A3] break-words">{st.detail}</div>}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </div>
+
+                    {/* 4 · Requested Documents — received or not, per requirement */}
+                    <div className="rounded-xl border border-line overflow-hidden">
+                      <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 border-b border-line">
+                        <span className="eyebrow">4 · Requested documents</span>
+                        {cur.legacy && <span className="text-[11px] text-[#8A98A3]">From the case documents on file</span>}
+                      </div>
+                      <ul className="divide-y divide-line">
+                        {cur.rows.map((row) => (
+                          <li key={row.name} className="px-3.5 py-2.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold text-ink">{row.name}</span>
+                              {row.kind === "media" && <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>}
+                              <span className={REQ_STATE_PILL[row.state]}>{REQ_STATE_LABEL[row.state]}</span>
+                            </div>
+                            {row.files.length === 0 || row.state === "Uploaded, not submitted" ? (
+                              <div className="text-xs text-[#8A98A3] mt-0.5">{REQ_STATE_NOTE[row.state]}</div>
+                            ) : (
+                              <ul className="mt-1 space-y-1">
+                                {row.files.map((f) => (
+                                  <li key={f.key} className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0 flex items-center gap-x-2 gap-y-0.5 flex-wrap text-xs text-[#5B6B78]">
+                                      <span className="mono-ref text-ink truncate max-w-[220px]" title={f.name}>{f.name}</span>
+                                      <span>{f.source}</span>
+                                      {f.at && <span>{atLabel(f.at)}</span>}
+                                      {/* Processing is a separate matter — shown only when it needs attention */}
+                                      {f.status && f.status !== "Processed" && f.status !== "Reviewed" && (
+                                        <span className="text-[11px] text-[#8A98A3]">
+                                          File: <span className={`pill ${DOC_STATUS_PILL[f.status]}`}>{f.status === "Attorney Review Required" ? "Needs Review" : f.status}</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                    {f.doc && (
+                                      // The same row actions as the Documents tab: Preview,
+                                      // Insights, and More actions (Edit, Delete, Download).
+                                      <RowActionGroup name={f.doc.name} onEdit={() => openEdit(f.doc!)} onDelete={() => { setDeleteDoc(f.doc!); setDeleteError(null); }}>
+                                        <DocActions
+                                          size="row"
+                                          onPreview={() => handlePreviewDocument(f.doc)}
+                                          onInsights={() => handleOpenInsights(f.doc)}
+                                          onDownload={() => handleDownloadDocument(f.doc)}
+                                          disabled={{
+                                            insights: !processingFinished(f.doc) ? "Available once processing finishes" : undefined,
+                                            download: f.doc.storageKey ? undefined : "The original file is not stored in this browser",
+                                          }}
+                                        />
+                                      </RowActionGroup>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {row.viaCaseFile && (
+                              <div className="text-xs text-[#5B6B78] mt-1">Fulfilled by a file on the case: this request predates submission tracking, so its files are not linked to it.</div>
+                            )}
+                            {row.state === "On file" && (
+                              <div className="text-xs text-[#B45309] mt-1">{REQ_STATE_NOTE["On file"]}</div>
+                            )}
+                            {row.missingParts && (
+                              <div className="text-xs text-[#B45309] mt-1">Not received: {row.missingParts.join(", ")}</div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+
+                      {/* 5 · Still outstanding — names, from the comparison above */}
+                      {(outstandingDocs.length > 0 || notYetRequested.length > 0) && (
+                        <div className="px-3.5 py-2.5 border-t border-line bg-[#FFFBF2] space-y-1.5">
+                          <div className="eyebrow" style={{ color: "#854F0B" }}>Still outstanding</div>
+                          {outstandingDocs.length > 0 && (
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                              <span className="text-xs text-[#854F0B]">
+                                Requested in {currentReq.id}: {outstandingDocs.map((x) => (x.missingParts ? x.missingParts.map((m) => `${m} (part of ${x.name})`).join(", ") : x.name)).join(", ")}
+                              </span>
+                              {answered && (
+                                <button onClick={() => requestOutstanding(currentReq, cur)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold text-white" style={{ background: "#B45309" }}>
+                                  <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request Missing Documents
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {notYetRequested.length > 0 && (
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                              <span className="text-xs text-[#854F0B]">Additional case-file requirement, not in the request: {notYetRequested.map((m) => m.title).join(", ")}</span>
+                              <button onClick={() => openMissingRequestModal(notYetRequested)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[#FAC775] bg-white text-xs font-semibold text-[#854F0B] hover:bg-[#FAEEDA]">
+                                <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 6 · Four action cards — always shown, always in this order */}
+          <input ref={docInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
+          <div id="collection-cards" className="grid grid-cols-1 min-[640px]:grid-cols-2 min-[1400px]:grid-cols-4 gap-3 scroll-mt-[150px]">
+            {(() => {
+              const btnP = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden text-ellipsis [&>svg]:shrink-0";
+              const btnS = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all whitespace-nowrap shrink-0";
+              // Agreement and request actions are outlined; the uploads stay filled.
+              const btnO = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden text-ellipsis [&>svg]:shrink-0";
+              const iconBtn = "w-8 h-8 inline-flex items-center justify-center rounded-lg text-deep hover:bg-tint transition-colors shrink-0";
+              // One structure for every card: header (icon, title, corner
+              // actions) · status · a few short lines · actions at the foot.
+              const card = (key: "retainer" | "request" | "documents" | "media", Icon: any, title: string, corner: React.ReactNode, status: string, pill: string, body: React.ReactNode, primary: React.ReactNode, showView = true) => (
+                <div id={`${key}-card`} className={`lg-card p-4 flex flex-col gap-2 min-w-0 h-full scroll-mt-[150px] ${cardPanel === key ? "ring-1 ring-brand" : ""}`}>
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-tint flex items-center justify-center shrink-0">
+                        <Icon className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} />
+                      </div>
+                      <h3 className="text-sm font-semibold text-ink truncate">{title}</h3>
+                    </div>
+                    <div className="flex items-center -my-1 -mr-1">{corner}</div>
+                  </div>
+                  <span className={`self-start max-w-full truncate ${pill}`}>{status}</span>
+                  <div className="text-xs text-[#5B6B78] space-y-0.5 min-w-0 flex-1">{body}</div>
+                  <div className="flex items-center gap-1 mt-auto pt-1 min-w-0 [&>button]:min-w-0 [&>button:first-child]:shrink">
+                    {primary}
+                    {showView && <button onClick={() => toggleCardPanel(key)} aria-expanded={cardPanel === key} className={btnS}>{cardPanel === key ? "Hide" : "View"}</button>}
+                  </div>
+                </div>
+              );
+
+              // Retainer
+              const r = newestRetainer;
+              const rSigned = r?.status === "Signed";
+              const retainerCard = card(
+                "retainer", FileText, "Retainer",
+                // Upload a signed document — while none is signed yet.
+                !rSigned ? (
+                  <button onClick={r ? openUploadAgreement : handleMarkAsSigned} title="Upload signed document" aria-label="Upload signed document" className={iconBtn}>
+                    <Upload className="w-4 h-4" strokeWidth={1.75} />
+                  </button>
+                ) : null,
+                !r ? "Not created" : rSigned ? "Signed" : "Awaiting signature",
+                !r ? "pill pill-neutral" : rSigned ? "pill pill-complete" : "pill pill-progress",
+                !r ? <p>No retainer sent yet.</p> : (
+                  <p>
+                    {effectiveRetainers.length} {effectiveRetainers.length === 1 ? "retainer" : "retainers"}
+                    {rSigned ? (retainerSource === "attorney" ? " · signed copy from attorney" : " · signed by client") : ` · sent ${r.sentDate}`}
+                  </p>
+                ),
+                !r
+                  ? <button onClick={handleOpenSendRetainerModal} className={btnO}><Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Send Retainer</button>
+                  : <button onClick={handleGenerateNewRetainer} className={btnO}><Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Generate Retainer</button>,
+              );
+
+              // Request
+              const lp = latestProgress;
+              const requestCard = card(
+                "request", Send, sentReq ? "Additional Request" : "Intake Request", null,
+                !sentReq || !lp ? "No request sent" : `${latestReq.id} · ${lp.status}`,
+                !sentReq || !lp ? "pill pill-neutral" : REQUEST_STATUS_PILL[lp.status] ?? "pill pill-neutral",
+                !sentReq || !lp ? <p>Request documents from the client through a secure link.</p> : (
+                  <>
+                    <p>{lp.satisfied} of {lp.total} requested items received</p>
+                    {storedRequests.length > 1 && <p>{storedRequests.length} requests on this case</p>}
+                  </>
+                ),
+                // The first request through the intake-request flow; once one
+                // has been sent, further ones as additional requests.
+                !sentReq ? (
+                  <button onClick={openCreateRequest} title="Create Intake Request" className={btnO}>
+                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Intake Request
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleOpenAdditionalRequest}
+                    disabled={!!waitingAdditional}
+                    title={waitingAdditional ? `${waitingAdditional.id} is still waiting for the client` : "Additional Request"}
+                    className={btnO}
+                  >
+                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Additional Request
+                  </button>
+                ),
+                // Nothing to view before a request has been sent.
+                !!sentReq,
+              );
+
+              // Documents — the attorney's own uploads; client files only when there are some
+              const byAttorney = sharedDocs.filter((d) => d.source === "Attorney").length;
+              const byClient = sharedDocs.filter((d) => d.source === "Plaintiff").length;
+              const docsCard = card(
+                "documents", Upload, "Upload Documents", null,
+                `${byAttorney} uploaded by attorney`, "pill pill-neutral",
+                <>
+                  {byClient > 0 && <p>{byClient} from client submissions</p>}
+                  {runningCount > 0 && <p className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} /> {runningCount} processing</p>}
+                  {failedCount > 0 && <p className="text-[#B91C1C]">{failedCount} failed</p>}
+                </>,
+                <button onClick={() => docInputRef.current?.click()} className={btnP}><Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Documents</button>,
+              );
+
+              // Media
+              const allMedia = [...media.videos.map((v) => ({ src: v.source, f: v.file })), ...media.sets.flatMap((x) => x.files.map((f) => ({ src: x.source, f })))];
+              const mediaByClient = allMedia.filter((m) => m.src === "Client").length;
+              const mediaProcessing = allMedia.filter((m) => mediaFileStatus(m.f) === "processing").length;
+              const mediaFailed = allMedia.filter((m) => mediaFileStatus(m.f) === "failed").length;
+              const mediaCardEl = card(
+                "media", Camera, "Upload Media", null,
+                `${allMedia.length} media ${allMedia.length === 1 ? "file" : "files"}`, "pill pill-neutral",
+                <>
+                  {allMedia.length > 0 && <p>{media.videos.length} {media.videos.length === 1 ? "video" : "videos"} · {media.sets.length} photo {media.sets.length === 1 ? "set" : "sets"}</p>}
+                  {mediaByClient > 0 && <p>{mediaByClient} from client submissions</p>}
+                  {mediaProcessing > 0 && <p className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} /> {mediaProcessing} processing</p>}
+                  {mediaFailed > 0 && <p className="text-[#B91C1C]">{mediaFailed} failed</p>}
+                </>,
+                <button onClick={openMediaUpload} className={btnP}><Camera className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Media</button>,
+              );
+              return <>{retainerCard}{requestCard}{docsCard}{mediaCardEl}</>;
+            })()}
+          </div>
+
+          {/* The selected card's details — one panel, under the cards */}
+          {cardPanel && (
+            <div id="card-panel" className="lg-card overflow-hidden scroll-mt-[150px]">
+              <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-line">
+                <span className="card-title">
+                  {{ retainer: "Retainer details", request: "Request history", documents: "Uploaded documents", media: "Media evidence" }[cardPanel]}
+                </span>
+                <button onClick={() => setCardPanel(null)} aria-label="Close details" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+              </div>
+              <div className="p-4 bg-offwhite">
+                {cardPanel === "retainer" && (
+                  <div className="space-y-3">
+                    {newestRetainer?.status === "Signed" && (
+                      <p className="text-xs text-[#5B6B78]">
+                        Signed copy: {retainerSource === "attorney" ? (retainerFile ? `uploaded by the attorney (${retainerFile.name})` : "marked signed by the attorney — no document uploaded") : "signed by the client"}
+                      </p>
+                    )}
+                    {effectiveRetainers.length === 0 ? (
+                      <p className="secondary-text">No retainer has been sent or uploaded for this case.</p>
+                    ) : (
           <div id="retainer-section" className="lg-card overflow-hidden scroll-mt-[150px]">
             {/* Section header */}
             <div className="flex items-center justify-between gap-4 px-6 py-5">
@@ -1101,7 +2287,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                           { label: "Template", value: r.template },
                         ];
                     const docName = signed
-                      ? (r.signedDocName || "Signed_PI_Retainer.pdf")
+                      ? (r.signedDocName || "No signed document uploaded")
                       : (r.sentDocName || "PI_Retainer_Agreement.pdf");
                     const retainerDoc = { name: docName, source: "Retainer", date: signed ? (r.signedDate || "Jun 11, 2026") : r.sentDate, status: signed ? "Signed" : "Sent" };
                     return (
@@ -1151,7 +2337,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                               <button onClick={handleOpenSendRetainerModal} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all flex items-center gap-1.5">
                                 <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
                               </button>
-                              <button onClick={() => setShowUploadAgreementModal(true)} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
+                              <button onClick={openUploadAgreement} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
                                 <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Agreement
                               </button>
                             </>
@@ -1187,7 +2373,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                   { label: "Template", value: r.template },
                                 ];
                             const docName = signed
-                              ? (r.signedDocName || "Signed_PI_Retainer.pdf")
+                              ? (r.signedDocName || "No signed document uploaded")
                               : (r.sentDocName || "PI_Retainer_Agreement.pdf");
                             const retainerDoc = { name: docName, source: "Retainer", date: signed ? (r.signedDate || r.sentDate) : r.sentDate, status: r.status };
                             return (
@@ -1232,7 +2418,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                     <button onClick={handleOpenSendRetainerModal} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all flex items-center gap-1.5">
                                       <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
                                     </button>
-                                    <button onClick={() => setShowUploadAgreementModal(true)} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
+                                    <button onClick={openUploadAgreement} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
                                       <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Agreement
                                     </button>
                                   </div>
@@ -1254,319 +2440,115 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                 )}
               </div>
           </div>
-          <NextStepBox
-            text="Create your intake request to receive the required documents from the plaintiff."
-            ctaLabel="Proceed to Intake Request"
-            onClick={() => setActiveTab("request")}
-          />
-          </>
-          )}
+                    )}
+                  </div>
+                )}
 
-          {/* ── Intake Request ── */}
-          {activeTab === "request" && (<>
-          <div id="request-section" className="lg-card overflow-hidden scroll-mt-[150px]">
-            <div className="flex items-center justify-between gap-4 px-6 py-5">
-              <span className="card-title">Intake Request</span>
-              <div className="flex items-center gap-3 shrink-0">
-                {/* Upload ▾ — documents, or video & photos */}
-                <div className="relative">
-                  <button
-                    onClick={() => setUploadMenuOpen((o) => !o)}
-                    aria-haspopup="menu"
-                    aria-expanded={uploadMenuOpen}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all"
-                  >
-                    <Upload className="w-3.5 h-3.5" strokeWidth={1.75} />
-                    Upload
-                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${uploadMenuOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
-                  </button>
-                  {uploadMenuOpen && (
-                    <>
-                      <div className="fixed inset-0 z-30" onClick={() => setUploadMenuOpen(false)} />
-                      <div role="menu" className="absolute right-0 top-full mt-2 z-40 w-72 rounded-xl border border-line bg-white shadow-lg p-1.5">
-                        <button role="menuitem" onClick={openDocumentUpload} className="w-full flex items-start gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-wash transition-colors">
-                          <div className="w-8 h-8 rounded-lg bg-tint flex items-center justify-center shrink-0">
-                            <FileText className="w-4 h-4 text-deep" strokeWidth={1.75} />
+                {cardPanel === "request" && (
+                  storedRequests.length === 0 ? (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="secondary-text">No intake request has been sent for this case.</p>
+                      <button onClick={openCreateRequest} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold"><Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Request</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {[...storedRequests].reverse().map((x) => {
+                        const xp = progressOf(x);
+                        return (
+                          <div key={x.id} className="bg-white border border-line rounded-xl px-4 py-3">
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                <span className="mono-ref font-bold">{x.id}</span>
+                                <span className={REQUEST_STATUS_PILL[xp.status] ?? "pill pill-neutral"}>{xp.status}</span>
+                                {x.followUpOf && <span className="text-xs text-[#5B6B78]">Follow-up to {x.followUpOf}</span>}
+                                <span className="text-xs text-[#5B6B78]">{xp.recipient} · sent {sentLabel(x.lastSentAt)}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <button onClick={() => { setProgressReqId(x.id); setCardPanel(null); window.setTimeout(() => document.getElementById("request-progress")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash">Show progress</button>
+                                <button onClick={() => handleModifyRequest(x.id)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-line bg-white text-ink text-xs font-semibold hover:bg-wash"><Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Modify</button>
+                                <button onClick={() => handleOpenResend(x.id)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-line bg-white text-ink text-xs font-semibold hover:bg-wash"><RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend</button>
+                              </div>
+                            </div>
+                            <p className="text-xs text-[#5B6B78] mt-1.5">
+                              {xp.satisfied} of {xp.total} received · Requested: {[...x.requestedDocs, ...selectedMediaOptions(x.requestedMedia).map((o) => o.title)].join(", ")}
+                            </p>
                           </div>
-                          <span className="min-w-0">
-                            <span className="block text-sm font-semibold text-ink">Documents</span>
-                            <span className="block text-xs text-[#5B6B78]">PDF, Word, scanned pages</span>
-                          </span>
-                        </button>
-                        <button role="menuitem" onClick={openMediaUpload} className="w-full flex items-start gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-wash transition-colors">
-                          <div className="w-8 h-8 rounded-lg bg-tint flex items-center justify-center shrink-0">
-                            <Camera className="w-4 h-4 text-deep" strokeWidth={1.75} />
-                          </div>
-                          <span className="min-w-0">
-                            <span className="flex items-center gap-1.5 text-sm font-semibold text-ink">Video &amp; Photos <NewBadge /></span>
-                            <span className="block text-xs text-[#5B6B78]">Videos, scene photos, medical images</span>
-                          </span>
+                        );
+                      })}
+                      <div className="flex justify-end pt-1">
+                        <button
+                          onClick={handleOpenAdditionalRequest}
+                          disabled={!!waitingAdditional}
+                          title={waitingAdditional ? `${waitingAdditional.id} is still waiting for the client` : undefined}
+                          className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Additional Request
                         </button>
                       </div>
-                    </>
-                  )}
-                  {/* The existing document upload, and the one media upload */}
-                  <input ref={docInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
-                </div>
-              </div>
-            </div>
-            <div className="border-t border-line p-6 bg-offwhite">
-              <div className="space-y-6">
-                {!intakeCreated ? (
-                  <>
-                    {/* Action Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <button
-                        onClick={() => setShowIntakeModal(true)}
-                        className="lg-card lg-card-i p-8 group text-left"
-                      >
-                        <div className="space-y-4">
-                          <div className="p-4 bg-tint rounded-xl inline-flex">
-                            <Send className="w-6 h-6 text-deep" strokeWidth={1.75} />
-                          </div>
-                          <div>
-                            <h3 className="card-title mb-2">Create Intake Form</h3>
-                            <p className="secondary-text mb-4">
-                              Create a secure intake form that the plaintiff can use to upload documents.
-                            </p>
-                            <div className="flex items-center gap-2 text-deep font-medium text-sm group-hover:gap-3 transition-all">
-                              Create Intake Form
-                              <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-
-                      <label className="lg-card lg-card-i p-8 group text-left cursor-pointer block">
-                        <div className="space-y-4">
-                          <div className="p-4 bg-tint rounded-xl inline-flex">
-                            <Upload className="w-6 h-6 text-deep" strokeWidth={1.75} />
-                          </div>
-                          <div>
-                            <h3 className="card-title mb-2">Upload Existing Files</h3>
-                            <p className="secondary-text mb-4">
-                              Upload documents already received outside LECO.
-                            </p>
-                            <p className="text-xs text-[#5B6B78] mb-3">
-                              Examples: Email attachments • Physical paperwork • Police reports • Hospital records
-                            </p>
-                            <div className="flex items-center gap-2 text-deep font-medium text-sm group-hover:gap-3 transition-all">
-                              Upload Files
-                              <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
-                            </div>
-                          </div>
-                        </div>
-                        <input
-                          type="file"
-                          multiple
-                          className="hidden"
-                          onChange={(e) => { handleFileInputChange(e); focusSection("documents"); }}
-                        />
-                      </label>
                     </div>
-                    {mediaCard("tile")}
-                  </>
-                ) : (
-<>
-                    <div className="space-y-6">
-                      {(intakeRequests.length > 0 ? intakeRequests : [buildNewRequest(intakeAlreadySent ? { id: "REQ-001", status: "Completed", docsReceived: 8, missingDocs: 1 } : { id: "REQ-001", status: intakeSent ? "Sent" : "Draft" as any })]).map((req) => {
-                        // A request the client has answered keeps its sent card,
-                        // with the answer shown beneath it.
-                        const answered = req.status === "Completed";
-                        const sentStatus = answered ? "Sent" : req.status;
-                        const statusColors: Record<string, string> = {
-                          Draft: "pill pill-neutral",
-                          Sent: "pill pill-progress",
-                          Opened: "pill pill-progress",
-                          "In Progress": "pill pill-progress",
-                          "Partially Completed": "pill pill-progress",
-                          Expired: "pill pill-risk",
-                          Cancelled: "pill pill-neutral",
-                        };
-                        const asked = selectedMediaOptions(req.requestedMedia);
-                        const got = receivedMediaFor(req.id);
-                        const answer = answered ? answerFor(req) : null;
+                  )
+                )}
 
+                {cardPanel === "documents" && (
+                  sharedDocs.length === 0 ? (
+                    <p className="secondary-text">No documents on this case yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {([["Attorney", "Uploaded by attorney"], ["Plaintiff", "Client submissions"]] as const).map(([src, label]) => {
+                        const rows = sharedDocs.filter((d) => d.source === src);
+                        if (rows.length === 0) return null;
                         return (
-                          <div key={req.id} className="space-y-3" onClick={() => intakeOverflowOpen && setIntakeOverflowOpen(null)}>
-                            <div className="eyebrow">{answered ? "1 · Request sent" : "1 · Request sent, waiting for the client"}</div>
-
-                            {/* ── SENT REQUEST CARD ── */}
-                            <div className="bg-white border border-line rounded-xl overflow-hidden">
-                              <div className="flex items-center justify-between gap-3 flex-wrap px-5 py-3 bg-white border-b border-line">
-                                <div className="flex items-center gap-2.5">
-                                  <span className="mono-ref font-bold">{req.id}</span>
-                                  {req.version > 1 && <span className="text-xs text-[#5B6B78] bg-white border border-line px-1.5 py-0.5 rounded font-mono">v{req.version}</span>}
-                                  <span className={`inline-flex items-center gap-1 ${statusColors[sentStatus] ?? "pill pill-neutral"}`}>
-                                    <Clock className="w-3 h-3" strokeWidth={1.75} />
-                                    {sentStatus}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-3 flex-wrap">
-                                  <span className="mono-ref">{req.lastSentAt ? sentLabel(req.lastSentAt) : req.lastSent}</span>
-                                  <button onClick={() => handleModifyRequest(req.id)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all">
-                                    <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Modify Request
-                                  </button>
-                                  <button onClick={() => handleOpenResend(req.id)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all">
-                                    <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.4fr)] divide-x divide-line border-b border-line">
-                                <div className="px-5 py-4">
-                                  <div className="eyebrow mb-1">Recipient</div>
-                                  <div className="text-sm font-semibold text-ink truncate">{req.recipient}</div>
-                                </div>
-                                <div className="px-5 py-4">
-                                  <div className="eyebrow mb-1">Delivery</div>
-                                  <div className="text-sm font-semibold text-ink">{req.deliveryMethod === "sms" ? "SMS" : "Email"}</div>
-                                </div>
-                                <div className="px-5 py-4">
-                                  <div className="eyebrow mb-1">Documents Requested</div>
-                                  <div className="text-sm font-semibold text-ink">{req.requestedDocs.length}</div>
-                                </div>
-                                <div className="px-5 py-4">
-                                  <div className="eyebrow mb-1">Documents</div>
-                                  <div className="space-y-0.5">
-                                    {req.requestedDocs.slice(0, 3).map((d) => <div key={d} className="text-xs text-[#5B6B78] truncate">• {d}</div>)}
-                                    {req.requestedDocs.length > 3 && <div className="text-xs text-[#5B6B78]">+{req.requestedDocs.length - 3} more</div>}
-                                  </div>
-                                </div>
-                                {/* Always shown, so a request without media reads as one. */}
-                                <div className="px-5 py-4 bg-[#F6FDFF]">
-                                  <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Requested <NewBadge /></div>
-                                  {asked.length > 0 ? (
-                                    <div className="space-y-0.5">
-                                      {asked.map((o) => <div key={o.key} className="text-xs text-[#5B6B78] break-words">• {o.title}</div>)}
-                                    </div>
-                                  ) : (
-                                    <>
-                                      <div className="text-sm font-semibold text-ink">Not requested</div>
-                                      <div className="text-xs text-[#5B6B78] mt-0.5">No video or photo uploads were requested.</div>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                              {req.lastModified && (
-                                <div className="px-5 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
-                                  Last modified {req.lastModified}
-                                </div>
+                          <div key={src} className="bg-white border border-line rounded-xl overflow-hidden">
+                            <div className="px-4 py-2 border-b border-line flex items-center gap-2">
+                              <span className="eyebrow">{label}</span>
+                              <span className="text-xs text-[#8A98A3]">{rows.length} {rows.length === 1 ? "file" : "files"}</span>
+                              {src === "Plaintiff" && latestReq && latestProgress && (
+                                <span className="text-xs text-[#5B6B78] ml-auto">
+                                  Request {latestReq.id}: {latestProgress.satisfied} of {latestProgress.total} requested items fulfilled
+                                </span>
                               )}
-                              {req.token && <RequestLinkRow token={req.token} uploads={(req.uploads?.length ?? 0) + got.files} />}
                             </div>
-
-                            {/* ── COMPLETED SUBMISSION CARD — the client's answer, no link ── */}
-                            {answer && (
-                              <>
-                                <div className="eyebrow pt-2">2 · Client has responded</div>
-                                <div className="bg-white border border-line rounded-xl overflow-hidden">
-                                  <div className="flex items-center justify-between gap-3 px-5 py-3 bg-white border-b border-line">
-                                    <span className="mono-ref font-bold">{req.id}</span>
-                                    <div className="flex items-center gap-3">
-                                      <span className="inline-flex items-center gap-1 pill pill-complete">
-                                        <CheckCircle className="w-3 h-3" strokeWidth={1.75} /> Completed
-                                      </span>
-                                      <button
-                                        onClick={() => { setViewingSubmissionId(req.id); setShowViewSubmissionModal(true); }}
-                                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-sm font-semibold transition-all"
-                                      >
-                                        <Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> View Submission
-                                      </button>
-                                    </div>
+                            <ul className="divide-y divide-line">
+                              {rows.map((d) => (
+                                <li key={d.id} className="px-4 py-2 flex items-center justify-between gap-3">
+                                  <div className="min-w-0 flex items-center gap-2 flex-wrap text-xs text-[#5B6B78]">
+                                    <FileTypeIcon name={d.name} />
+                                    <span className="mono-ref text-ink truncate max-w-[260px]" title={d.name}>{d.name}</span>
+                                    <span>{d.receivedAt ? sentLabel(d.receivedAt) : d.date}</span>
+                                    {d.requestId && <span>{d.requestId}</span>}
+                                    <span className={`pill whitespace-nowrap ${DOC_STATUS_PILL[d.status]}`}>{d.status === "Attorney Review Required" ? "Needs Review" : d.status}</span>
                                   </div>
-                                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)] divide-x divide-line">
-                                    <div className="px-5 py-4">
-                                      <div className="eyebrow mb-1">Status</div>
-                                      <div className="text-sm font-semibold text-ink">Completed</div>
-                                    </div>
-                                    <div className="px-5 py-4">
-                                      <div className="eyebrow mb-1">Recipient</div>
-                                      <div className="text-sm font-semibold text-ink truncate">{req.recipient}</div>
-                                    </div>
-                                    <div className="px-5 py-4">
-                                      <div className="eyebrow mb-1">Documents Received</div>
-                                      <div className="kpi-value">{answer.docs.length}</div>
-                                    </div>
-                                    <div className="px-5 py-4">
-                                      <div className="eyebrow mb-1">Missing Documents</div>
-                                      <div className={`kpi-value ${answer.missing.length ? "text-amber-600" : "text-ink"}`}>{answer.missing.length}</div>
-                                    </div>
-                                    {/* Always shown — counted from this request's own media records. */}
-                                    <div className="px-5 py-4 bg-[#F6FDFF]">
-                                      <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Received <NewBadge /></div>
-                                      {got.files > 0 ? (
-                                        <>
-                                          <div className="flex items-baseline gap-1.5 flex-wrap">
-                                            <span className="kpi-value">{got.files}</span>
-                                            <span className="text-xs text-[#5B6B78]">received media {got.files === 1 ? "file" : "files"}</span>
-                                            {got.processing && (
-                                              <span className="inline-flex items-center gap-1 text-xs text-deep self-center">
-                                                <Loader2 className="w-3.5 h-3.5 text-brand animate-spin" strokeWidth={1.75} /> Processing
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="text-xs text-[#5B6B78] mt-0.5">
-                                            {got.videos} {got.videos === 1 ? "video" : "videos"} · {got.sets} photo {got.sets === 1 ? "set" : "sets"} ({got.photos} {got.photos === 1 ? "photo" : "photos"})
-                                          </div>
-                                          <button type="button" onClick={viewMediaEvidence} className="mt-1 text-xs font-semibold text-deep hover:underline">
-                                            Open Media Evidence →
-                                          </button>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <div className="text-sm font-semibold text-ink">No media received</div>
-                                          <div className="text-xs text-[#5B6B78] mt-0.5">{asked.length > 0 ? "The client sent no video or photos." : "None was requested."}</div>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                  {req.clientNotes && (
-                                    <div className="px-5 py-3 border-t border-line">
-                                      <div className="eyebrow mb-1">Client Notes</div>
-                                      <p className="text-sm text-ink whitespace-pre-line">{req.clientNotes}</p>
-                                    </div>
-                                  )}
-                                </div>
-                              </>
-                            )}
+                                  <RowActionGroup name={d.name} onEdit={() => openEdit(d)} onDelete={() => { setDeleteDoc(d); setDeleteError(null); }}>
+                                    <DocActions
+                                      size="row"
+                                      onPreview={() => handlePreviewDocument(d)}
+                                      onInsights={() => handleOpenInsights(d)}
+                                      onDownload={() => handleDownloadDocument(d)}
+                                      disabled={{
+                                        insights: !processingFinished(d) ? "Available once processing finishes" : d.status === "Failed" ? "Processing failed — retry first" : undefined,
+                                        download: d.storageKey ? undefined : "The original file is not stored in this browser",
+                                      }}
+                                    />
+                                  </RowActionGroup>
+                                </li>
+                              ))}
+                            </ul>
                           </div>
                         );
                       })}
                     </div>
+                  )
+                )}
 
-                    {/* Once a request is sent — or completed — Create Additional Request
-                        runs full width, with the two upload cards side by side beneath. */}
-                    {(intakeSent || intakeResponseReceived) && (() => {
-                      const disableAdditional = intakeRequests.some((r) => r.id !== "REQ-001");
-                      return (
-                        <div className="lg-card p-6 flex items-center justify-between gap-6 flex-wrap">
-                          <div className="min-w-0">
-                            <h3 className="card-title mb-2">Create Additional Request</h3>
-                            <p className="secondary-text">
-                              Send another document request to the plaintiff for additional records.
-                            </p>
-                          </div>
-                          <button
-                            onClick={handleOpenAdditionalRequest}
-                            disabled={disableAdditional}
-                            title={disableAdditional ? "An additional request has already been created" : undefined}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${disableAdditional ? "bg-white border border-line text-gray-300 cursor-not-allowed" : "bg-white border border-line text-deep hover:bg-wash"}`}
-                          >
-                            <Plus className="w-4 h-4" strokeWidth={1.75} />
-                            Create Additional Request
-                          </button>
-                        </div>
-                      );
-                    })()}
+                {cardPanel === "media" && (
+                  <MediaEvidencePanel caseId={data.caseId} documents={sharedDocs} onUpload={openMediaUpload} />
+                )}
+              </div>
+            </div>
+          )}
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-                    {/* Attorney Upload Section */}
-                    <div className="lg-card p-6">
-                      <h3 className="card-title mb-2">Upload Existing Files</h3>
-                      <p className="secondary-text mb-4">
-                        Add documents, video and photos already received outside the LECO intake process.
-                      </p>
-
+          {/* What the last upload actually added */}
+          <div className="space-y-3 empty:hidden">
                       {/* The attorney's last video & photo upload — real results only */}
                       {mediaUploadResult && (() => {
                         const vids = mediaUploadResult.uploaded.filter((u): u is { type: "video"; name: string } => u.type === "video");
@@ -1644,37 +2626,9 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                         </div>
                       )}
 
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        onChange={handleFileInputChange}
-                      />
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          className="flex items-center gap-2 px-4 py-2 bg-white border border-line text-deep rounded-lg text-sm font-medium hover:bg-wash transition-all"
-                        >
-                          <Upload className="w-4 h-4" strokeWidth={1.75} />
-                          Upload Documents
-                        </button>
-                        <button
-                          onClick={openMediaUpload}
-                          className="flex items-center gap-2 px-4 py-2 bg-white border border-line text-deep rounded-lg text-sm font-medium hover:bg-wash transition-all"
-                        >
-                          <Camera className="w-4 h-4" strokeWidth={1.75} />
-                          Upload Video &amp; Photos
-                        </button>
-                      </div>
-                    </div>
-                    {mediaCard("panel")}
-                    </div>
-                  </>
-                )}
-              </div>
-              </div>
           </div>
+
+
           <NextStepBox
             text="Review and verify the collected documents, then continue to evidence analysis."
             ctaLabel="Proceed to Documents"
@@ -1724,30 +2678,10 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                 )}
 
                 {/* MISSING DOCUMENTS BLOCK */}
-                {documentsReceived && missingDocCount > 0 && (
-                  <div className="rounded-xl p-5" style={{ background: "#FAEEDA", border: "1px solid #FAC775" }}>
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "#854F0B" }} strokeWidth={1.75} />
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-sm font-semibold mb-1" style={{ color: "#854F0B" }}>
-                          {missingDocCount} Document{missingDocCount === 1 ? "" : "s"} Still Missing
-                        </h3>
-                        <ul className="space-y-0.5 mb-4">
-                          {missingDocNames.map((name) => (
-                            <li key={name} className="text-sm" style={{ color: "#854F0B" }}>• {name}</li>
-                          ))}
-                        </ul>
-                        <button
-                          onClick={openMissingRequestModal}
-                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
-                          style={{ background: "#B45309" }}
-                        >
-                          <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request All Missing
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {missingDocsPanel("missing-docs-documents")}
+
+                {/* PROCESSING SUMMARY — counted from the selected tab's own records */}
+                {docsSummary}
 
                 {/* Documents Sub-Tabs */}
                 <div>
@@ -1770,7 +2704,10 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
 
                   <div>
                     {documentsSubTab === "media" ? (
-                      <MediaEvidencePanel caseId={data.caseId} documents={sharedDocs} onUpload={openMediaUpload} />
+                      <>
+                        {statusFilterBar}
+                        <MediaEvidencePanel caseId={data.caseId} documents={sharedDocs} onUpload={openMediaUpload} statusFilter={docFilter} />
+                      </>
                     ) : documentsSubTab === "retainer" ? (
                       retainerStatus !== "signed" ? (
                         <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -1780,7 +2717,13 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                         </div>
                       ) : (
                       <div className="overflow-x-auto">
-                        <table className="w-full">
+                        <table className="w-full min-w-[700px] table-fixed">
+                          <colgroup>
+                            <col />
+                            <col className="w-[160px]" />
+                            <col className="w-[140px]" />
+                            <col className="w-[152px]" />
+                          </colgroup>
                           <thead className="bg-wash">
                             <tr className="border-b border-line">
                               <th className="text-left py-3 px-4 eyebrow">
@@ -1798,21 +2741,24 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-line bg-white">
-                            {allRetainerDocuments.map((doc, index) => {
+                            {retainerDocs.length === 0 && (
+                              <tr><td colSpan={4} className="py-6 px-4 text-sm text-[#8A98A3] text-center">No retainer documents on this case.</td></tr>
+                            )}
+                            {retainerDocs.map((doc) => {
                               return (
-                              <React.Fragment key={index}>
+                              <React.Fragment key={doc.id}>
                               <tr
                                 onClick={() => handlePreviewDocument(doc)}
                                 className="cursor-pointer hover:bg-wash"
                               >
-                                <td className="py-3 px-4 mono-ref text-ink">
+                                <td className="py-3 px-4 align-middle mono-ref text-ink">
                                   <span className="inline-flex items-center gap-2">
                                     <FileTypeIcon name={doc.name} />
                                     {doc.name}
                                     <FileTypeTag name={doc.name} />
                                   </span>
                                 </td>
-                                <td className="py-3 px-4">
+                                <td className="py-3 px-4 align-middle">
                                   <span
                                     className={`pill ${
                                       doc.status === "Signed"
@@ -1823,14 +2769,17 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                     {doc.status}
                                   </span>
                                 </td>
-                                <td className="py-3 px-4 text-sm text-[#5B6B78]">{doc.date}</td>
-                                <td className="py-3 px-4 text-right">
-                                  <DocActions
-                                    size="sm"
-                                    onPreview={() => handlePreviewDocument(doc)}
-                                    onInsights={() => handleOpenInsights(doc)}
-                                    onDownload={() => handleDownloadDocument(doc)}
-                                  />
+                                <td className="py-3 px-4 align-middle text-sm text-[#5B6B78]">{doc.date}</td>
+                                <td className="py-3 px-4 align-middle">
+                                  <RowActionGroup name={doc.name} onEdit={() => { setRetainerEdit({ ...doc }); setRetainerEditError(null); }} onDelete={() => setRetainerDelete(doc)}>
+                                    <DocActions
+                                      size="row"
+                                      onPreview={() => handlePreviewDocument(doc)}
+                                      onInsights={() => handleOpenInsights(doc)}
+                                      onDownload={() => handleDownloadDocument(doc)}
+                                      disabled={{ download: "The original file is not stored in this prototype" }}
+                                    />
+                                  </RowActionGroup>
                                 </td>
                               </tr>
                               </React.Fragment>
@@ -1856,31 +2805,17 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                           </div>
                         ) : (
                           <>
-                            {/* Classification Summary Bar */}
-                            <div className="flex items-center justify-between gap-4 bg-tint border border-[#9BDAEC] rounded-xl px-5 py-3">
-                              <div className="flex items-center gap-2">
-                                <CheckCircle className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} />
-                                <span className="text-sm font-semibold text-deep">Document Processing Complete</span>
-                              </div>
-                              <div className="flex items-center gap-6 text-xs">
-                                <div className="text-center">
-                                  <div className="font-bold text-ink">{sharedDocs.length}</div>
-                                  <div className="text-[#5B6B78]">Processed</div>
-                                </div>
-                                <div className="text-center">
-                                  <div className="font-bold text-ink">{classifiedCount}</div>
-                                  <div className="text-[#5B6B78]">Organized</div>
-                                </div>
-                                <div className="text-center">
-                                  <div className="font-bold text-ink">{sharedDocs.length - classifiedCount}</div>
-                                  <div className="text-[#5B6B78]">Review</div>
-                                </div>
-                                <span className="pill pill-neutral">Ready For Analysis</span>
-                              </div>
-                            </div>
-
                             {/* Categorized document sections */}
-                            {classifiedCategories.map((category) => (
+                            {statusFilterBar}
+
+                            {visibleDocCount === 0 && (
+                              <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-line rounded-xl bg-white">
+                                <FileText className="w-8 h-8 text-[#9BDAEC] mb-3" strokeWidth={1.75} />
+                                <p className="text-sm text-[#5B6B78]">No documents match {docSearch.trim() ? `"${docSearch.trim()}" in ` : ""}this filter.</p>
+                                <button onClick={() => { setDocFilter("all"); setDocSearch(""); }} className="text-xs font-semibold text-deep hover:underline mt-1">Show all documents</button>
+                              </div>
+                            )}
+                            {classifiedCategories.map((rawCategory) => ({ ...rawCategory, docs: rawCategory.docs.filter(visibleDoc), total: rawCategory.docs.length })).filter((c) => c.docs.length > 0).map((category) => (
                               <div key={category.name} className="border border-line rounded-xl overflow-hidden">
                                 <button
                                   onClick={() => toggleCategory(category.name)}
@@ -1888,18 +2823,29 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                 >
                                   <div className="flex items-center gap-2">
                                     <span className="text-sm font-semibold text-ink">{category.name}</span>
-                                    <span className="text-xs font-medium text-[#5B6B78] bg-white border border-line px-2 py-0.5 rounded-full">{category.docs.length}</span>
+                                    <span className="text-xs font-medium text-[#5B6B78] bg-white border border-line px-2 py-0.5 rounded-full">{category.docs.length === category.total ? category.total : `${category.docs.length} of ${category.total}`}</span>
                                   </div>
                                   <ChevronDown className={`w-4 h-4 text-[#5B6B78] transition-transform ${isCategoryExpanded(category.name) ? "" : "-rotate-90"}`} strokeWidth={1.75} />
                                 </button>
                                 {isCategoryExpanded(category.name) && (
-                                  <table className="w-full">
+                                  <div className="overflow-x-auto">
+                                  <table className="w-full min-w-[860px] table-fixed">
+                                    {/* The same column widths in every category, so rows line up. */}
+                                    <colgroup>
+                                      <col />
+                                      <col className="w-[64px]" />
+                                      <col className="w-[96px]" />
+                                      <col className="w-[112px]" />
+                                      <col className="w-[200px]" />
+                                      <col className="w-[152px]" />
+                                    </colgroup>
                                     <thead className="bg-white border-b border-line">
                                       <tr>
                                         <th className="text-left px-5 py-2.5 eyebrow">File Name</th>
                                         <th className="text-left px-5 py-2.5 eyebrow">Type</th>
                                         <th className="text-left px-5 py-2.5 eyebrow">Source</th>
                                         <th className="text-left px-5 py-2.5 eyebrow">Date</th>
+                                        <th className="text-left px-5 py-2.5 eyebrow">Status</th>
                                         <th className="text-right px-5 py-2.5 eyebrow">Actions</th>
                                       </tr>
                                     </thead>
@@ -1910,28 +2856,61 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                                             key={doc.id}
                                             className="transition-all hover:bg-wash"
                                           >
-                                            <td className="px-5 py-3 mono-ref text-ink">
-                                              <span className="inline-flex items-center gap-2">
+                                            <td className="px-5 py-3 align-middle">
+                                              <span className="flex items-start gap-2 mono-ref text-ink min-w-0">
                                                 <FileTypeIcon name={doc.name} />
-                                                {doc.name}
+                                                <span className="min-w-0 [overflow-wrap:anywhere]">{doc.name.split(/(?<=[_.-])/).map((part, i) => <React.Fragment key={i}>{i > 0 && <wbr />}{part}</React.Fragment>)}</span>
+                                                {isUnseen(doc) && <span aria-label="New activity" title="New activity" className="w-2 h-2 mt-1.5 rounded-full bg-[#F59E0B] shrink-0" />}
                                               </span>
+                                              {(doc.checkError || doc.reviewReason || doc.checkResult) && (
+                                                <div className={`text-xs mt-0.5 ${doc.status === "Failed" ? "text-[#B91C1C]" : doc.status === "Attorney Review Required" ? "text-[#B45309]" : "text-[#5B6B78]"}`}>
+                                                  {doc.status === "Failed" ? doc.checkError : doc.status === "Attorney Review Required" ? doc.reviewReason : doc.checkResult}
+                                                </div>
+                                              )}
                                             </td>
-                                            <td className="px-5 py-3"><FileTypeTag name={doc.name} /></td>
-                                            <td className="px-5 py-3 text-sm text-[#5B6B78]">{doc.source}</td>
-                                            <td className="px-5 py-3 text-sm text-[#5B6B78]">{doc.date}</td>
-                                            <td className="px-5 py-3 text-right">
-                                              <DocActions
-                                                size="sm"
-                                                onPreview={() => handlePreviewDocument(doc)}
-                                                onInsights={() => handleOpenInsights(doc)}
-                                                onDownload={() => handleDownloadDocument(doc)}
-                                              />
+                                            <td className="px-5 py-3 align-middle"><FileTypeTag name={doc.name} /></td>
+                                            <td className="px-5 py-3 align-middle text-sm text-[#5B6B78]">{doc.source}</td>
+                                            <td className="px-5 py-3 align-middle text-sm text-[#5B6B78] whitespace-nowrap">{doc.date}</td>
+                                            <td className="px-5 py-3 align-middle">
+                                              {/* The status, and the step it calls for — kept here so the
+                                                  Actions column is identical on every row. */}
+                                              <div className="flex flex-col items-start gap-1.5">
+                                                <span className={`pill whitespace-nowrap ${DOC_STATUS_PILL[doc.status]}`}>
+                                                  {doc.status === "Processing" && <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />}
+                                                  {doc.status}
+                                                </span>
+                                                  {doc.status === "Failed" && (
+                                                    <button onClick={() => void retryDoc(doc)} className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[#FDE6C8] text-[#B45309] text-xs font-semibold hover:bg-[#FFF7ED]">
+                                                      <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} /> Retry
+                                                    </button>
+                                                  )}
+                                                  {docFilter === "review" && doc.status === "Attorney Review Required" && (
+                                                    <button onClick={() => openReview(doc)} className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold ${doc.status === "Attorney Review Required" ? "border-[#FDE6C8] text-[#B45309] hover:bg-[#FFF7ED]" : "border-line text-deep hover:bg-tint"}`}>
+                                                      <ClipboardCheck className="w-3.5 h-3.5" strokeWidth={1.75} /> Review
+                                                    </button>
+                                                  )}
+                                              </div>
+                                            </td>
+                                            <td className="px-5 py-3 align-middle">
+                                              <RowActionGroup name={doc.name} onEdit={() => openEdit(doc)} onDelete={() => { setDeleteDoc(doc); setDeleteError(null); }}>
+                                                  <DocActions
+                                                    size="row"
+                                                    onPreview={() => handlePreviewDocument(doc)}
+                                                    onInsights={() => handleOpenInsights(doc)}
+                                                    onDownload={() => handleDownloadDocument(doc)}
+                                                    disabled={{
+                                                      insights: !processingFinished(doc) ? "Available once processing finishes" : doc.status === "Failed" ? "Processing failed — retry first" : undefined,
+                                                      download: doc.history && !doc.storageKey ? "The original file is not stored in this browser" : !doc.history ? "The original file is not stored in this prototype" : undefined,
+                                                    }}
+                                                  />
+                                              </RowActionGroup>
                                             </td>
                                           </tr>
                                         );
                                       })}
                                     </tbody>
                                   </table>
+                                  </div>
                                 )}
                               </div>
                             ))}
@@ -2695,7 +3674,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                 <h3 className="text-sm font-semibold text-ink mb-1">Missing Documents</h3>
                 <p className="text-xs text-[#5B6B78] mb-3">Uncheck any document you do not want to request.</p>
                 <div className="border border-line rounded-xl divide-y divide-line">
-                  {missingEvidence.map((item) => (
+                  {missingItems.map((item) => (
                     <label key={item.title} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-wash transition-colors">
                       <input
                         type="checkbox"
@@ -2705,7 +3684,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                       />
                       <div>
                         <div className="text-sm text-ink">{item.title}</div>
-                        <div className="text-xs text-[#5B6B78] font-mono">{item.expected}</div>
+                        {item.expected && <div className="text-xs text-[#5B6B78] font-mono">{item.expected}</div>}
                       </div>
                     </label>
                   ))}
@@ -2753,13 +3732,14 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
               </div>
             </div>
 
+            {missingError && <p role="alert" className="px-6 pb-3 text-sm text-[#B91C1C]">{missingError}</p>}
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-line shrink-0">
               <Button onClick={() => setShowMissingRequestModal(false)} className="bg-white border border-line text-ink hover:bg-wash">
                 Cancel
               </Button>
               <Button
                 disabled={selectedMissingTitles.length === 0}
-                onClick={() => setShowMissingRequestModal(false)}
+                onClick={handleSendMissingRequest}
                 className="bg-brand hover:bg-deep text-white border-0 gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Send className="w-4 h-4" strokeWidth={1.75} />
@@ -2771,6 +3751,128 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
       )}
 
       {/* Document Workspace — unified Preview + Insights modal */}
+      {editDoc && (
+        <EditDocumentDialog
+          doc={editDoc}
+          otherNames={sharedDocs.filter((d) => d.id !== editDoc.id).map((d) => d.name)}
+          onSave={(patch, changed) => {
+            // Details only — the stored file and its check stand.
+            patchDoc(editDoc.id, patch, changed.length ? `Details edited: ${changed.join(", ")}` : undefined);
+            setEditDoc(null);
+          }}
+          onClose={() => setEditDoc(null)}
+        />
+      )}
+
+      {deleteDoc && (
+        <DeleteDocumentDialog doc={deleteDoc} error={deleteError} onConfirm={() => void confirmDelete()} onClose={() => setDeleteDoc(null)} />
+      )}
+
+      {retainerEdit && (
+        <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={() => setRetainerEdit(null)}>
+          <div role="dialog" aria-modal="true" aria-label="Edit retainer document details" className="bg-white rounded-xl w-full max-w-md shadow-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+              <h2 className="card-title">Edit retainer document details</h2>
+              <button onClick={() => setRetainerEdit(null)} aria-label="Close" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <label className="block">
+                <span className="eyebrow block mb-1">Document name</span>
+                <input value={retainerEdit.name} onChange={(e) => setRetainerEdit({ ...retainerEdit, name: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-line text-sm focus:outline-none focus:border-brand" />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="eyebrow block mb-1">Source</span>
+                  <select value={retainerEdit.source} onChange={(e) => setRetainerEdit({ ...retainerEdit, source: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-line text-sm bg-white focus:outline-none focus:border-brand">
+                    <option value="Plaintiff">Plaintiff</option>
+                    <option value="Attorney">Attorney</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="eyebrow block mb-1">Date</span>
+                  <input value={retainerEdit.date} onChange={(e) => setRetainerEdit({ ...retainerEdit, date: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-line text-sm focus:outline-none focus:border-brand" />
+                </label>
+              </div>
+              <p className="text-xs text-[#5B6B78]">Details only — the agreement itself and its signing status ({retainerEdit.status}) are not changed here.</p>
+              {retainerEditError && <p role="alert" className="text-sm text-[#B91C1C]">{retainerEditError}</p>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-6 py-4 bg-wash border-t border-line rounded-b-xl">
+              <button onClick={() => setRetainerEdit(null)} className="btn btn-secondary">Cancel</button>
+              <button onClick={saveRetainerEdit} className="btn btn-primary">Save changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {retainerDelete && (
+        <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={() => setRetainerDelete(null)}>
+          <div role="alertdialog" aria-modal="true" aria-label="Delete retainer document" className="bg-white rounded-xl w-full max-w-md shadow-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-5 space-y-2">
+              <h2 className="card-title flex items-center gap-2"><Trash2 className="w-4 h-4 text-[#B91C1C]" strokeWidth={1.75} /> Delete this retainer document?</h2>
+              <p className="body-text"><span className="mono-ref text-ink">{retainerDelete.name}</span> will be removed from Retainer documents. This cannot be undone.</p>
+              {retainerDelete.status === "Signed" && <p className="text-xs text-[#B45309]">This is the signed agreement. Deleting the file does not change the retainer's signing status on this case.</p>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-6 py-4 bg-wash border-t border-line rounded-b-xl">
+              <button onClick={() => setRetainerDelete(null)} className="btn btn-secondary">Cancel</button>
+              <button onClick={() => { setRetainerDocs((ds) => ds.filter((d) => d.id !== retainerDelete.id)); setRetainerDelete(null); }} className="btn bg-[#B91C1C] border border-[#B91C1C] text-white hover:bg-[#991B1B]">Delete document</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reviewDoc && (() => {
+        const live = sharedDocs.find((d) => d.id === reviewDoc.id) ?? reviewDoc;
+        return (
+          <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={() => setReviewDoc(null)}>
+            <div role="dialog" aria-modal="true" aria-label="Review document" className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-sm" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-line">
+                <div className="min-w-0">
+                  <div className="eyebrow mb-0.5">Review document</div>
+                  <h2 className="card-title mono-ref text-ink break-words">{live.name}</h2>
+                </div>
+                <button onClick={() => setReviewDoc(null)} aria-label="Close" className="p-1.5 hover:bg-tint rounded-lg shrink-0"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="flex items-center gap-2"><span className="eyebrow">Status</span><span className={`pill ${DOC_STATUS_PILL[live.status]}`}>{live.status}</span></div>
+                {live.reviewReason && (
+                  <div className="rounded-lg border border-[#FDE6C8] bg-[#FFF7ED] p-3">
+                    <div className="eyebrow text-[#B45309] mb-0.5">What needs your decision</div>
+                    <p className="text-sm text-ink">{live.reviewReason}</p>
+                  </div>
+                )}
+                {live.checkResult && <p className="text-sm text-[#5B6B78]"><span className="eyebrow mr-1.5">File check</span>{live.checkResult}</p>}
+                <label className="block">
+                  <span className="eyebrow block mb-1">Category</span>
+                  <select value={reviewCategory} onChange={(e) => setReviewCategory(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-line text-sm bg-white focus:outline-none focus:border-brand">
+                    <option value="">From the file name ({classifyDocuments([{ ...live, category: undefined }])[0]?.name})</option>
+                    {DOCUMENT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="eyebrow block mb-1">Review note (optional)</span>
+                  <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} rows={2} className="w-full px-3 py-2 rounded-lg border border-line text-sm focus:outline-none focus:border-brand" placeholder="What you checked or decided" />
+                </label>
+                {(live.history?.length ?? 0) > 0 && (
+                  <div>
+                    <div className="eyebrow mb-1">History</div>
+                    <ul className="space-y-0.5">
+                      {live.history!.map((h, i) => <li key={i} className="text-xs text-[#5B6B78]"><span className="mono-ref mr-1.5">{h.at}</span>{h.event}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-2 px-6 py-4 bg-wash border-t border-line rounded-b-xl">
+                <button onClick={() => { setReviewDoc(null); handlePreviewDocument(live); }} className="btn btn-secondary">Open document</button>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setReviewDoc(null)} className="btn btn-secondary">Cancel</button>
+                  <button onClick={markReviewed} className="btn btn-primary">Mark as reviewed</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <DocumentWorkspaceModal
         docs={showDocumentPreview && selectedDocument ? [selectedDocument] : null}
         initialView={workspaceView}
@@ -2790,11 +3892,17 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
             </div>
             <div className="p-6 space-y-4">
               <p className="secondary-text">Upload a signed copy of the retainer agreement to attach it to this case.</p>
-              <div className="border-2 border-dashed border-line rounded-xl p-8 text-center hover:border-soft transition-colors cursor-pointer">
+              <label className="block border-2 border-dashed border-line rounded-xl p-8 text-center hover:border-soft transition-colors cursor-pointer">
                 <Upload className="w-8 h-8 text-[#9BDAEC] mx-auto mb-3" strokeWidth={1.75} />
-                <p className="text-sm font-medium text-ink mb-1">Drop file here or click to upload</p>
+                <p className="text-sm font-medium text-ink mb-1">{retainerPickedFile ? retainerPickedFile.name : "Choose the signed file"}</p>
                 <p className="text-xs text-[#5B6B78]">PDF, JPG, PNG up to 20MB</p>
-              </div>
+                <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden" onChange={(e) => { setRetainerPickedFile(e.target.files?.[0] ?? null); setRetainerUploadError(null); }} />
+              </label>
+              <label className="flex items-start gap-2 text-sm text-ink cursor-pointer">
+                <input type="checkbox" checked={retainerConfirmed} onChange={(e) => setRetainerConfirmed(e.target.checked)} className="mt-0.5 accent-[#3FB5D7]" />
+                I confirm this is the agreement signed by the client.
+              </label>
+              {retainerUploadError && <p role="alert" className="text-sm text-[#B91C1C]">{retainerUploadError}</p>}
             </div>
             <div className="flex items-center justify-between px-6 py-4 bg-wash border-t border-line">
               <button
@@ -2808,8 +3916,10 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                   Cancel
                 </button>
                 <button
-                  onClick={() => { setAgreementUploaded(true); applyDemoRetainer("signed"); setShowUploadAgreementModal(false); }}
-                  className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all"
+                  disabled={!retainerPickedFile || !retainerConfirmed}
+                  title={!retainerPickedFile ? "Choose the signed file first" : !retainerConfirmed ? "Confirm it is the signed agreement" : undefined}
+                  onClick={async () => { if (retainerPickedFile && await markRetainerSigned(retainerPickedFile)) setShowUploadAgreementModal(false); }}
+                  className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Upload File
                 </button>
@@ -2878,19 +3988,15 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onCon
                 <h3 className="card-title mb-2">
                   Upload Agreement <span className="text-[#5B6B78] font-normal">(Optional)</span>
                 </h3>
-                <div className="border-2 border-dashed border-line rounded-xl p-8 text-center hover:border-soft hover:bg-tint/50 transition-all cursor-pointer">
+                <label className="block border-2 border-dashed border-line rounded-xl p-8 text-center hover:border-soft hover:bg-tint/50 transition-all cursor-pointer">
                   <Upload className="w-12 h-12 text-[#5B6B78] mx-auto mb-4" strokeWidth={1.75} />
-                  <div className="mb-2">
-                    <span className="text-sm font-medium text-ink">Drag & Drop</span>
-                    <span className="text-sm text-[#5B6B78]"> or </span>
-                    <button className="text-sm font-medium text-deep hover:text-ink">
-                      Browse Files
-                    </button>
-                  </div>
+                  <div className="mb-2 text-sm font-medium text-ink">{retainerPickedFile ? retainerPickedFile.name : "Browse Files"}</div>
                   <p className="text-xs text-[#5B6B78]">
                     Supported: PDF, DOCX, JPG, PNG
                   </p>
-                </div>
+                  <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" className="hidden" onChange={(e) => { setRetainerPickedFile(e.target.files?.[0] ?? null); setRetainerUploadError(null); }} />
+                </label>
+                {retainerUploadError && <p role="alert" className="text-sm text-[#B91C1C] mt-2">{retainerUploadError}</p>}
               </div>
             </div>
 

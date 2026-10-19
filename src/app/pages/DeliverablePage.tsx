@@ -93,13 +93,16 @@ interface DeliverablePageProps {
   onOpenWorkspaceTab: (tab: string) => void;
   onOpenValuation?: () => void;
   onOpenInsurance?: () => void;
+  /** The stage it was opened from — where Back returns. */
+  origin?: "analysis" | "case-ready";
 }
 
 export function DeliverablePage({
   kind, caseData, analysisFindings = [], documents = [],
   userChronology = EMPTY_USER_CHRONOLOGY, onUserChronologyChange,
-  onBack, onStageClick, onOpenDeliverable, onOpenWorkspaceTab, onOpenValuation, onOpenInsurance,
+  onBack, onStageClick, onOpenDeliverable, onOpenWorkspaceTab, onOpenValuation, onOpenInsurance, origin = "case-ready",
 }: DeliverablePageProps) {
+  const fromStage = origin === "analysis" ? "Analysis" : "Case Ready";
   const meta = DELIVERABLES.find((d) => d.kind === kind)!;
   const model = useWorkspaceModel(caseData);
 
@@ -171,12 +174,12 @@ export function DeliverablePage({
               className="flex items-center gap-2 secondary-text hover:text-ink transition-colors"
             >
               <ChevronLeft className="w-4 h-4" strokeWidth={1.75} />
-              Back to Case Ready
+              Back to {fromStage}
             </button>
             <div className="secondary-text ml-auto flex items-center gap-2 min-w-0">
               <span className="truncate">{model.caseName}</span>
               <ChevronRight className="w-3.5 h-3.5 text-[#9BA8B4] shrink-0" strokeWidth={1.75} />
-              <span className="shrink-0">Case Ready</span>
+              <span className="shrink-0">{fromStage}</span>
               <ChevronRight className="w-3.5 h-3.5 text-[#9BA8B4] shrink-0" strokeWidth={1.75} />
               <span className="text-ink font-medium shrink-0">{meta.title}</span>
             </div>
@@ -184,7 +187,7 @@ export function DeliverablePage({
         </div>
       </div>
 
-      <StageNavigator currentStage="Case Ready" onStageClick={onStageClick} />
+      <StageNavigator currentStage={fromStage} onStageClick={onStageClick} />
 
       <div className="max-w-[1400px] mx-auto px-8 py-8">
         {/* Deliverable header — the same chip, title and description as its card */}

@@ -1,11 +1,39 @@
 import { fileKind } from "../components/fileType";
+/** Where a document is in processing and review. */
+export type DocStatus = "Queued" | "Processing" | "Processed" | "Attorney Review Required" | "Failed" | "Reviewed";
+
 export interface CaseDocument {
   id: string;
   name: string;
   source: "Plaintiff" | "Attorney";
   date: string;
-  status: "Processing" | "Processed";
+  status: DocStatus;
+  /** The stored original (intake/mediaFileStore). Absent for records whose file
+   *  is not held in this browser. */
+  storageKey?: string;
+  size?: number;
+  /** What the file check found, or why it failed / needs the attorney. */
+  checkResult?: string;
+  checkError?: string;
+  /** Why the attorney has to look at it, when the status says so. */
+  reviewReason?: string;
+  /** A category the attorney set; otherwise it is read from the file name. */
+  category?: string;
+  /** The status the attorney last saw — a later change shows as new activity. */
+  seenStatus?: DocStatus;
+  /** What happened to the document, oldest first. */
+  history?: { at: string; event: string }[];
+  /** A client submission: the intake request it came with, the upload it is,
+   *  and when the client submitted it (ISO). */
+  requestId?: string;
+  intakeUploadId?: string;
+  receivedAt?: string;
 }
+
+/** The categories a document can be filed under. */
+export const DOCUMENT_CATEGORIES = [
+  "Medical Records", "Police Reports", "Insurance Documents", "Wage Loss Records", "Photos & Evidence", "Video & Photos", "General Documents",
+];
 
 export interface AttorneyNote {
   id: string;
@@ -71,6 +99,11 @@ export function classifyDocuments(docs: CaseDocument[]): ClassificationCategory[
   };
 
   for (const doc of docs) {
+    // A category the attorney chose wins over the name.
+    if (doc.category && buckets[doc.category]) {
+      buckets[doc.category].push(doc);
+      continue;
+    }
     const n = doc.name.toLowerCase();
     // Video and photos are media evidence, analysed on their own — never filed
     // as documents, whatever their name suggests.

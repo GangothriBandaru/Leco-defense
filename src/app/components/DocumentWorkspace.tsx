@@ -1,13 +1,63 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   Eye, Sparkles, Download, FileText, ListChecks, Info, CheckCircle,
   Bot, Send, ChevronLeft, ChevronRight, ChevronDown, ZoomIn, ZoomOut, X, Search,
-  Play, Pause, Clock,
+  Play, Pause, Clock, Pencil, Trash2, MoreVertical,
 } from "lucide-react";
 import { useNotes } from "../notes/NotesContext";
 import { getDocumentContent, type DocBlock } from "./documentText";
 import { fileKind, FileTypeIcon, FileTypeTag, FILE_KIND_LABEL, type FileKind } from "./fileType";
 import { EVIDENCE_INTEL } from "../workspace/evidenceData";
+import { passagesOf, mapInsights, type InsightMatch, type SourceSpan } from "./insightSources";
+
+/** Insight ↔ source-text links shared by the viewer and the AI panel. */
+interface SourceLinks {
+  matches: Record<string, InsightMatch | null>;
+  /** Passage id → the verified source spans inside it. */
+  byPassage: Record<string, SourceSpan[]>;
+  active: string | null;
+  onSelectInsight: (id: string) => void;
+  onSelectSpan: (span: SourceSpan) => void;
+}
+
+/** A passage's text with its verified source spans marked; the rest untouched. */
+function MarkedText({ passageId, text, links }: { passageId: string; text: string; links?: SourceLinks }) {
+  const spans = [...(links?.byPassage[passageId] ?? [])].sort((a, b) => a.start - b.start);
+  if (!spans.length) return <>{text}</>;
+  // Spans for different insights can cover the same sentence: merge equal
+  // ranges so one mark carries every insight it supports.
+  const ranges: { start: number; end: number; spans: SourceSpan[] }[] = [];
+  for (const s of spans) {
+    const same = ranges.find((r) => r.start === s.start && r.end === s.end);
+    if (same) same.spans.push(s);
+    else if (!ranges.some((r) => s.start < r.end && s.end > r.start)) ranges.push({ start: s.start, end: s.end, spans: [s] });
+  }
+  const out: React.ReactNode[] = [];
+  let at = 0;
+  ranges.forEach((r) => {
+    if (r.start > at) out.push(text.slice(at, r.start));
+    const on = !!links?.active && r.spans.some((s) => s.insightId === links.active);
+    out.push(
+      <mark
+        key={r.start}
+        id={`src-${r.spans[0].id}`}
+        data-insights={r.spans.map((s) => s.insightId).join(" ")}
+        role="button"
+        tabIndex={0}
+        title="Supports an AI insight — click to see it"
+        onClick={() => links?.onSelectSpan(r.spans[0])}
+        onKeyDown={(e) => { if (e.key === "Enter") links?.onSelectSpan(r.spans[0]); }}
+        className={`text-inherit rounded px-0.5 -mx-0.5 cursor-pointer transition-colors ${on ? "bg-[#FFE27A] shadow-[0_0_0_2px_#F2C94C] animate-[hlpulse_1.2s_ease-out_1]" : "bg-[#FFF4B8] hover:bg-[#FFEB8F]"}`}
+      >
+        {text.slice(r.start, r.end)}
+      </mark>,
+    );
+    at = r.end;
+  });
+  if (at < text.length) out.push(text.slice(at));
+  return <>{out}</>;
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
    Standardized document actions.
@@ -21,20 +71,42 @@ export function DocActions({
   onDownload,
   size = "md",
   disabled,
+  hideDownload = false,
 }: {
   onPreview?: () => void;
   onInsights?: () => void;
   onDownload?: () => void;
-  size?: "sm" | "md";
+  /** "row": icon buttons only, the same size as Edit and Delete — for table rows. */
+  size?: "sm" | "md" | "row";
   /** Why an action is unavailable right now — the button is disabled and says so. */
   disabled?: { preview?: string; insights?: string; download?: string };
+  /** Row variant: Download lives in the row's More actions menu instead. */
+  hideDownload?: boolean;
 }) {
-  const pad = size === "sm" ? "p-1.5" : "p-2";
-  const icon = size === "sm" ? "w-3.5 h-3.5" : "w-4 h-4";
-  const base = `${pad} rounded-lg transition-colors`;
-  const labelPad = size === "sm" ? "px-2.5 py-1.5" : "px-3.5 py-2";
+  const icon = size === "md" ? "w-4 h-4" : "w-3.5 h-3.5";
+  // Fixed heights, so every row's buttons are the same size.
+  const base = `${size === "md" ? "w-9 h-9" : "w-8 h-8"} inline-flex items-center justify-center shrink-0 rounded-lg transition-colors`;
+  const labelPad = size === "sm" ? "h-8 px-2.5" : "h-9 px-3.5";
+  if (size === "row") {
+    const off = "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent";
+    return (
+      <div className="inline-flex items-center gap-1 shrink-0">
+        <button type="button" title={disabled?.preview ?? "Preview document"} aria-label="Preview" disabled={!!disabled?.preview} onClick={(e) => { e.stopPropagation(); onPreview?.(); }} className={`${base} text-ink hover:bg-wash ${off}`}>
+          <Eye className={icon} strokeWidth={1.75} />
+        </button>
+        <button type="button" title={disabled?.insights ?? "View AI insights"} aria-label="Insights" disabled={!!disabled?.insights} onClick={(e) => { e.stopPropagation(); onInsights?.(); }} className={`${base} text-deep hover:bg-tint ${off}`}>
+          <Sparkles className={icon} strokeWidth={1.75} />
+        </button>
+        {!hideDownload && (
+          <button type="button" title={disabled?.download ?? "Download"} aria-label="Download" disabled={!!disabled?.download} onClick={(e) => { e.stopPropagation(); onDownload?.(); }} className={`${base} text-ink hover:bg-tint ${off}`}>
+            <Download className={icon} strokeWidth={1.75} />
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
-    <div className="flex items-center justify-end gap-1.5">
+    <div className="inline-flex items-center justify-end gap-1.5 shrink-0">
       <button
         type="button"
         title={disabled?.preview ?? "Preview"}
@@ -63,6 +135,144 @@ export function DocActions({
       >
         <Download className={icon} strokeWidth={1.75} />
       </button>
+    </div>
+  );
+}
+
+/** A row's More actions menu: Edit, Delete, Download. Drawn over the page
+ *  (fixed, in a portal) so table and group containers never clip it; it
+ *  follows its button while the page scrolls, and closes on a choice, a click
+ *  outside, Escape, or when its row leaves the screen. */
+export function RowMenu({
+  name, onEdit, onDelete, onDownload, downloadDisabled,
+}: {
+  name: string;
+  onEdit: () => void;
+  onDelete: () => void;
+  onDownload?: () => void;
+  /** Why the file cannot be downloaded, when it cannot. */
+  downloadDisabled?: string;
+}) {
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const close = (refocus = false) => { setPos(null); if (refocus) btnRef.current?.focus(); };
+  // Below the button, or above it when there is no room underneath.
+  const place = (r: DOMRect) => ({
+    top: r.bottom + 140 > window.innerHeight ? r.top - 4 - 124 : r.bottom + 4,
+    right: Math.max(8, window.innerWidth - r.right),
+  });
+  const open = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos(place(r));
+  };
+  useEffect(() => {
+    if (!pos) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node) && !btnRef.current?.contains(e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); close(true); }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+        const i = items.indexOf(document.activeElement as HTMLButtonElement);
+        items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus({ preventScroll: true });
+      }
+    };
+    const onMove = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r || r.bottom < 0 || r.top > window.innerHeight) { close(); return; }
+      setPos((p) => {
+        const next = place(r);
+        return p && p.top === next.top && p.right === next.right ? p : next;
+      });
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [!!pos]);
+  const item = "w-full flex items-center gap-2 px-3 py-2 text-sm text-left rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent focus-visible:outline-none focus-visible:bg-wash";
+  const pick = (fn?: () => void) => () => { close(true); fn?.(); };
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={(e) => { e.stopPropagation(); pos ? close() : open(); }}
+        title="More actions"
+        aria-label={`More actions: ${name}`}
+        aria-haspopup="menu"
+        aria-expanded={!!pos}
+        className={`w-8 h-8 inline-flex items-center justify-center shrink-0 rounded-lg text-[#5B6B78] hover:bg-tint hover:text-ink transition-colors ${pos ? "bg-tint text-ink" : ""}`}
+      >
+        <MoreVertical className="w-4 h-4" strokeWidth={1.75} />
+      </button>
+      {pos && createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={`Actions for ${name}`}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "fixed", top: pos.top, right: pos.right }}
+          className="z-[90] w-44 rounded-xl border border-line bg-white shadow-lg p-1"
+        >
+          <button role="menuitem" type="button" onClick={pick(onEdit)} className={`${item} text-ink hover:bg-wash`}>
+            <Pencil className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Edit
+          </button>
+          <button role="menuitem" type="button" onClick={pick(onDelete)} className={`${item} text-[#B91C1C] hover:bg-[#FEF2F2]`}>
+            <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} /> Delete
+          </button>
+          <button role="menuitem" type="button" disabled={!!downloadDisabled || !onDownload} title={downloadDisabled} onClick={pick(onDownload)} className={`${item} text-ink hover:bg-wash`}>
+            <Download className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Download
+          </button>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/** The actions at the end of every document and media row: Preview and AI
+ *  Insights in view, then More actions (Edit, Delete, Download). Right-aligned,
+ *  fixed-size and never wrapping, so they sit in the same place on every row.
+ *  The row's DocActions keeps its Download handler and disabled reason; they
+ *  move into the menu. */
+export function RowActionGroup({
+  name,
+  onEdit,
+  onDelete,
+  children,
+}: {
+  /** The document or file name, for the buttons' accessible labels. */
+  name: string;
+  onEdit: () => void;
+  onDelete: () => void;
+  children?: React.ReactNode;
+}) {
+  let onDownload: (() => void) | undefined;
+  let downloadDisabled: string | undefined;
+  const shown = React.Children.map(children, (child) => {
+    if (React.isValidElement(child) && (child.type as any) === DocActions) {
+      const props = child.props as React.ComponentProps<typeof DocActions>;
+      onDownload = props.onDownload;
+      downloadDisabled = props.disabled?.download;
+      return React.cloneElement(child as React.ReactElement<any>, { hideDownload: true });
+    }
+    return child;
+  });
+  return (
+    <div className="flex items-center justify-end gap-1 flex-nowrap" onClick={(e) => e.stopPropagation()}>
+      {shown}
+      <RowMenu name={name} onEdit={onEdit} onDelete={onDelete} onDownload={onDownload} downloadDisabled={downloadDisabled} />
     </div>
   );
 }
@@ -150,7 +360,39 @@ function InsightBlock({ icon: Icon, title, children }: { icon: any; title: strin
    interface in place — the PDF viewer on the left stays visible throughout.
    When `onBackToPreview` is provided, a back control returns to the document-only
    Preview layout (80% viewer / 20% action rail). */
-function AiIntelligencePanel({ docs, onDownload, startInChat = false, onBackToPreview, insights: insightsOverride }: { docs: any[]; onDownload?: () => void; startInChat?: boolean; onBackToPreview?: () => void; insights?: DocInsights }) {
+/** One insight statement, selectable when the document text supports it. */
+function InsightLine({ id, text, links, children }: { id: string; text: string; links?: SourceLinks; children?: React.ReactNode }) {
+  const match = links?.matches[id];
+  if (!links || match === undefined) return <>{children ?? text}</>;
+  const on = links.active === id;
+  return (
+    <div id={`insight-${id}`} className={`rounded-lg -mx-2 px-2 py-1 transition-colors ${on ? "bg-tint ring-1 ring-brand" : ""}`}>
+      {match ? (
+        <button onClick={() => links.onSelectInsight(id)} className="text-left w-full group" aria-pressed={on}>
+          {children ?? text}
+          <span className="flex items-center gap-1 mt-0.5 text-[11px] font-semibold text-deep">
+            <Search className="w-3 h-3" strokeWidth={2} />
+            {match.spans.length === 1 ? "Show source passage" : `Show ${match.spans.length} source passages`}
+          </span>
+          {on && (
+            <span className="block text-[11px] text-[#5B6B78] mt-0.5">
+              {match.basis} · {match.confidence}
+              {match.spans[0].page !== undefined && ` · page ${match.spans[0].page}`}
+            </span>
+          )}
+        </button>
+      ) : (
+        // Selectable too, so choosing it clears another insight's highlight.
+        <button onClick={() => links.onSelectInsight(id)} className="text-left w-full" aria-pressed={on}>
+          {children ?? text}
+          <span className="block mt-0.5 text-[11px] text-[#8A98A3]">No matching passage found in this document.</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AiIntelligencePanel({ docs, onDownload, startInChat = false, onBackToPreview, insights: insightsOverride, links, highlightNote }: { docs: any[]; onDownload?: () => void; startInChat?: boolean; onBackToPreview?: () => void; insights?: DocInsights; links?: SourceLinks; highlightNote?: string }) {
   const [chatOpen, setChatOpen] = useState(startInChat);
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [input, setInput] = useState("");
@@ -251,8 +493,13 @@ function AiIntelligencePanel({ docs, onDownload, startInChat = false, onBackToPr
 
       {/* Scrollable insights — only the points that matter at a glance */}
       <div className="flex-1 overflow-auto p-5 space-y-5">
+        {highlightNote && (
+          <p className="text-[11px] text-[#8A98A3] rounded-lg bg-wash border border-line px-3 py-2">{highlightNote}</p>
+        )}
         <InsightBlock icon={FileText} title="Summary">
-          <p className="text-sm text-ink leading-relaxed">{insights.summary}</p>
+          <InsightLine id="summary" text={insights.summary} links={links}>
+            <p className="text-sm text-ink leading-relaxed">{insights.summary}</p>
+          </InsightLine>
         </InsightBlock>
 
         {insights.observations && insights.observations.length > 0 && (
@@ -287,7 +534,7 @@ function AiIntelligencePanel({ docs, onDownload, startInChat = false, onBackToPr
               {insights.keyPoints.map((f, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-ink leading-relaxed">
                   <CheckCircle className="w-3.5 h-3.5 text-green-600 mt-0.5 shrink-0" strokeWidth={1.75} />
-                  <span>{f}</span>
+                  <div className="min-w-0 flex-1"><InsightLine id={`kp-${i}`} text={f} links={links}><span>{f}</span></InsightLine></div>
                 </li>
               ))}
             </ul>
@@ -449,19 +696,37 @@ function DocumentContextPanel({
 }
 
 /* Renders one synthesized document-text block (heading / paragraph / fields / list). */
-function DocBlockView({ block }: { block: DocBlock }) {
+function DocBlockView({ block, index, links }: { block: DocBlock; index: number; links?: SourceLinks }) {
+  // Verified source text is marked in place; a field is marked as a whole.
+  const fieldMark = (id: string) => {
+    const spans = links?.byPassage[id];
+    if (!spans?.length) return { className: "", props: {} };
+    const on = !!links?.active && spans.some((s) => s.insightId === links.active);
+    return {
+      className: `rounded px-1 -mx-1 cursor-pointer transition-colors ${on ? "bg-[#FFE27A] shadow-[0_0_0_2px_#F2C94C] animate-[hlpulse_1.2s_ease-out_1]" : "bg-[#FFF4B8] hover:bg-[#FFEB8F]"}`,
+      props: {
+        id: `src-${spans[0].id}`,
+        "data-insights": spans.map((s) => s.insightId).join(" "),
+        role: "button",
+        tabIndex: 0,
+        title: "Supports an AI insight — click to see it",
+        onClick: () => links?.onSelectSpan(spans[0]),
+        onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter") links?.onSelectSpan(spans[0]); },
+      },
+    };
+  };
   switch (block.type) {
     case "heading":
       return <h3 className="text-[13px] font-semibold uppercase tracking-wide text-deep border-b border-line pb-1.5 mt-1">{block.text}</h3>;
     case "paragraph":
-      return <p className="text-[13px] leading-relaxed text-ink">{block.text}</p>;
+      return <p className="text-[13px] leading-relaxed text-ink"><MarkedText passageId={`p${index}`} text={block.text} links={links} /></p>;
     case "list":
       return (
         <ul className="space-y-1.5">
           {block.items.map((it, i) => (
             <li key={i} className="flex items-start gap-2 text-[13px] leading-relaxed text-ink">
               <span className="mt-2 w-1 h-1 rounded-full bg-soft shrink-0" />
-              <span>{it}</span>
+              <span><MarkedText passageId={`p${index}-${i}`} text={it} links={links} /></span>
             </li>
           ))}
         </ul>
@@ -469,12 +734,15 @@ function DocBlockView({ block }: { block: DocBlock }) {
     case "fields":
       return (
         <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-          {block.pairs.map(([label, value]) => (
-            <div key={label} className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-wide text-[#5B6B78]">{label}</span>
-              <span className="text-[13px] text-ink font-medium">{value}</span>
-            </div>
-          ))}
+          {block.pairs.map(([label, value], i) => {
+            const m = fieldMark(`p${index}-${i}`);
+            return (
+              <div key={label} className={`flex flex-col ${m.className}`} {...m.props}>
+                <span className="text-[10px] uppercase tracking-wide text-[#5B6B78]">{label}</span>
+                <span className="text-[13px] text-ink font-medium">{value}</span>
+              </div>
+            );
+          })}
         </div>
       );
     default:
@@ -485,7 +753,7 @@ function DocBlockView({ block }: { block: DocBlock }) {
 /* The document "page" — renders the actual (simulated) full text of the active
    document so reviewers can read it inline. Images show a scene placeholder with
    a caption since they have no body text. */
-function DocumentPage({ doc }: { doc: any }) {
+function DocumentPage({ doc, links }: { doc: any; links?: SourceLinks }) {
   const content = getDocumentContent(doc);
   return (
     <div className="flex-1 overflow-auto bg-track flex justify-center items-start p-8">
@@ -500,7 +768,7 @@ function DocumentPage({ doc }: { doc: any }) {
         )}
         <div className="space-y-3">
           {content.blocks.map((block, i) => (
-            <DocBlockView key={i} block={block} />
+            <DocBlockView key={i} block={block} index={i} links={links} />
           ))}
         </div>
         <div className="mt-8 pt-3 border-t border-line flex items-center justify-between text-[10px] text-[#5B6B78] font-mono">
@@ -702,8 +970,11 @@ function WorkspaceInner({
   // Which workspace view is active. Preview = 80/20 (document only + action rail);
   // insights/chat = 60/40 (document + AI Intelligence panel).
   const [view, setView] = useState<"preview" | "insights" | "chat">(initialView);
+  const [activeInsight, setActiveInsight] = useState<string | null>(null);
   const isPreview = view === "preview";
   const activeDoc = docs[activeTab] ?? docs[0];
+  // A selected insight belongs to the document it was selected on.
+  useEffect(() => { setActiveInsight(null); }, [activeTab]);
   const activeKind: FileKind = activeDoc?.mediaKind ?? fileKind(String(activeDoc?.name ?? ""));
   const [zoom, setZoom] = useState(100);
 
@@ -716,6 +987,37 @@ function WorkspaceInner({
     return () => setDocContext(null);
   }, [ctxType, ctxRef, setDocContext]);
   const subtitle = [activeDoc.category, activeDoc.source, activeDoc.date].filter(Boolean).join(" · ");
+
+  // Insight ↔ passage links — only for a text document, and only while the AI
+  // panel is open. Matching runs on the document's own text (insightSources).
+  const shownInsights = insights ?? buildDocInsights(docs);
+  const links: SourceLinks | undefined = (() => {
+    if (isPreview || activeKind !== "document") return undefined;
+    const content = getDocumentContent(activeDoc);
+    const refs = [{ id: "summary", text: shownInsights.summary }, ...shownInsights.keyPoints.map((t, i) => ({ id: `kp-${i}`, text: t }))];
+    const matches = mapInsights(refs, passagesOf(content.blocks), String(activeDoc?.id ?? activeDoc?.name ?? ""));
+    const byPassage: Record<string, SourceSpan[]> = {};
+    Object.values(matches).forEach((m) => m?.spans.forEach((s) => { (byPassage[s.passageId] ??= []).push(s); }));
+    const scrollTo = (elId: string) => window.setTimeout(() => document.getElementById(elId)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+    return {
+      matches,
+      byPassage,
+      active: activeInsight,
+      onSelectInsight: (id) => {
+        setActiveInsight(id);
+        // Scroll to the first verified span (a shared range carries the id of its first span).
+        const first = matches[id]?.spans[0];
+        if (first) window.setTimeout(() => document.querySelector(`[data-insights~="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+      },
+      onSelectSpan: (span) => {
+        // Text supporting several insights cycles through them.
+        const ins = [...new Set((byPassage[span.passageId] ?? []).filter((s) => s.start === span.start && s.end === span.end).map((s) => s.insightId))];
+        const next = ins[(ins.indexOf(activeInsight ?? "") + 1) % ins.length] ?? span.insightId;
+        setActiveInsight(next);
+        scrollTo(`insight-${next}`);
+      },
+    };
+  })();
   const canNavigate = (onPrev || onNext) && (total ?? 0) > 1;
   const hasPrev = !!onPrev && (position ?? 1) > 1;
   const hasNext = !!onNext && (position ?? 1) < (total ?? 1);
@@ -871,7 +1173,7 @@ function WorkspaceInner({
 
             {/* Viewer area — renders the actual document text for the active tab */}
             {activeKind === "document"
-              ? <DocumentPage doc={activeDoc} />
+              ? <DocumentPage doc={activeDoc} links={links} />
               : <MediaPage key={String(activeDoc?.name)} doc={activeDoc} kind={activeKind} zoom={zoom} />}
           </div>
 
@@ -901,6 +1203,8 @@ function WorkspaceInner({
                 key={view}
                 docs={docs}
                 insights={insights}
+                links={links}
+                highlightNote={activeKind !== "document" ? "Passage highlighting isn't available for images, video or audio — they have no text to mark." : undefined}
                 onDownload={onDownload}
                 startInChat={view === "chat"}
                 onBackToPreview={() => setView("preview")}

@@ -19,6 +19,9 @@ export interface UploadedDocument {
   size: number;
   type: string;
   uploadedAt: string;
+  /** Where the original file is kept (mediaFileStore). Absent on uploads made
+   *  before files were stored — those cannot be opened or checked. */
+  storageKey?: string;
 }
 
 /** One submission by the client: the files it covered, their notes and the
@@ -60,6 +63,10 @@ export interface IntakeRequest {
   /** Kept from the existing completed-request view. */
   docsReceived?: number;
   missingDocs?: number;
+  /** The request this one follows up, when it asks again for what was missing. */
+  followUpOf?: string;
+  /** Uploads the attorney deleted from the case documents — not added again. */
+  removedUploadIds?: string[];
 }
 
 const STORAGE_KEY = "leco.intake.requests.v1";
@@ -175,6 +182,13 @@ export function updateIntakeRequest(token: string, patch: Partial<IntakeRequest>
   requests = requests.map((r) => (r.token === token ? { ...r, ...(typeof patch === "function" ? patch(r) : patch) } : r));
   save();
   emit();
+}
+
+/** A client's submitted file the attorney deleted from the case: not added
+ *  to the case documents again. */
+export function releaseIntakeUpload(caseId: string, requestId: string, uploadId: string) {
+  const r = requests.find((x) => x.caseId === caseId && x.id === requestId);
+  if (r) updateIntakeRequest(r.token, (x) => ({ removedUploadIds: [...(x.removedUploadIds ?? []), uploadId] }));
 }
 
 /** The client opened the link: Sent → Opened, once. */

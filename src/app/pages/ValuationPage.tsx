@@ -1,10 +1,26 @@
 import { useState } from "react";
 import { FileTypeIcon, FileTypeTag } from "../components/fileType";
 import { StageNavigator } from "../components/StageNavigator";
-import { ChevronLeft, ChevronRight, CheckCircle, ArrowRight, DollarSign, Shield, AlertCircle, Sparkles, ChevronDown, FileText, Eye, X, ChevronUp } from "lucide-react";
+import { ChevronLeft, ChevronRight, CheckCircle, ArrowRight, DollarSign, Shield, AlertCircle, Sparkles, ChevronDown, FileText, Eye, X, ChevronUp, Plus, Pencil, Trash2, History, UserPlus } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { AnalysisFinding } from "../types/case";
-import { DocumentWorkspaceModal } from "../components/DocumentWorkspace";
+import { AnalysisFinding, type CaseDocument } from "../types/case";
+import { DocumentWorkspaceModal, RowMenu } from "../components/DocumentWorkspace";
+import { AiDraftPanel } from "../components/AiDraftPanel";
+import { downloadTextFile, safeFileName } from "../components/downloadText";
+import { draftDamageFromText, draftFactorFromText } from "../damages/damageDraft";
+import {
+  useDamagesOptional, attorneyActor, formatDamageUSD, DAMAGE_FIELD_LABEL, DAMAGE_PROVENANCE_LABEL, DAMAGE_SEED,
+  type DamageItem, type DamageBucket, type FieldChange,
+} from "../damages/DamagesContext";
+import {
+  useFactorsOptional, attorneyFactorActor, SEVERITY_RANGE, FACTOR_SEED,
+  type FactorItem, type Severity,
+} from "../damages/FactorsContext";
+import {
+  DamageForm, DeleteDamageDialog, DamageHistoryDrawer, draftOf, blankDraft, parseDocs, parseMoney, type DamageDraft,
+  FactorProvenanceBadge, DeleteFactorDialog, FactorHistoryDrawer, draftOfFactor, blankFactorDraft, draftRange, type FactorDraft,
+  CURRENT_USER,
+} from "../workspace/WorkspaceTabs";
 
 interface ValuationPageProps {
   caseData?: {
@@ -15,26 +31,24 @@ interface ValuationPageProps {
     jurisdiction?: string;
   };
   analysisFindings?: AnalysisFinding[];
+  /** The case's documents — the only ones a drafted damage can cite. */
+  documents?: CaseDocument[];
   onStageClick?: (stageName: string) => void;
   onBackToIntake?: () => void;
   onReturnToAnalysis?: () => void;
   onProceedToCaseReady?: () => void;
 }
 
-const economicDamages = [
-  { label: "Medical Expenses", value: 87500, category: "Medical Bills", docCount: 18,
-    reasoning: "Every charge traces to an itemized billing document and reconciles to the verified total with no duplicates.",
-    docs: ["Hospital_Bill.pdf", "hospital_medical_records.pdf", "ER_Bills.pdf", "MRI_Report_2026.pdf"] },
-  { label: "Lost Wages", value: 43200, category: "Lost Wages", docCount: 6,
-    reasoning: "Verified against employer payroll records and the plaintiff's pre-incident earnings history.",
-    docs: ["Wage_Loss_Statement.pdf", "Employer_Payroll_Records.pdf"] },
-  { label: "Future Medical Care", value: 24750, category: "Future Medical Care", docCount: 9,
-    reasoning: "Projected from the life-care plan and corroborating treating-physician cost estimates.",
-    docs: ["Life_Care_Plan.pdf", "Treating_Physician_Estimate.pdf"] },
-  { label: "Physical Therapy", value: 6000, category: "Rehabilitation", docCount: 12,
-    reasoning: "Substantiated by the documented physical-therapy treatment record and invoices.",
-    docs: ["PT_Treatment_Notes.pdf", "Therapy_Invoices.pdf"] },
-];
+// The damages and factors come from the shared stores (DamagesContext,
+// FactorsContext) — the same record the Damages Analysis stage and the AI
+// Assistant read and write — so an edit anywhere shows here.
+
+/** A damage as this page's rows and evidence drawer use it. */
+type ValItem = { id: string; label: string; value: number; category: string; docCount: number; reasoning: string; docs: string[] };
+const toVal = (d: DamageItem): ValItem => ({
+  id: d.id, label: d.label, value: d.amount, category: d.category,
+  docCount: Math.max(d.docCount, d.docs.length), reasoning: d.reasoning, docs: d.docs,
+});
 
 // Factors that justify the recommended valuation strategy (shown as compact chips).
 const keyFactors = ["Clear Liability", "Severe Injuries", "Strong Evidence", "Favorable Jurisdiction"];
@@ -48,25 +62,13 @@ const SEVERITY_PILL: Record<string, string> = {
   Low: "pill pill-complete",
 };
 
-// How much each factor contributes to the recommended multiplier, by severity.
-// These are multiplier ranges (not dollar amounts) — the factors justify the
-// multiplier, which is then applied to the verified economic damages.
-const SEVERITY_MULTIPLIER: Record<string, string> = {
-  Critical: "2×–3×",
-  High: "1×–1.5×",
-  Moderate: "0.5×–1×",
-  Low: "0.25×–0.5×",
-};
+// A factor's multiplier band, as the factor rows show it.
+const fmtX = (m: number) => `${Number(m.toFixed(2))}×`;
+const bandOf = (f: FactorItem) => `${fmtX(f.range[0])}–${fmtX(f.range[1])}`;
 
-const damageFactors: { category: string; severity: "Critical" | "High" | "Moderate" | "Low"; rationale: string }[] = [
-  { category: "Pain & Suffering", severity: "Critical", rationale: "Treating-physician records document persistent, chronic pain requiring ongoing pain-management intervention." },
-  { category: "Emotional Distress", severity: "High", rationale: "Mental-health evaluations corroborate diagnosed anxiety and post-traumatic symptoms tied to the incident." },
-  { category: "Quality of Life", severity: "High", rationale: "Functional-capacity assessments show a sustained loss of independence in daily activities and prior hobbies." },
-  { category: "Cognitive Impairment", severity: "Critical", rationale: "Neuropsychological testing confirms measurable deficits in memory, attention, and processing speed." },
-  { category: "Physical Impairment", severity: "High", rationale: "Imaging and orthopedic findings verify permanent mobility restrictions and reduced range of motion." },
-  { category: "Dignity & Independence", severity: "Moderate", rationale: "Reliance on assistive care for routine self-care tasks meaningfully reduces personal autonomy." },
-  { category: "Family Relationship Impact", severity: "Moderate", rationale: "Family statements document caregiving burden and loss of consortium within the household." },
-];
+/** The AI analysis on file for a factor — keyed by the name it was first given,
+ *  so a rename keeps it. Factors the attorney adds have none. */
+const seedNameOf = (f: FactorItem) => FACTOR_SEED.find((s) => s.id === f.id)?.category;
 
 const multiplierPrecedentCases = [
   { caseName: "Reyes v. Interstate Freight Lines", matchScore: 94, settlementValue: 1_750_000, analysis: ["Similar injury severity and permanent impairment", "Comparable long-term functional impact", "Comparable liability profile", "Settlement value provides a useful valuation reference"] },
@@ -293,10 +295,9 @@ const historicCaseBenchmarkData = {
   },
 };
 
-const baseEconomic = 161450;
+// Where the exploration slider starts. The recommended figures come from the
+// factors on file, not from this.
 const baseMultiplier = 9;
-const baseMult = baseEconomic * baseMultiplier;
-const baseTotal = baseEconomic + baseMult;
 
 function formatCurrency(n: number) {
   return "$" + n.toLocaleString("en-US");
@@ -318,7 +319,7 @@ function formatRange(n: number) {
 
 // Show a multiplier as a ±1 range (e.g. 9 → "8× – 10×").
 function multiplierRange(m: number) {
-  return `${m - 1}× – ${m + 1}×`;
+  return `${Number(Math.max(0, m - 1).toFixed(2))}× – ${Number((m + 1).toFixed(2))}×`;
 }
 
 // Pad named docs up to `count` with realistic placeholder names.
@@ -372,7 +373,225 @@ function buildDocBreakdown(item: { value: number; category: string; docCount: nu
   });
 }
 
-export function ValuationPage({ caseData, analysisFindings = [], onStageClick, onBackToIntake, onReturnToAnalysis, onProceedToCaseReady }: ValuationPageProps) {
+/** The damage form in a popup — the same form, fields and validation as
+ *  before. Closes only on Cancel, a save, or the close button. With
+ *  `aiDocuments`, it also offers Create with AI. */
+function DamageFormModal({
+  heading, bucket, draft, setDraft, saveLabel, onSave, onCancel, onDelete, onHistory, aiDocuments, startWithAI = false,
+}: {
+  heading: string;
+  bucket: DamageBucket;
+  draft: DamageDraft;
+  setDraft: (d: DamageDraft) => void;
+  saveLabel: string;
+  onSave: () => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+  onHistory?: () => void;
+  aiDocuments?: string[];
+  startWithAI?: boolean;
+}) {
+  const [aiOpen, setAiOpen] = useState(startWithAI);
+  return (
+    <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-[60] p-4">
+      <div role="dialog" aria-modal="true" aria-label={heading} className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-sm">
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-line shrink-0">
+          <h2 className="card-title">{heading}</h2>
+          <div className="flex items-center gap-2">
+            {aiDocuments && (
+              <button type="button" onClick={() => setAiOpen((o) => !o)} aria-expanded={aiOpen} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-tint transition-colors">
+                <Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} /> Create with AI
+              </button>
+            )}
+            <button onClick={onCancel} aria-label="Close" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+          </div>
+        </div>
+        <div className="p-5 overflow-y-auto space-y-4">
+          {aiOpen && aiDocuments && (
+            <AiDraftPanel
+              autoFocus
+              placeholder={bucket === "economic"
+                ? "Describe the damage — e.g. Add medical expenses of $12,500 for emergency treatment, supported by the hospital invoice."
+                : "Describe the damage — e.g. Add loss of enjoyment of $10,000 for missed family events."}
+              onApply={(text) => {
+                const r = draftDamageFromText(text, aiDocuments, bucket);
+                const set = Object.fromEntries(Object.entries(r.fields).filter(([, v]) => v !== undefined));
+                setDraft({ ...draft, ...set });
+                return r;
+              }}
+              onClose={() => setAiOpen(false)}
+            />
+          )}
+          <DamageForm
+            bucket={bucket}
+            title="Damage details"
+            draft={draft}
+            setDraft={setDraft}
+            onCancel={onCancel}
+            onSave={onSave}
+            saveLabel={saveLabel}
+            onDelete={onDelete}
+            onHistory={onHistory}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Add or edit a damage factor — the fields the factor model holds. The
+ *  multiplier rule stays the store's: the recommended multiplier is the sum of
+ *  the factors' multipliers. */
+function FactorFormModal({
+  factor, overall, onSave, onDelete, onHistory, onClose, withAI = false,
+}: {
+  /** Absent when adding. */
+  factor?: FactorItem;
+  /** Open with the Create with AI panel showing. */
+  withAI?: boolean;
+  /** The recommended multiplier now, for the preview. */
+  overall: number;
+  /** Saves; returns an error to show, or null. */
+  onSave: (draft: FactorDraft, multiplier: number, note: string) => string | null;
+  onDelete?: () => void;
+  onHistory?: () => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState<FactorDraft>(() => (factor ? draftOfFactor(factor) : blankFactorDraft()));
+  const [mult, setMult] = useState(() => String(factor ? factor.multiplier : SEVERITY_RANGE.Moderate[0]));
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(withAI && !factor);
+  const m = Number(mult);
+  const after = Number.isFinite(m) ? overall - (factor?.multiplier ?? 0) + m : overall;
+  const input = "w-full px-3 py-2 rounded-lg border border-line text-sm text-ink focus:outline-none focus:border-brand transition-colors";
+  const submit = () => {
+    const lo = Number(draft.rangeLow), hi = Number(draft.rangeHigh);
+    if (!draft.name.trim()) { setError("Enter the factor name."); return; }
+    if (!draft.rangeLow.trim() || !draft.rangeHigh.trim() || !Number.isFinite(lo) || !Number.isFinite(hi) || lo < 0 || hi < 0) { setError("Enter a multiplier range of non-negative numbers."); return; }
+    if (lo > hi) { setError("The range's low end is above its high end."); return; }
+    if (!mult.trim() || !Number.isFinite(m) || m < 0) { setError("Enter the factor's multiplier as a non-negative number."); return; }
+    setError(onSave(draft, m, note.trim()));
+  };
+  return (
+    <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={factor ? "Edit damage factor" : "Add damage factor"} className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] flex flex-col shadow-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-line shrink-0">
+          <div className="min-w-0 flex items-center gap-2 flex-wrap">
+            <h2 className="card-title">{factor ? "Edit Damage Factor" : "Add Damage Factor"}</h2>
+            {factor && <FactorProvenanceBadge provenance={factor.provenance} />}
+          </div>
+          <div className="flex items-center gap-2">
+            {!factor && (
+              <button type="button" onClick={() => setAiOpen((o) => !o)} aria-expanded={aiOpen} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-tint transition-colors">
+                <Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} /> Create with AI
+              </button>
+            )}
+            <button onClick={onClose} aria-label="Close" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+          </div>
+        </div>
+        <div className="p-6 space-y-4 overflow-y-auto">
+          {aiOpen && (
+            <AiDraftPanel
+              autoFocus
+              placeholder="Describe the factor — e.g. Add a factor for Disfigurement, moderate severity, multiplier of 0.75, because of visible surgical scarring, supported by the post-operative photos."
+              onApply={(text) => {
+                const r = draftFactorFromText(text);
+                const f = r.fields;
+                setDraft((d) => ({
+                  ...d,
+                  name: f.name ?? d.name,
+                  description: f.description ?? d.description,
+                  severity: f.severity ?? d.severity,
+                  rangeLow: f.rangeLow ?? d.rangeLow,
+                  rangeHigh: f.rangeHigh ?? d.rangeHigh,
+                }));
+                if (f.multiplier) setMult(f.multiplier);
+                if (f.note) setNote(f.note);
+                return r;
+              }}
+              onClose={() => setAiOpen(false)}
+            />
+          )}
+          <label className="block">
+            <span className="eyebrow block mb-1">Factor name *</span>
+            <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Enter factor name" className={input} />
+          </label>
+          <label className="block">
+            <span className="eyebrow block mb-1">Supporting rationale</span>
+            <textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} rows={3} placeholder="Describe how this factor affects the case..." className={`${input} resize-y`} />
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="eyebrow block mb-1">Severity</span>
+              <select
+                value={draft.severity}
+                onChange={(e) => {
+                  const severity = e.target.value as Severity;
+                  const [lo, hi] = SEVERITY_RANGE[severity];
+                  // A severity offers its band; the attorney can still set their own.
+                  setDraft({ ...draft, severity, rangeLow: String(lo), rangeHigh: String(hi) });
+                }}
+                className={input}
+              >
+                {(Object.keys(SEVERITY_RANGE) as Severity[]).map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <div>
+              <span className="eyebrow block mb-1">Multiplier range</span>
+              <div className="flex items-center gap-1.5">
+                <input type="number" step="0.05" min="0" aria-label="Range low" value={draft.rangeLow} onChange={(e) => setDraft({ ...draft, rangeLow: e.target.value })} className={`${input} tabular-nums`} />
+                <span className="text-xs text-[#8A98A3] shrink-0">–</span>
+                <input type="number" step="0.05" min="0" aria-label="Range high" value={draft.rangeHigh} onChange={(e) => setDraft({ ...draft, rangeHigh: e.target.value })} className={`${input} tabular-nums`} />
+              </div>
+            </div>
+          </div>
+          <label className="block">
+            <span className="eyebrow block mb-1">Multiplier contribution</span>
+            <input type="number" step="0.05" min="0" value={mult} onChange={(e) => setMult(e.target.value)} className={`${input} tabular-nums`} />
+            <span className="block text-[11px] text-[#8A98A3] mt-1">
+              The recommended multiplier is the sum of the factors: {fmtX(overall)} now, {fmtX(Math.max(0, after))} with this {factor ? "change" : "factor"}.
+              {factor && factor.multiplier !== factor.aiMultiplier && ` AI recommended ${fmtX(factor.aiMultiplier)} for this factor.`}
+            </span>
+          </label>
+          <div>
+            <span className="eyebrow block mb-1">Supporting evidence</span>
+            <p className="text-xs text-[#5B6B78]">
+              {factor
+                ? `${factor.docCount} supporting ${factor.docCount === 1 ? "document" : "documents"} on file — kept as they are.`
+                : "None yet. Evidence is linked when the factor is assessed against case documents."}
+            </p>
+          </div>
+          <label className="block">
+            <span className="eyebrow block mb-1">Note (recorded in the history)</span>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Reason for this change..." className={`${input} resize-none`} />
+          </label>
+          {error && <p role="alert" className="text-sm text-[#B42318]">{error}</p>}
+        </div>
+        <div className="flex items-center justify-between gap-2 px-6 py-4 bg-wash border-t border-line rounded-b-xl shrink-0 flex-wrap">
+          <div className="flex items-center gap-3">
+            {onHistory && (
+              <button onClick={onHistory} className="inline-flex items-center gap-1.5 text-xs font-semibold text-deep hover:text-ink transition-colors">
+                <History className="w-3.5 h-3.5" strokeWidth={1.75} /> History
+              </button>
+            )}
+            {onDelete && (
+              <button onClick={onDelete} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#B42318] hover:text-[#96200F] transition-colors">
+                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} /> Delete damage factor
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="btn btn-secondary">Cancel</button>
+            <button onClick={submit} className="btn btn-primary">{factor ? "Save Changes" : "Add Damage Factor"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ValuationPage({ caseData, analysisFindings = [], documents = [], onStageClick, onBackToIntake, onReturnToAnalysis, onProceedToCaseReady }: ValuationPageProps) {
   const [multiplier, setMultiplier] = useState(baseMultiplier);
   // Damage Factors accordion — collapsed by default.
   const [damageFactorsOpen, setDamageFactorsOpen] = useState(false);
@@ -383,15 +602,15 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
   // Economic line items: which rows have their reasoning card expanded, the row
   // whose details drawer is open, and the preview/insights modal view.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const toggleRow = (label: string) =>
-    setExpandedRows((prev) => { const n = new Set(prev); if (n.has(label)) n.delete(label); else n.add(label); return n; });
-  const [drawerItem, setDrawerItem] = useState<(typeof economicDamages)[number] | null>(null);
+  const toggleRow = (id: string) =>
+    setExpandedRows((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const [drawerItem, setDrawerItem] = useState<ValItem | null>(null);
   const [drawerDocsOpen, setDrawerDocsOpen] = useState(false);
   // Which itemized document rows are expanded (keyed by file name).
   const [expandedDocRows, setExpandedDocRows] = useState<Set<string>>(new Set());
   const toggleDocRow = (name: string) =>
     setExpandedDocRows((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
-  const openDrawer = (item: (typeof economicDamages)[number]) => { setDrawerItem(item); setDrawerDocsOpen(false); setExpandedDocRows(new Set()); };
+  const openDrawer = (item: ValItem) => { setDrawerItem(item); setDrawerDocsOpen(false); setExpandedDocRows(new Set()); };
   const [wsView, setWsView] = useState<"preview" | "insights" | null>(null);
   // When a single row's "Preview Document" is used, focus that file in the workspace.
   const [wsFocus, setWsFocus] = useState<string | null>(null);
@@ -417,6 +636,253 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
   };
 
   const data = { ...defaultCaseData, ...caseData };
+
+  // ── The damage record and the factors, live ──
+  const damagesStore = useDamagesOptional();
+  const factorsStore = useFactorsOptional();
+  const damageItems = damagesStore?.items ?? DAMAGE_SEED;
+  const economicItems = damageItems.filter((d) => d.bucket === "economic");
+  const nonEconomicItems = damageItems.filter((d) => d.bucket === "noneconomic");
+  const factors = factorsStore?.factors ?? FACTOR_SEED;
+  // The existing valuation rules, as the Damages Analysis stage applies them:
+  // the recommended multiplier is the sum of the factors' multipliers, applied
+  // to the economic damages on file; itemised non-economic damages are added.
+  const baseEconomic = economicItems.reduce((s, d) => s + d.amount, 0);
+  const nonEconomicItemsTotal = nonEconomicItems.reduce((s, d) => s + d.amount, 0);
+  const recommendedMultiplier = factors.reduce((s, f) => s + f.multiplier, 0);
+  const baseMult = baseEconomic * recommendedMultiplier + nonEconomicItemsTotal;
+  const baseTotal = baseEconomic + baseMult;
+
+  const actor = attorneyActor(CURRENT_USER);
+  const factorActor = attorneyFactorActor(CURRENT_USER);
+  const REASON = "Changed by attorney on the Case Valuation stage.";
+  const [addingTo, setAddingTo] = useState<DamageBucket | null>(null);
+  const [addDraft, setAddDraft] = useState<DamageDraft>(() => blankDraft());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<DamageDraft>(() => blankDraft());
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [historyId, setHistoryId] = useState<string | null>(null);
+  const deletingDamage = damageItems.find((d) => d.id === deletingId) ?? null;
+  const historyDamage = damageItems.find((d) => d.id === historyId) ?? null;
+
+  const [damageAI, setDamageAI] = useState(false);
+  const openAdd = (bucket: DamageBucket, withAI = false) => { setEditingId(null); setAddDraft(blankDraft()); setDamageAI(withAI); setAddingTo(bucket); };
+  const editingDamage = damageItems.find((d) => d.id === editingId) ?? null;
+  const docNames = documents.map((d) => d.name);
+
+  // One damage, as a plain-text record.
+  const downloadDamage = (d: DamageItem) => {
+    const trail = damagesStore?.historyFor(d.id) ?? [];
+    downloadTextFile(`Damage_${safeFileName(d.label)}.txt`, [
+      `${data.caseName} — ${d.bucket === "economic" ? "economic" : "non-economic"} damage`,
+      "",
+      `Damage: ${d.label}`,
+      `Amount: ${formatDamageUSD(d.amount)}`,
+      ...(d.bucket === "economic" ? [`Category: ${d.group}${d.subcategory ? ` › ${d.subcategory}` : ""}`] : []),
+      `Damage type: ${d.category || "Not set"}`,
+      `Status: ${d.verified ? "Verified" : "Not yet verified"} · ${DAMAGE_PROVENANCE_LABEL[d.provenance]}${d.addedBy ? ` by ${d.addedBy}` : ""}`,
+      "",
+      `Description: ${d.description || "None"}`,
+      `Supporting information: ${d.reasoning || "None"}`,
+      `Supporting documents (${d.docs.length}): ${d.docs.length ? d.docs.join(", ") : "None"}`,
+      ...(d.notes ? [`Notes: ${d.notes}`] : []),
+      "",
+      `History (${trail.length}):`,
+      ...(trail.length ? trail.map((h) => `  - ${h.at} · ${h.changedBy} · ${h.action}${h.field ? ` ${h.field}: ${h.previous} → ${h.next}` : ""}`) : ["  No changes recorded"]),
+      "",
+      `Downloaded ${new Date().toLocaleString("en-US")}`,
+    ]);
+  };
+  const openEdit = (d: DamageItem) => { setAddingTo(null); setEditDraft(draftOf(d)); setEditingId(d.id); };
+
+  // Only what changed is written and recorded — the same diff the Damages
+  // Analysis stage makes, through the same store operation.
+  const saveEdit = (item: DamageItem, draft: DamageDraft) => {
+    if (!damagesStore) return;
+    const next: Partial<DamageItem> = {
+      label: draft.label.trim() || item.label,
+      category: draft.category.trim(),
+      amount: parseMoney(draft.amount),
+      description: draft.description,
+      reasoning: draft.reasoning,
+      notes: draft.notes.trim() || undefined,
+      docs: parseDocs(draft.docs),
+    };
+    const changes: FieldChange[] = [];
+    const note = (field: string, previous: string, nextValue: string) => {
+      if (previous !== nextValue) changes.push({ field, previous: previous || "—", next: nextValue || "—" });
+    };
+    note("Damage", item.label, next.label!);
+    note(DAMAGE_FIELD_LABEL.category, item.category, next.category!);
+    note(DAMAGE_FIELD_LABEL.amount, formatDamageUSD(item.amount), formatDamageUSD(next.amount!));
+    note(DAMAGE_FIELD_LABEL.description, item.description, next.description!);
+    note(DAMAGE_FIELD_LABEL.reasoning, item.reasoning, next.reasoning!);
+    note(DAMAGE_FIELD_LABEL.notes, item.notes ?? "", next.notes ?? "");
+    note(DAMAGE_FIELD_LABEL.docs, item.docs.join(", "), next.docs!.join(", "));
+    if (item.bucket === "economic") {
+      next.group = draft.group;
+      next.subcategory = draft.subcategory || undefined;
+      note(DAMAGE_FIELD_LABEL.group, item.group, draft.group);
+      note("Subcategory", item.subcategory ?? "", draft.subcategory);
+    }
+    // A changed document list changes the count, never below what it lists.
+    if (next.docs!.length !== item.docs.length) {
+      next.docCount = Math.max(item.docCount - item.docs.length, 0) + next.docs!.length;
+    }
+    if (changes.length > 0) damagesStore.updateDamage(item.id, next, changes, actor, REASON);
+    setEditingId(null);
+  };
+
+  const addDamage = () => {
+    if (!damagesStore || !addingTo) return;
+    const docs = parseDocs(addDraft.docs);
+    damagesStore.createDamage(
+      {
+        id: `damage-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        label: addDraft.label.trim(),
+        bucket: addingTo,
+        group: addDraft.group,
+        subcategory: addingTo === "economic" ? addDraft.subcategory || undefined : undefined,
+        amount: parseMoney(addDraft.amount),
+        description: addDraft.description,
+        category: addDraft.category.trim() || addDraft.label.trim(),
+        reasoning: addDraft.reasoning,
+        notes: addDraft.notes.trim() || undefined,
+        docs,
+        docCount: docs.length,
+        iconKey: "receipt",
+        // Added by hand and not yet reconciled against the evidence.
+        verified: false,
+      },
+      actor,
+      REASON,
+    );
+    setAddingTo(null);
+  };
+
+  const confirmDeleteDamage = () => {
+    if (!damagesStore || !deletingDamage) return;
+    damagesStore.deleteDamage(deletingDamage.id, actor, REASON);
+    setDeletingId(null);
+    setEditingId(null);
+  };
+
+  // One damage row: the existing expandable line, with Edit beside the amount;
+  // in edit mode, the shared damage form in its place.
+  const damageRow = (d: DamageItem) => {
+    const item = toVal(d);
+    const open = expandedRows.has(d.id);
+    const hasDocs = item.docs.length > 0;
+    return (
+      <div key={d.id} className="py-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => toggleRow(d.id)} aria-expanded={open} className="flex items-center gap-1.5 text-left min-w-0">
+            <span className="body-text sm:w-[170px] shrink-0">{item.label}</span>
+            {d.provenance !== "system" && (
+              <span className="pill pill-neutral shrink-0">
+                {d.provenance.startsWith("ai") ? <Sparkles className="w-3 h-3" strokeWidth={1.75} /> : <UserPlus className="w-3 h-3" strokeWidth={1.75} />}
+                {DAMAGE_PROVENANCE_LABEL[d.provenance]}
+              </span>
+            )}
+            <ChevronDown className={`w-4 h-4 text-[#5B6B78] shrink-0 transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
+          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <span className="text-sm font-medium text-ink tabular-nums">{formatCurrency(item.value)}</span>
+            {damagesStore && (
+              <RowMenu name={d.label} onEdit={() => openEdit(d)} onDelete={() => setDeletingId(d.id)} onDownload={() => downloadDamage(d)} />
+            )}
+          </div>
+        </div>
+        {open && (
+          <div className="mt-2.5 ml-[22px] rounded-xl border border-line bg-offwhite p-3.5 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="secondary-text">{item.reasoning || "No supporting information recorded."}</p>
+              <div className="flex items-center gap-1.5 mt-1.5 text-xs text-[#5B6B78]">
+                <FileText className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
+                {hasDocs
+                  ? `We considered ${item.docs[0]}${item.docCount > 1 ? ` and ${item.docCount - 1}+ more documents` : ""}.`
+                  : "No supporting documents are attached yet."}
+              </div>
+              {d.notes && <p className="secondary-text mt-1.5">Note: {d.notes}</p>}
+            </div>
+            {hasDocs && (
+              <button onClick={() => openDrawer(item)} className="shrink-0 text-sm font-semibold text-deep hover:text-ink transition-colors whitespace-nowrap">
+                View details →
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Factors ──
+  const [factorForm, setFactorForm] = useState<{ factor?: FactorItem; ai?: boolean } | null>(null);
+  // One factor, as a plain-text record.
+  const downloadFactor = (f: FactorItem) => {
+    const trail = factorsStore?.historyFor(f.id) ?? [];
+    downloadTextFile(`Damage_Factor_${safeFileName(f.category)}.txt`, [
+      `${data.caseName} — non-economic damage factor`,
+      "",
+      `Factor: ${f.category}`,
+      `Severity: ${f.severity}`,
+      `Multiplier range: ${bandOf(f)}`,
+      `Multiplier contribution: ${fmtX(f.multiplier)}${f.multiplier !== f.aiMultiplier ? ` (AI recommended ${fmtX(f.aiMultiplier)})` : ""}`,
+      `Origin: ${f.provenance}${f.addedBy ? ` · ${f.addedBy}` : ""}`,
+      "",
+      `Supporting rationale: ${f.rationale || "None recorded"}`,
+      `Supporting evidence: ${f.docCount} ${f.docCount === 1 ? "document" : "documents"} · ${f.evidence.strength} (${f.evidence.primaryRecords} primary records, ${f.evidence.expertOpinions} expert opinions, ${f.evidence.witnessStatements} witness statements)`,
+      "",
+      `History (${trail.length}):`,
+      ...(trail.length ? trail.map((h) => `  - ${h.at} · ${h.changedBy} · ${h.action}${h.previous || h.next ? `: ${h.previous ?? ""} → ${h.next ?? ""}` : ""}${h.reason ? ` · ${h.reason}` : ""}`) : ["  No changes recorded"]),
+      "",
+      `Downloaded ${new Date().toLocaleString("en-US")}`,
+    ]);
+  };
+  const [deletingFactorId, setDeletingFactorId] = useState<string | null>(null);
+  const [factorHistoryId, setFactorHistoryId] = useState<string | null>(null);
+  const deletingFactor = factors.find((f) => f.id === deletingFactorId) ?? null;
+  const factorHistoryItem = factors.find((f) => f.id === factorHistoryId) ?? null;
+
+  const saveFactor = (draft: FactorDraft, mult: number, note: string): string | null => {
+    if (!factorsStore || !factorForm) return "Factors cannot be changed here.";
+    const range = draftRange(draft);
+    const name = draft.name.trim();
+    const existing = factorForm.factor;
+    if (factors.some((f) => f.id !== existing?.id && f.category.toLowerCase() === name.toLowerCase())) return "A factor with that name is already on the case.";
+    if (!existing) {
+      factorsStore.createFactor(
+        {
+          id: `factor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+          category: name,
+          rationale: draft.description.trim(),
+          severity: draft.severity,
+          // An added factor has no AI recommendation; its own position is recorded as both.
+          aiMultiplier: mult, aiRange: range,
+          multiplier: mult, range,
+          confidence: 0,
+          docCount: 0,
+          drivers: [],
+          aiReasoning: draft.description.trim() || `${name} was added by the attorney and has no AI analysis on file yet.`,
+          evidence: { strength: "Limited", primaryRecords: 0, expertOpinions: 0, witnessStatements: 0, medicalQuality: "Limited" },
+          defense: { argument: "No defense analysis is on file for this factor yet.", strength: "Moderate", rebuttal: "Add supporting evidence to develop a rebuttal." },
+          suggestion: { evidence: "Supporting documentation", why: "Evidence on file would let the AI assess this factor.", multiplierGain: 0 },
+        },
+        factorActor,
+        note || undefined,
+      );
+    } else {
+      factorsStore.updateFactor(existing.id, { category: name, rationale: draft.description, severity: draft.severity, multiplier: mult, range }, factorActor, note || undefined);
+    }
+    setFactorForm(null);
+    return null;
+  };
+  const confirmDeleteFactor = () => {
+    if (!factorsStore || !deletingFactor) return;
+    factorsStore.deleteFactor(deletingFactor.id, factorActor);
+    setDeletingFactorId(null);
+    setFactorForm(null);
+  };
 
   // The "Recommended" valuation summary is pinned to LECO's recommended multiplier
   // (baseMultiplier). The interactive slider below is an exploration tool only and
@@ -463,6 +929,61 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
 
       <StageNavigator currentStage="Valuation" onStageClick={onStageClick} />
 
+      {addingTo && (
+        <DamageFormModal
+          heading={addingTo === "economic" ? "Add Economic Damage" : "Add Non-Economic Damage"}
+          bucket={addingTo}
+          draft={addDraft}
+          setDraft={setAddDraft}
+          saveLabel="Save Damage"
+          onSave={addDamage}
+          onCancel={() => setAddingTo(null)}
+          aiDocuments={docNames}
+          startWithAI={damageAI}
+        />
+      )}
+      {editingDamage && (
+        <DamageFormModal
+          heading={editingDamage.bucket === "economic" ? "Edit Economic Damage" : "Edit Non-Economic Damage"}
+          bucket={editingDamage.bucket}
+          draft={editDraft}
+          setDraft={setEditDraft}
+          saveLabel="Save Changes"
+          onSave={() => saveEdit(editingDamage, editDraft)}
+          onCancel={() => setEditingId(null)}
+          onDelete={() => setDeletingId(editingDamage.id)}
+          onHistory={() => setHistoryId(editingDamage.id)}
+        />
+      )}
+      {deletingDamage && (
+        <DeleteDamageDialog item={deletingDamage} onCancel={() => setDeletingId(null)} onConfirm={confirmDeleteDamage} />
+      )}
+      {historyDamage && damagesStore && (
+        <DamageHistoryDrawer item={historyDamage} entries={damagesStore.historyFor(historyDamage.id)} onClose={() => setHistoryId(null)} />
+      )}
+      {factorForm && (
+        <FactorFormModal
+          factor={factorForm.factor}
+          withAI={!!factorForm.ai}
+          overall={recommendedMultiplier}
+          onSave={saveFactor}
+          onDelete={factorForm.factor ? () => setDeletingFactorId(factorForm.factor!.id) : undefined}
+          onHistory={factorForm.factor ? () => setFactorHistoryId(factorForm.factor!.id) : undefined}
+          onClose={() => setFactorForm(null)}
+        />
+      )}
+      {deletingFactor && (
+        <DeleteFactorDialog
+          factor={deletingFactor}
+          impact={`The recommended multiplier would go from ${fmtX(recommendedMultiplier)} to ${fmtX(recommendedMultiplier - deletingFactor.multiplier)}. Its supporting evidence stays on the case file.`}
+          onCancel={() => setDeletingFactorId(null)}
+          onConfirm={confirmDeleteFactor}
+        />
+      )}
+      {factorHistoryItem && factorsStore && (
+        <FactorHistoryDrawer factor={factorHistoryItem} entries={factorsStore.historyFor(factorHistoryItem.id)} onClose={() => setFactorHistoryId(null)} />
+      )}
+
       <div className="max-w-[1400px] mx-auto px-8 py-8 space-y-8">
 
         {analysisFindings.length === 0 && (
@@ -502,38 +1023,21 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
               <div className="border border-line rounded-xl overflow-hidden">
                 <div className="bg-tint px-5 py-3 border-b border-line flex items-center justify-between gap-3">
                   <h3 className="card-title">Economic Damages</h3>
-                  <span className="pill pill-progress shrink-0">Verified</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="pill pill-progress">Verified</span>
+                    {damagesStore && (
+                      <>
+                        <button onClick={() => openAdd("economic")} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:border-brand transition-colors">
+                          <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Add Damage
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="p-5">
                   <div className="divide-y divide-line">
-                    {economicDamages.map((item) => {
-                      const open = expandedRows.has(item.label);
-                      return (
-                        <div key={item.label} className="py-2.5">
-                          <div className="flex items-center justify-between gap-3">
-                            <button onClick={() => toggleRow(item.label)} aria-expanded={open} className="flex items-center gap-1.5 text-left min-w-0">
-                              <span className="body-text w-[170px] shrink-0">{item.label}</span>
-                              <ChevronDown className={`w-4 h-4 text-[#5B6B78] shrink-0 transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
-                            </button>
-                            <span className="text-sm font-medium text-ink tabular-nums shrink-0">{formatCurrency(item.value)}</span>
-                          </div>
-                          {open && (
-                            <div className="mt-2.5 ml-[22px] rounded-xl border border-line bg-offwhite p-3.5 flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="secondary-text">{item.reasoning}</p>
-                                <div className="flex items-center gap-1.5 mt-1.5 text-xs text-[#5B6B78]">
-                                  <FileText className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
-                                  We considered {item.docs[0]} and {item.docCount - 1}+ more documents.
-                                </div>
-                              </div>
-                              <button onClick={() => openDrawer(item)} className="shrink-0 text-sm font-semibold text-deep hover:text-ink transition-colors whitespace-nowrap">
-                                View details →
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {economicItems.length === 0 && <p className="secondary-text py-3">No economic damages on file.</p>}
+                    {economicItems.map(damageRow)}
                   </div>
                   <div className="mt-3 pt-3 border-t-2 border-line flex items-center justify-between">
                     <span className="text-sm font-semibold text-ink">Economic Damages Subtotal</span>
@@ -544,15 +1048,33 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
 
               {/* 2 — Non-Economic Damages */}
               <div className="border border-line rounded-xl overflow-hidden">
-                <div className="bg-tint px-5 py-3 border-b border-line">
+                <div className="bg-tint px-5 py-3 border-b border-line flex items-center justify-between gap-3">
                   <h3 className="card-title">Non-Economic Damages</h3>
+                  {damagesStore && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button onClick={() => openAdd("noneconomic")} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:border-brand transition-colors">
+                        <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Add Damage
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="p-5 space-y-6">
+                  {/* Itemised non-economic damages — added to the multiplier-derived figure */}
+                  {nonEconomicItems.length > 0 && (
+                    <div className="rounded-xl border border-line p-4">
+                      <div className="flex items-center justify-between gap-3 mb-2.5">
+                        <h4 className="card-title">Itemised Non-Economic Damages</h4>
+                        <span className="text-sm font-bold text-ink tabular-nums shrink-0">{formatCurrency(nonEconomicItemsTotal)}</span>
+                      </div>
+                      <div className="divide-y divide-line">{nonEconomicItems.map(damageRow)}</div>
+                      <p className="secondary-text mt-2.5">Itemised amounts are added to the multiplier-derived estimate below.</p>
+                    </div>
+                  )}
                   {/* Top metrics — sky-blue brand cards */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="bg-tint border border-[#D6F2F7] rounded-xl p-4">
                       <div className="eyebrow mb-1">Recommended Multiplier</div>
-                      <div className="text-2xl font-bold text-deep tabular-nums">{multiplierRange(baseMultiplier)}</div>
+                      <div className="text-2xl font-bold text-deep tabular-nums">{multiplierRange(recommendedMultiplier)}</div>
                     </div>
                     <div className="bg-tint border border-[#D6F2F7] rounded-xl p-4">
                       <div className="eyebrow mb-1">Estimated Non-Economic Damages</div>
@@ -567,27 +1089,28 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
                       <span className="eyebrow text-deep">Recommended Valuation Strategy</span>
                     </div>
                     <p className="body-text">
-                      LECO recommends applying a <strong className="font-semibold text-ink">{multiplierRange(baseMultiplier)} multiplier</strong> to estimate{" "}
+                      LECO recommends applying a <strong className="font-semibold text-ink">{multiplierRange(recommendedMultiplier)} multiplier</strong> to estimate{" "}
                       <strong className="font-semibold text-ink">Non-Economic Damages</strong> based on the verified case evidence and overall case strength.
                     </p>
                   </div>
 
                   {/* Damage Factors — collapsible breakdown of what the multiplier covers */}
                   <div className="border border-line rounded-xl overflow-hidden">
+                    <div className="flex items-center gap-3 pr-4 hover:bg-wash transition-colors">
                     <button
                       onClick={() => setDamageFactorsOpen((v) => !v)}
                       aria-expanded={damageFactorsOpen}
-                      className="w-full flex items-center justify-between gap-4 px-4 py-3 text-left hover:bg-wash transition-colors"
+                      className="flex-1 min-w-0 flex items-center justify-between gap-4 pl-4 py-3 text-left"
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="card-title">Damage Factors</span>
                           <span className="text-xs font-semibold text-deep bg-tint border border-[#D6F2F7] rounded-full px-2 py-0.5 tabular-nums">
-                            {damageFactors.length}
+                            {factors.length}
                           </span>
                         </div>
                         <p className="secondary-text mt-0.5">
-                          Factors contributing to the recommended {multiplierRange(baseMultiplier)} multiplier.
+                          Factors contributing to the recommended {multiplierRange(recommendedMultiplier)} multiplier.
                         </p>
                       </div>
                       <ChevronDown
@@ -595,14 +1118,27 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
                         strokeWidth={1.75}
                       />
                     </button>
+                    {factorsStore && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => { setDamageFactorsOpen(true); setFactorForm({}); }}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:border-brand hover:bg-tint transition-colors"
+                        >
+                          <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Add Damage Factor
+                        </button>
+                      </div>
+                    )}
+                    </div>
 
                     {damageFactorsOpen && (
                       <div className="border-t border-line divide-y divide-[#EAF1F4]">
-                        {damageFactors.map((f, idx) => {
+                        {factors.length === 0 && <p className="secondary-text px-4 py-4">No damage factors on file.</p>}
+                        {factors.map((f, idx) => {
                           const isReasoningOpen = expandedReasoningFactorIndex === idx;
-                          const reasoning = damageFactorReasonings[f.category];
+                          const seedName = seedNameOf(f);
+                          const reasoning = seedName ? damageFactorReasonings[seedName] : undefined;
                           return (
-                            <div key={f.category}>
+                            <div key={f.id}>
                               {/* Damage Factor Row */}
                               <div className="px-4 py-4 flex gap-4">
                                 {/* LEFT: Factor name + severity badge + description */}
@@ -610,23 +1146,31 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
                                   <div className="flex items-center gap-2 mb-1.5">
                                     <span className="text-sm font-semibold text-ink">{f.category}</span>
                                     <span className={SEVERITY_PILL[f.severity]}>{f.severity}</span>
+                                    {f.provenance !== "ai-generated" && <FactorProvenanceBadge provenance={f.provenance} />}
                                   </div>
-                                  <p className="secondary-text text-sm">{f.rationale}</p>
+                                  <p className="secondary-text text-sm">{f.rationale || "No rationale recorded."}</p>
                                 </div>
 
                                 {/* RIGHT: Multiplier + MULTIPLIER label + View reasoning */}
                                 <div className="flex flex-col items-end justify-start shrink-0 gap-1.5">
-                                  <div className="text-right">
-                                    <div className="text-sm font-semibold text-ink tabular-nums">{SEVERITY_MULTIPLIER[f.severity]}</div>
-                                    <div className="text-[10px] uppercase tracking-wide text-[#8A98A3]">Multiplier</div>
+                                  <div className="flex items-start gap-1">
+                                    <div className="text-right">
+                                      <div className="text-sm font-semibold text-ink tabular-nums">{bandOf(f)}</div>
+                                      <div className="text-[10px] uppercase tracking-wide text-[#8A98A3]">Multiplier</div>
+                                    </div>
+                                    {factorsStore && (
+                                      <RowMenu name={f.category} onEdit={() => setFactorForm({ factor: f })} onDelete={() => setDeletingFactorId(f.id)} onDownload={() => downloadFactor(f)} />
+                                    )}
                                   </div>
-                                  <button
-                                    onClick={() => setExpandedReasoningFactorIndex(isReasoningOpen ? null : idx)}
-                                    className="inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink transition-colors whitespace-nowrap"
-                                  >
-                                    <Sparkles className="w-3.5 h-3.5" strokeWidth={2} />
-                                    View reasoning
-                                  </button>
+                                  {reasoning && (
+                                    <button
+                                      onClick={() => setExpandedReasoningFactorIndex(isReasoningOpen ? null : idx)}
+                                      className="inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink transition-colors whitespace-nowrap"
+                                    >
+                                      <Sparkles className="w-3.5 h-3.5" strokeWidth={2} />
+                                      View reasoning
+                                    </button>
+                                  )}
                                 </div>
                               </div>
 
@@ -650,7 +1194,7 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
                                     <div className="p-5 space-y-4 overflow-y-auto max-h-[500px]">
                                       {/* Why this multiplier? */}
                                       <div>
-                                        <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-1.5">Why {SEVERITY_MULTIPLIER[f.severity]}?</p>
+                                        <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-1.5">Why {reasoning.recommendedRange}?</p>
                                         <p className="text-sm text-[#5B6B78] leading-relaxed">{reasoning.whyMultiplier}</p>
                                       </div>
 
@@ -761,7 +1305,7 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
 
                                           <div className="border-t border-[#D6F2F7] pt-3">
                                             <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-1.5">Valuation Relevance</p>
-                                            <p className="text-xs text-[#5B6B78] leading-relaxed">{precedentValuationRelevance[f.category]}</p>
+                                            <p className="text-xs text-[#5B6B78] leading-relaxed">{precedentValuationRelevance[seedName ?? ""]}</p>
                                           </div>
                                         </div>
                                       </div>
@@ -789,7 +1333,7 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
                         <div className="bg-tint px-4 py-3.5 space-y-2.5">
                           <div className="flex items-center justify-between gap-3">
                             <span className="text-sm font-medium text-[#5B6B78]">Recommended Multiplier</span>
-                            <span className="text-sm font-bold text-ink tabular-nums">{multiplierRange(baseMultiplier)}</span>
+                            <span className="text-sm font-bold text-ink tabular-nums">{multiplierRange(recommendedMultiplier)}</span>
                           </div>
                           <div className="flex items-center justify-between gap-3">
                             <span className="text-sm font-medium text-[#5B6B78]">Estimated Non-Economic Damages</span>
@@ -848,7 +1392,7 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
 
               <div className="border-t border-line pt-5">
                 <div className="eyebrow mb-1">Recommended Multiplier</div>
-                <div className="text-2xl font-bold text-deep tabular-nums">{multiplierRange(baseMultiplier)}</div>
+                <div className="text-2xl font-bold text-deep tabular-nums">{multiplierRange(recommendedMultiplier)}</div>
               </div>
 
               <div className="border-t border-line pt-5">
@@ -1127,7 +1671,7 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
               >
                 <div className="eyebrow mb-2">Recommended</div>
                 <div className="text-lg font-bold text-ink">{formatRange(baseTotal)}</div>
-                <div className="mono-ref mt-1">{multiplierRange(9)} multiplier</div>
+                <div className="mono-ref mt-1">{multiplierRange(recommendedMultiplier)} multiplier</div>
               </button>
               <button
                 type="button"

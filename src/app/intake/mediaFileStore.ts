@@ -45,6 +45,19 @@ export async function getMediaFile(key?: string): Promise<Blob | undefined> {
   return blob;
 }
 
+/** Removes a stored file. Throws when the browser refuses. */
+export async function deleteMediaFile(key: string): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error("Removing the file was aborted"));
+  });
+  db.close();
+}
+
 /** Saves the original file to the user's device under its original name. */
 export async function downloadMediaFile(key: string | undefined, name: string): Promise<boolean> {
   const blob = await getMediaFile(key);

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FileUp, UploadCloud, CheckCircle, AlertCircle, X, PenLine, Mic, MicOff, ShieldCheck, Lock, Send } from "lucide-react";
 import { FileTypeIcon } from "../components/fileType";
+import { putMediaFile } from "../intake/mediaFileStore";
 import {
   useIntakeRequestByToken, markIntakeRequestOpened, addIntakeUpload, submitIntakeRequest,
   unsubmittedUploads, formatShortDate, type IntakeSubmission,
@@ -97,23 +98,23 @@ export function ClientIntakeRequestPage({ token }: { token: string }) {
         continue;
       }
       setPending((p) => [...p, { key, name: file.name, size: file.size, status: "uploading", progress: 0 }]);
-      // Upload progress, then the file is recorded against this request.
-      let progress = 0;
-      const tick = window.setInterval(() => {
-        progress = Math.min(100, progress + 20 + Math.round(Math.random() * 15));
-        setPending((p) => p.map((f) => (f.key === key ? { ...f, progress } : f)));
-        if (progress >= 100) {
-          window.clearInterval(tick);
+      // The original is stored, then the file is recorded against this request
+      // — only once it is actually saved.
+      putMediaFile(file)
+        .then((storageKey) => {
           addIntakeUpload(token, {
             id: key,
             name: file.name,
             size: file.size,
             type: file.type || ext,
             uploadedAt: new Date().toISOString(),
+            storageKey,
           });
           setPending((p) => p.filter((f) => f.key !== key));
-        }
-      }, 180);
+        })
+        .catch(() => {
+          setPending((p) => p.map((f) => (f.key === key ? { ...f, status: "rejected", error: "This file could not be saved. Please try again." } : f)));
+        });
     }
   };
 
@@ -250,7 +251,7 @@ export function ClientIntakeRequestPage({ token }: { token: string }) {
                   </div>
                   {f.status === "uploading" ? (
                     <div className="mt-2 flex items-center gap-3">
-                      <div className="lg-progress flex-1"><span style={{ width: `${f.progress}%` }} /></div>
+                      <div className="lg-progress flex-1"><span className="animate-pulse" style={{ width: "100%" }} /></div>
                       <span className="text-xs text-[#5B6B78] tabular-nums w-16 text-right">Uploading…</span>
                     </div>
                   ) : (
