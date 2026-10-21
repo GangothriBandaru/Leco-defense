@@ -762,6 +762,28 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const [retainerEdit, setRetainerEdit] = useState<RetainerDoc | null>(null);
   const [retainerEditError, setRetainerEditError] = useState<string | null>(null);
   const [retainerDelete, setRetainerDelete] = useState<RetainerDoc | null>(null);
+  const [retainerDeleteError, setRetainerDeleteError] = useState<string | null>(null);
+  /** A Retainer-section row's document as the shared edit / delete dialogs take it. */
+  const sectionRetainerDoc = (r: { id: number; signedDocName?: string; signedDate?: string }): RetainerDoc =>
+    ({ id: `sec-${r.id}`, name: r.signedDocName ?? "", date: r.signedDate ?? "", status: "Signed", source: retainerSource === "attorney" ? "Attorney" : "Plaintiff" });
+  const confirmRetainerDelete = async () => {
+    const doc = retainerDelete;
+    if (!doc) return;
+    if (doc.id.startsWith("sec-")) {
+      const vid = Number(doc.id.slice(4));
+      // The attorney's uploaded copy is the stored original — remove it too.
+      if (retainerSource === "attorney" && retainerFile?.storageKey && retainerFile.name === doc.name) {
+        try { await deleteMediaFile(retainerFile.storageKey); }
+        catch { setRetainerDeleteError("The stored file could not be removed from this browser. The document was not deleted."); return; }
+        setRetainerFile(null);
+      }
+      setRetainerDocPatch((p) => ({ ...p, [vid]: { removed: true } }));
+    } else {
+      setRetainerDocs((ds) => ds.filter((d) => d.id !== doc.id));
+    }
+    setRetainerDeleteError(null);
+    setRetainerDelete(null);
+  };
   const saveRetainerEdit = () => {
     if (!retainerEdit) return;
     const name = retainerEdit.name.trim();
@@ -769,6 +791,12 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
     if (!/\.[a-z0-9]+$/i.test(name)) { setRetainerEditError("Keep the file extension, for example .pdf."); return; }
     if (retainerDocs.some((d) => d.id !== retainerEdit.id && d.name === name)) { setRetainerEditError("Another retainer document already has that name."); return; }
     if (!retainerEdit.date.trim()) { setRetainerEditError("A date is required."); return; }
+    if (retainerEdit.id.startsWith("sec-")) {
+      const vid = Number(retainerEdit.id.slice(4));
+      setRetainerDocPatch((p) => ({ ...p, [vid]: { ...p[vid], name, date: retainerEdit.date.trim() } }));
+      setRetainerEdit(null);
+      return;
+    }
     setRetainerDocs((ds) => ds.map((d) => (d.id === retainerEdit.id ? { ...d, name, source: retainerEdit.source, date: retainerEdit.date.trim() } : d)));
     setRetainerEdit(null);
   };
@@ -1084,9 +1112,15 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
     signedDocName: retainerSource === "attorney" ? retainerFile?.name : "Signed_PI_Retainer.pdf",
     sentDocName: "PI_Retainer_Agreement.pdf",
   };
-  const effectiveRetainers: RetainerVersion[] = retainerVersions.length > 0
+  const [retainerDocPatch, setRetainerDocPatch] = useState<Record<number, { name?: string; date?: string; removed?: boolean }>>({});
+  const effectiveRetainers: RetainerVersion[] = (retainerVersions.length > 0
     ? retainerVersions
-    : retainerStatus !== "not-sent" ? [synthRetainer] : [];
+    : retainerStatus !== "not-sent" ? [synthRetainer] : []
+  ).map((r) => {
+    const patch = retainerDocPatch[r.id];
+    if (!patch) return r;
+    return { ...r, signedDocName: patch.removed ? undefined : (patch.name ?? r.signedDocName), signedDate: patch.date ?? r.signedDate };
+  });
   const newestRetainer = effectiveRetainers.reduce<RetainerVersion | null>((a, b) => (a && a.id > b.id ? a : b), null);
 
   // ── Collection status — derived entirely from real pipeline/intake state ──
@@ -1112,10 +1146,11 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const focusSection = (key: "retainer" | "request" | "documents" | "missing") => {
     setActiveTab(key === "documents" ? "documents" : "request");
     if (key !== "missing") setAccordionOpen((prev) => ({ ...prev, [key]: true }));
-    if (key === "retainer") setCardPanel("retainer");
+
     const id = {
-      retainer: "card-panel",
-      request: storedRequests.length > 0 ? "request-progress" : "collection-cards",
+      // For a new case the full sections are not shown — their compact cards are.
+      retainer: showIntroCards ? "retainer-card" : "retainer-section",
+      request: showIntroCards ? "request-card" : "intake-request-section",
       documents: missingDocCount > 0 && documentsReceived ? "missing-docs-documents" : "documents-section",
       missing: "missing-docs-section",
     }[key];
@@ -1427,6 +1462,8 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
 
   const [progressReqId, setProgressReqId] = useState<string | null>(null);
   const [requestedListOpen, setRequestedListOpen] = useState(false);
+  // The response list under Client Has Responded — separate from the request's own list.
+  const [receivedListOpen, setReceivedListOpen] = useState(false);
   const currentReq = storedRequests.find((r) => r.id === progressReqId) ?? storedRequests[storedRequests.length - 1];
   const cur = currentReq ? progressOf(currentReq) : null;
   const latestReq = storedRequests[storedRequests.length - 1];
@@ -1538,6 +1575,154 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
       </div>
     </div>
   );
+
+  // ── The compact cards: Retainer, request, Upload Documents, Upload Media ──
+  // Built once, in two sizes — compact in the card row, large in the upload
+  // popup — so the counts and actions are the same wherever they show.
+  const [uploadPopupOpen, setUploadPopupOpen] = useState(false);
+  const showIntroCards = effectiveRetainers.length === 0 && !sentReq;
+  const collectionCards = (variant: "compact" | "large") => {
+              const btnP = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden text-ellipsis [&>svg]:shrink-0";
+              const btnS = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all whitespace-nowrap shrink-0";
+              // Agreement and request actions are outlined; the uploads stay filled.
+              const btnO = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden text-ellipsis [&>svg]:shrink-0";
+              const iconBtn = "w-8 h-8 inline-flex items-center justify-center rounded-lg text-deep hover:bg-tint transition-colors shrink-0";
+              // One structure for every card: header (icon, title, corner
+              // actions) · status · a few short lines · actions at the foot.
+              const large = variant === "large";
+              const card = (key: "retainer" | "request" | "documents" | "media", Icon: any, title: string, corner: React.ReactNode, status: string, pill: string, body: React.ReactNode, primary: React.ReactNode, showView = true) => {
+                // Only the two upload cards remain once a retainer or request
+                // exists: each spans half the row, so its details sit at the left
+                // and its actions at the right instead of in a tall narrow column.
+                const wide = !large && !showIntroCards && (key === "documents" || key === "media");
+                const actions = (
+                  <div className={`flex items-center gap-1 min-w-0 [&>button]:min-w-0 [&>button:first-child]:shrink ${wide ? "max-w-full" : "mt-auto pt-1"}`}>
+                    {primary}
+                    {showView && (large
+                      ? <button onClick={() => { setUploadPopupOpen(false); setCardPanel(key); window.setTimeout(() => document.getElementById("card-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80); }} className={btnS}>View</button>
+                      : <button onClick={() => toggleCardPanel(key)} aria-expanded={cardPanel === key} className={btnS}>{cardPanel === key ? "Hide" : "View"}</button>)}
+                  </div>
+                );
+                const head = (
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-tint flex items-center justify-center shrink-0">
+                        <Icon className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} />
+                      </div>
+                      <h3 className={`${large ? "card-title" : "text-sm font-semibold"} text-ink truncate`}>{title}</h3>
+                    </div>
+                    <div className="flex items-center -my-1 -mr-1">{corner}</div>
+                  </div>
+                );
+                if (wide) return (
+                  <div id={`${key}-card`} className={`lg-card p-4 flex items-center justify-between gap-4 flex-wrap min-w-0 h-full scroll-mt-[150px] ${cardPanel === key ? "ring-1 ring-brand" : ""}`}>
+                    <div className="min-w-0 flex-1 basis-[180px] self-start flex flex-col gap-1.5">
+                      {head}
+                      <span className={`self-start max-w-full truncate ${pill}`}>{status}</span>
+                      <div className="text-xs text-[#5B6B78] space-y-0.5 min-w-0 empty:hidden">{body}</div>
+                    </div>
+                    {actions}
+                  </div>
+                );
+                return (
+                <div id={large ? undefined : `${key}-card`} className={`lg-card flex flex-col min-w-0 h-full scroll-mt-[150px] ${large ? "p-6 gap-3" : "p-4 gap-2"} ${cardPanel === key && !large ? "ring-1 ring-brand" : ""}`}>
+                  {head}
+                  <span className={`self-start max-w-full truncate ${pill}`}>{status}</span>
+                  <div className={`${large ? "text-sm" : "text-xs"} text-[#5B6B78] space-y-0.5 min-w-0 flex-1`}>{body}</div>
+                  {actions}
+                </div>
+                );
+              };
+
+              // Retainer
+              const r = newestRetainer;
+              const rSigned = r?.status === "Signed";
+              const retainerCard = card(
+                "retainer", FileText, "Retainer",
+                // Upload a signed document — while none is signed yet.
+                !rSigned ? (
+                  <button onClick={r ? openUploadAgreement : handleMarkAsSigned} title="Upload signed document" aria-label="Upload signed document" className={iconBtn}>
+                    <Upload className="w-4 h-4" strokeWidth={1.75} />
+                  </button>
+                ) : null,
+                !r ? "Not created" : rSigned ? "Signed" : "Awaiting signature",
+                !r ? "pill pill-neutral" : rSigned ? "pill pill-complete" : "pill pill-progress",
+                !r ? <p>No retainer sent yet.</p> : (
+                  <p>
+                    {effectiveRetainers.length} {effectiveRetainers.length === 1 ? "retainer" : "retainers"}
+                    {rSigned ? (retainerSource === "attorney" ? " · signed copy from attorney" : " · signed by client") : ` · sent ${r.sentDate}`}
+                  </p>
+                ),
+                !r
+                  ? <button onClick={handleOpenSendRetainerModal} className={btnO}><Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Send Retainer</button>
+                  : <button onClick={handleGenerateNewRetainer} className={btnO}><Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Generate Retainer</button>,
+                false,
+              );
+
+              // Request
+              const lp = latestProgress;
+              const requestCard = card(
+                "request", Send, sentReq ? "Additional Request" : "Intake Request", null,
+                !sentReq || !lp ? "No request sent" : `${latestReq.id} · ${lp.status}`,
+                !sentReq || !lp ? "pill pill-neutral" : REQUEST_STATUS_PILL[lp.status] ?? "pill pill-neutral",
+                !sentReq || !lp ? <p>Request documents from the client through a secure link.</p> : (
+                  <>
+                    <p>{lp.satisfied} of {lp.total} requested items received</p>
+                    {storedRequests.length > 1 && <p>{storedRequests.length} requests on this case</p>}
+                  </>
+                ),
+                // The first request through the intake-request flow; once one
+                // has been sent, further ones as additional requests.
+                !sentReq ? (
+                  <button onClick={openCreateRequest} title="Create Intake Request" className={btnO}>
+                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Intake Request
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleOpenAdditionalRequest}
+                    disabled={!!waitingAdditional}
+                    title={waitingAdditional ? `${waitingAdditional.id} is still waiting for the client` : "Additional Request"}
+                    className={btnO}
+                  >
+                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Additional Request
+                  </button>
+                ),
+                // Nothing to view before a request has been sent.
+                !!sentReq,
+              );
+
+              // Documents — the attorney's own uploads; client files only when there are some
+              const byAttorney = sharedDocs.filter((d) => d.source === "Attorney").length;
+              const byClient = sharedDocs.filter((d) => d.source === "Plaintiff").length;
+              const docsCard = card(
+                "documents", Upload, "Upload Documents", null,
+                `${byAttorney} uploaded by attorney`, "pill pill-neutral",
+                <>
+                  {byClient > 0 && <p>{byClient} from client submissions</p>}
+                  {runningCount > 0 && <p className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} /> {runningCount} processing</p>}
+                  {failedCount > 0 && <p className="text-[#B91C1C]">{failedCount} failed</p>}
+                </>,
+                <button onClick={() => docInputRef.current?.click()} className={btnP}><Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Documents</button>,
+              );
+
+              // Media
+              const allMedia = [...media.videos.map((v) => ({ src: v.source, f: v.file })), ...media.sets.flatMap((x) => x.files.map((f) => ({ src: x.source, f })))];
+              const mediaByClient = allMedia.filter((m) => m.src === "Client").length;
+              const mediaProcessing = allMedia.filter((m) => mediaFileStatus(m.f) === "processing").length;
+              const mediaFailed = allMedia.filter((m) => mediaFileStatus(m.f) === "failed").length;
+              const mediaCardEl = card(
+                "media", Camera, "Upload Media", null,
+                `${allMedia.length} media ${allMedia.length === 1 ? "file" : "files"}`, "pill pill-neutral",
+                <>
+                  {allMedia.length > 0 && <p>{media.videos.length} {media.videos.length === 1 ? "video" : "videos"} · {media.sets.length} photo {media.sets.length === 1 ? "set" : "sets"}</p>}
+                  {mediaByClient > 0 && <p>{mediaByClient} from client submissions</p>}
+                  {mediaProcessing > 0 && <p className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} /> {mediaProcessing} processing</p>}
+                  {mediaFailed > 0 && <p className="text-[#B91C1C]">{mediaFailed} failed</p>}
+                </>,
+                <button onClick={() => { setUploadPopupOpen(false); openMediaUpload(); }} className={btnP}><Camera className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Media</button>,
+              );
+    return { retainerCard, requestCard, docsCard, mediaCardEl };
+  };
 
   const blockedParts: string[] = [];
   if (!retainerSigned) blockedParts.push("retainer unsigned");
@@ -1652,7 +1837,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
           {/* ── Workspace tab bar ── */}
           <div id="workspace-tabs" className="lg-card p-1.5 flex items-center gap-1.5 scroll-mt-[150px]">
             {([
-              { key: "request" as const, label: "Intake Request" },
+              { key: "request" as const, label: "Documents Request" },
               { key: "documents" as const, label: "Documents" },
             ]).map((tab) => (
               <button
@@ -1669,8 +1854,266 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
             ))}
           </div>
 
-          {/* ── Intake Request ── */}
+          {/* ── Intake Request tab ── */}
           {activeTab === "request" && (<>
+          {/* 1 · Retainer — its own container. Not shown for a new case with no
+              retainer and no request: the compact cards carry those actions. */}
+          {!showIntroCards && (
+          <div id="retainer-section" className="scroll-mt-[150px] space-y-4 rounded-xl border border-line bg-white p-5 shadow-sm">
+            {/* Section heading — the action on the same row, at the right */}
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <h2 className="section-header">Retainer</h2>
+              <div className="flex items-center gap-3 shrink-0">
+                {effectiveRetainers.length > 1 ? (
+                  /* Status filter — multiple retainers */
+                  <div className="inline-flex items-center bg-track border border-line rounded-lg p-0.5">
+                    {([["Awaiting Signature", "Awaiting Signature"], ["Signed", "Signed"], ["all", "All"]] as const).map(([val, label]) => (
+                      <button
+                        key={val}
+                        onClick={() => setRetainerFilter(val)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${retainerFilter === val ? "bg-white text-ink shadow-sm" : "text-[#5B6B78] hover:text-ink"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {effectiveRetainers.length === 0 ? (
+                  <button onClick={handleOpenSendRetainerModal} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all">
+                    <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Send Retainer
+                  </button>
+                ) : (
+                  <button onClick={handleGenerateNewRetainer} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all">
+                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Generate New Retainer
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-line overflow-hidden">
+                {effectiveRetainers.length === 0 ? (
+                  /* ── EMPTY: no retainer sent ── */
+                  <div className="text-center py-10 px-6">
+                    <div className="inline-flex p-4 bg-tint rounded-full mb-4">
+                      <FileText className="w-8 h-8 text-[#5B6B78]" strokeWidth={1.75} />
+                    </div>
+                    <h3 className="card-title mb-1">No Retainer Agreement Sent</h3>
+                    <p className="secondary-text mb-6">Send a retainer agreement to the plaintiff to begin the representation, or upload one already signed.</p>
+                    <div className="flex items-center justify-center gap-3">
+                      <Button onClick={handleMarkAsSigned} className="bg-white border border-line text-ink hover:bg-wash">
+                        Upload a Signed doc
+                      </Button>
+                    </div>
+                  </div>
+
+                ) : effectiveRetainers.length === 1 ? (
+                  /* ── SINGLE retainer — compact, content directly in the section ── */
+                  (() => {
+                    const r = effectiveRetainers[0];
+                    const signed = r.status === "Signed";
+                    const fields = signed
+                      ? [
+                          { label: "Status", value: "Signed" },
+                          { label: "Signed Date", value: r.signedDate || "Not on record" },
+                          { label: "Recipient", value: r.recipient },
+                          { label: "Template", value: r.template },
+                        ]
+                      : [
+                          { label: "Status", value: "Sent" },
+                          { label: "Sent Date", value: r.sentDate },
+                          { label: "Recipient", value: r.recipient },
+                          { label: "Template", value: r.template },
+                        ];
+                    const docName = signed
+                      ? (r.signedDocName || "No signed document uploaded")
+                      : (r.sentDocName || "PI_Retainer_Agreement.pdf");
+                    const retainerDoc = { name: docName, source: "Retainer", date: signed ? (r.signedDate || "Jun 11, 2026") : r.sentDate, status: signed ? "Signed" : "Sent", storageKey: signed && retainerSource === "attorney" ? retainerFile?.storageKey : undefined };
+                    return (
+                      <>
+                      <div className="bg-offwhite p-4 space-y-3">
+                        {/* Box 1 — info grid */}
+                        <div className="bg-white border border-line rounded-xl overflow-hidden">
+                          <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-line">
+                            {fields.map(({ label, value }) => (
+                              <div key={label} className="px-5 py-3.5">
+                                <div className="eyebrow mb-1">{label}</div>
+                                {label === "Status"
+                                ? <span className={`pill ${value === "Signed" ? "pill-complete" : "pill-progress"}`}>{value === "Signed" ? <CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> : <Clock className="w-3.5 h-3.5" strokeWidth={1.75} />}{value === "Signed" ? "Signed" : "Sent · awaiting signature"}</span>
+                                : <div className="text-sm font-semibold text-ink truncate">{value}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Box 2 — document (sent doc while awaiting, signed doc once signed) */}
+                        <div className="bg-white border border-line rounded-xl px-5 py-3.5 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-8 h-8 bg-tint border border-line rounded-lg flex items-center justify-center shrink-0">
+                              <FileTypeIcon name={docName} className="w-4 h-4 text-deep" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="eyebrow mb-0.5">{signed ? "Signed Document" : "Retainer Document"}</div>
+                              <div className="mono-ref text-ink flex items-center gap-2">{docName}<FileTypeTag name={docName} /></div>
+                            </div>
+                          </div>
+                          {signed ? (r.signedDocName ? (
+                            <RowActionGroup name={docName} onEdit={() => { setRetainerEdit(sectionRetainerDoc(r)); setRetainerEditError(null); }} onDelete={() => { setRetainerDelete(sectionRetainerDoc(r)); setRetainerDeleteError(null); }}>
+                              <DocActions
+                                size="row"
+                                onPreview={() => handlePreviewDocument(retainerDoc)}
+                                onInsights={() => handleOpenInsights(retainerDoc)}
+                                onDownload={() => handleDownloadDocument(retainerDoc)}
+                                disabled={{ download: retainerDoc.storageKey ? undefined : "The original file is not stored in this prototype" }}
+                              />
+                            </RowActionGroup>
+                          ) : null) : (
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button onClick={handleOpenSendRetainerModal} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all flex items-center gap-1.5">
+                                <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
+                              </button>
+                              <button onClick={openUploadAgreement} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
+                                <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Agreement
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {signed && retainerSource === "attorney" && (
+                          <p className="text-xs text-[#5B6B78] px-1">{retainerFile ? "Signed copy uploaded by the attorney." : "Marked signed by the attorney — no signed document uploaded."}</p>
+                        )}
+                      </div>
+                      </>
+                    );
+                  })()
+
+                ) : (
+                  /* ── MULTIPLE retainers — each repeats the exact single-retainer card ── */
+                  (() => {
+                    const sorted = [...effectiveRetainers].sort((a, b) => b.id - a.id);
+                    const shown = retainerFilter === "all" ? sorted : sorted.filter((r) => r.status === retainerFilter);
+                    return (
+                      <div className="bg-wash p-4 space-y-4">
+                        {shown.length === 0 ? (
+                          <div className="text-center py-8 secondary-text">No retainers match this filter.</div>
+                        ) : (
+                          shown.map((r) => {
+                            const signed = r.status === "Signed";
+                            const fields = signed
+                              ? [
+                                  { label: "Status", value: "Signed" },
+                                  { label: "Signed Date", value: r.signedDate || "Not on record" },
+                                  { label: "Recipient", value: r.recipient },
+                                  { label: "Template", value: r.template },
+                                ]
+                              : [
+                                  { label: "Status", value: "Sent" },
+                                  { label: "Sent Date", value: r.sentDate },
+                                  { label: "Recipient", value: r.recipient },
+                                  { label: "Template", value: r.template },
+                                ];
+                            const docName = signed
+                              ? (r.signedDocName || "No signed document uploaded")
+                              : (r.sentDocName || "PI_Retainer_Agreement.pdf");
+                            const retainerDoc = { name: docName, source: "Retainer", date: signed ? (r.signedDate || r.sentDate) : r.sentDate, status: r.status };
+                            return (
+                              <div key={r.id} className="border border-line rounded-xl overflow-hidden">
+                                <div className="bg-offwhite p-4 space-y-3">
+                                  {/* Box 1 — info grid */}
+                                  <div className="bg-white border border-line rounded-xl overflow-hidden">
+                                    <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-line">
+                                      {fields.map(({ label, value }) => (
+                                        <div key={label} className="px-5 py-3.5">
+                                          <div className="eyebrow mb-1">{label}</div>
+                                          {label === "Status"
+                                ? <span className={`pill ${value === "Signed" ? "pill-complete" : "pill-progress"}`}>{value === "Signed" ? <CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> : <Clock className="w-3.5 h-3.5" strokeWidth={1.75} />}{value === "Signed" ? "Signed" : "Sent · awaiting signature"}</span>
+                                : <div className="text-sm font-semibold text-ink truncate">{value}</div>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  {/* Box 2 — document (sent doc while awaiting, signed doc once signed) */}
+                                  <div className="bg-white border border-line rounded-xl px-5 py-3.5 flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className="w-8 h-8 bg-tint border border-line rounded-lg flex items-center justify-center shrink-0">
+                                        <FileTypeIcon name={docName} className="w-4 h-4 text-deep" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="eyebrow mb-0.5">{signed ? "Signed Document" : "Retainer Document"}</div>
+                                        <div className="mono-ref text-ink flex items-center gap-2">{docName}<FileTypeTag name={docName} /></div>
+                                      </div>
+                                    </div>
+                                    {signed && r.signedDocName && (
+                                      <RowActionGroup name={docName} onEdit={() => { setRetainerEdit(sectionRetainerDoc(r)); setRetainerEditError(null); }} onDelete={() => { setRetainerDelete(sectionRetainerDoc(r)); setRetainerDeleteError(null); }}>
+                                        <DocActions
+                                          size="row"
+                                          onPreview={() => handlePreviewDocument(retainerDoc)}
+                                          onInsights={() => handleOpenInsights(retainerDoc)}
+                                          onDownload={() => handleDownloadDocument(retainerDoc)}
+                                          disabled={{ download: "The original file is not stored in this prototype" }}
+                                        />
+                                      </RowActionGroup>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Bottom bar — while awaiting signature */}
+                                {!signed && (
+                                  <div className="flex items-center justify-end gap-3 bg-white border-t border-line px-4 py-3">
+                                    <button onClick={handleOpenSendRetainerModal} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all flex items-center gap-1.5">
+                                      <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
+                                    </button>
+                                    <button onClick={openUploadAgreement} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
+                                      <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Agreement
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+          </div>
+
+          )}
+
+          {/* 2 · Intake Request — the request, the client's response, progress;
+              its own container, and likewise not shown for a new case. */}
+          {!showIntroCards && (
+          <div id="intake-request-section" className="scroll-mt-[150px] space-y-4 rounded-xl border border-line bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <h2 className="section-header">Intake Request</h2>
+            <div className="flex items-center gap-2 shrink-0">
+              {sentReq && (
+                <button
+                  onClick={handleOpenAdditionalRequest}
+                  disabled={!!waitingAdditional}
+                  title={waitingAdditional ? `${waitingAdditional.id} is still waiting for the client` : "Request more documents from the client"}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Additional Request
+                </button>
+              )}
+              <button onClick={() => setUploadPopupOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all">
+                <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Docs
+              </button>
+            </div>
+          </div>
+          {!currentReq && (
+            <div className="lg-card p-6 flex items-center justify-between gap-4 flex-wrap">
+              <div className="min-w-0">
+                <h3 className="card-title mb-1">No intake request sent yet</h3>
+                <p className="secondary-text">Request documents from the client through a secure link.</p>
+              </div>
+              <button onClick={openCreateRequest} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-line bg-white text-deep text-sm font-semibold hover:bg-wash transition-all">
+                <Plus className="w-4 h-4" strokeWidth={1.75} /> Create Request
+              </button>
+            </div>
+          )}
           {currentReq && cur && (() => {
             const req = intakeRequests.find((x) => x.id === currentReq.id)!;
             const answered = cur.responded;
@@ -1839,24 +2282,19 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                               {requestedListOpen && (
                                 <div className="border-b border-line bg-offwhite px-5 py-3">
                                   <div className="eyebrow mb-2">Requested in {req.id}</div>
+                                  {/* The original request: what was asked for — never the client's response. */}
                                   <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
-                                    {cur.rows.map((row) => {
-                                      const label = row.state === "Received" ? "Received" : row.state === "Partially received" ? "Partially received" : "Outstanding";
-                                      const pill = row.state === "Received" ? "pill pill-complete" : row.state === "Partially received" ? "pill pill-progress" : "pill pill-risk";
-                                      return (
-                                        <li key={row.name} className="bg-white border border-line rounded-lg px-3 py-2">
-                                          <div className="flex items-center justify-between gap-2">
-                                            <span className="text-sm font-semibold text-ink truncate">{row.name}</span>
-                                            <span className={`${pill} shrink-0`}>{label}</span>
-                                          </div>
-                                          {row.state !== "Uploaded, not submitted" && row.state !== "On file" && row.files.length > 0 && (
-                                            <div className="text-xs text-[#5B6B78] mt-1 break-words">Received: {row.files.map((f) => f.name).join(", ")}</div>
-                                          )}
-                                          {row.missingParts && <div className="text-xs text-[#B45309] mt-0.5">Outstanding: {row.missingParts.join(", ")}</div>}
-                                          {label === "Outstanding" && !row.missingParts && <div className="text-xs text-[#B45309] mt-0.5">{REQ_STATE_NOTE[row.state] ?? "Not received yet."}</div>}
-                                        </li>
-                                      );
-                                    })}
+                                    {req.requestedDocs.map((name) => (
+                                      <li key={name} className="bg-white border border-line rounded-lg px-3 py-2">
+                                        <span className="text-sm font-semibold text-ink break-words">{name}</span>
+                                      </li>
+                                    ))}
+                                    {asked.map((o) => (
+                                      <li key={o.key} className="bg-white border border-line rounded-lg px-3 py-2 flex items-center gap-2">
+                                        <span className="text-sm font-semibold text-ink break-words">{o.title}</span>
+                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>
+                                      </li>
+                                    ))}
                                   </ul>
                                 </div>
                               )}
@@ -1893,7 +2331,17 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                                     </div>
                                     <div className="px-5 py-4">
                                       <div className="eyebrow mb-1">Documents Received</div>
-                                      <div className="kpi-value">{cur.satisfied}</div>
+                                      <div className="flex items-baseline gap-2">
+                                        <span className="kpi-value">{cur.satisfied}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setReceivedListOpen((o) => !o)}
+                                          aria-expanded={receivedListOpen}
+                                          className="text-xs font-semibold text-deep hover:underline"
+                                        >
+                                          {receivedListOpen ? "Hide" : "View"}
+                                        </button>
+                                      </div>
                                       <div className="text-xs text-[#5B6B78]">of {cur.total} requested</div>
                                     </div>
                                     <div className="px-5 py-4">
@@ -1931,6 +2379,42 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                                       )}
                                     </div>
                                   </div>
+                                  {receivedListOpen && (
+                                    // Every requested item, with where the client's response leaves it.
+                                    <div className="border-t border-line bg-offwhite px-5 py-3">
+                                      <div className="eyebrow mb-2">Response to {req.id}</div>
+                                      <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
+                                        {cur.rows.map((row) => {
+                                          const label = row.state === "Received" ? "Received" : row.state === "Partially received" ? "Partially received" : row.state === "Not matched" ? "Can't be determined" : "Missing";
+                                          const pill = row.state === "Received" ? "pill pill-complete" : row.state === "Partially received" ? "pill pill-progress" : row.state === "Not matched" ? "pill pill-neutral" : "pill pill-risk";
+                                          const received = row.state === "Received" || row.state === "Partially received";
+                                          return (
+                                            <li key={row.name} className="bg-white border border-line rounded-lg px-3 py-2">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span className="text-sm font-semibold text-ink truncate">{row.name}{row.kind === "media" && <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>}</span>
+                                                <span className={`${pill} shrink-0`}>{label}</span>
+                                              </div>
+                                              {received && row.files.length > 0 && (
+                                                <div className="text-xs text-[#5B6B78] mt-1 break-words">Received: {row.files.map((f) => f.name).join(", ")}</div>
+                                              )}
+                                              {row.missingParts && <div className="text-xs text-[#B45309] mt-0.5">Outstanding: {row.missingParts.join(", ")}</div>}
+                                              {!received && <div className="text-xs text-[#B45309] mt-0.5">{REQ_STATE_NOTE[row.state] ?? "Not received yet."}</div>}
+                                            </li>
+                                          );
+                                        })}
+                                      </ul>
+                                      {cur.outstanding.some((x) => x.kind === "document") && (
+                                        <div className="flex items-center justify-between gap-3 flex-wrap mt-3">
+                                          <span className="text-xs text-[#854F0B]">
+                                            Outstanding: {cur.outstanding.filter((x) => x.kind === "document").map((x) => (x.missingParts ? x.missingParts.join(", ") : x.name)).join(", ")}
+                                          </span>
+                                          <button onClick={() => requestOutstanding(currentReq, cur)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold text-white" style={{ background: "#B45309" }}>
+                                            <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request Missing Documents
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                   {req.clientNotes && (
                                     <div className="px-5 py-3 border-t border-line">
                                       <div className="eyebrow mb-1">Client Notes</div>
@@ -2086,409 +2570,50 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
             );
           })()}
 
-          {/* 6 · Four action cards — always shown, always in this order */}
+          </div>
+
+          )}
+
+          {/* 3 · Upload cards — documents and media */}
           <input ref={docInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
-          <div id="collection-cards" className="grid grid-cols-1 min-[640px]:grid-cols-2 min-[1400px]:grid-cols-4 gap-3 scroll-mt-[150px]">
+          <div id="collection-cards" className={`grid grid-cols-1 min-[640px]:grid-cols-2 gap-3 scroll-mt-[150px] ${showIntroCards ? "min-[1400px]:grid-cols-4" : ""}`}>
             {(() => {
-              const btnP = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden text-ellipsis [&>svg]:shrink-0";
-              const btnS = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all whitespace-nowrap shrink-0";
-              // Agreement and request actions are outlined; the uploads stay filled.
-              const btnO = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden text-ellipsis [&>svg]:shrink-0";
-              const iconBtn = "w-8 h-8 inline-flex items-center justify-center rounded-lg text-deep hover:bg-tint transition-colors shrink-0";
-              // One structure for every card: header (icon, title, corner
-              // actions) · status · a few short lines · actions at the foot.
-              const card = (key: "retainer" | "request" | "documents" | "media", Icon: any, title: string, corner: React.ReactNode, status: string, pill: string, body: React.ReactNode, primary: React.ReactNode, showView = true) => (
-                <div id={`${key}-card`} className={`lg-card p-4 flex flex-col gap-2 min-w-0 h-full scroll-mt-[150px] ${cardPanel === key ? "ring-1 ring-brand" : ""}`}>
-                  <div className="flex items-center justify-between gap-2 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-7 h-7 rounded-lg bg-tint flex items-center justify-center shrink-0">
-                        <Icon className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} />
-                      </div>
-                      <h3 className="text-sm font-semibold text-ink truncate">{title}</h3>
-                    </div>
-                    <div className="flex items-center -my-1 -mr-1">{corner}</div>
-                  </div>
-                  <span className={`self-start max-w-full truncate ${pill}`}>{status}</span>
-                  <div className="text-xs text-[#5B6B78] space-y-0.5 min-w-0 flex-1">{body}</div>
-                  <div className="flex items-center gap-1 mt-auto pt-1 min-w-0 [&>button]:min-w-0 [&>button:first-child]:shrink">
-                    {primary}
-                    {showView && <button onClick={() => toggleCardPanel(key)} aria-expanded={cardPanel === key} className={btnS}>{cardPanel === key ? "Hide" : "View"}</button>}
-                  </div>
-                </div>
-              );
-
-              // Retainer
-              const r = newestRetainer;
-              const rSigned = r?.status === "Signed";
-              const retainerCard = card(
-                "retainer", FileText, "Retainer",
-                // Upload a signed document — while none is signed yet.
-                !rSigned ? (
-                  <button onClick={r ? openUploadAgreement : handleMarkAsSigned} title="Upload signed document" aria-label="Upload signed document" className={iconBtn}>
-                    <Upload className="w-4 h-4" strokeWidth={1.75} />
-                  </button>
-                ) : null,
-                !r ? "Not created" : rSigned ? "Signed" : "Awaiting signature",
-                !r ? "pill pill-neutral" : rSigned ? "pill pill-complete" : "pill pill-progress",
-                !r ? <p>No retainer sent yet.</p> : (
-                  <p>
-                    {effectiveRetainers.length} {effectiveRetainers.length === 1 ? "retainer" : "retainers"}
-                    {rSigned ? (retainerSource === "attorney" ? " · signed copy from attorney" : " · signed by client") : ` · sent ${r.sentDate}`}
-                  </p>
-                ),
-                !r
-                  ? <button onClick={handleOpenSendRetainerModal} className={btnO}><Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Send Retainer</button>
-                  : <button onClick={handleGenerateNewRetainer} className={btnO}><Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Generate Retainer</button>,
-              );
-
-              // Request
-              const lp = latestProgress;
-              const requestCard = card(
-                "request", Send, sentReq ? "Additional Request" : "Intake Request", null,
-                !sentReq || !lp ? "No request sent" : `${latestReq.id} · ${lp.status}`,
-                !sentReq || !lp ? "pill pill-neutral" : REQUEST_STATUS_PILL[lp.status] ?? "pill pill-neutral",
-                !sentReq || !lp ? <p>Request documents from the client through a secure link.</p> : (
-                  <>
-                    <p>{lp.satisfied} of {lp.total} requested items received</p>
-                    {storedRequests.length > 1 && <p>{storedRequests.length} requests on this case</p>}
-                  </>
-                ),
-                // The first request through the intake-request flow; once one
-                // has been sent, further ones as additional requests.
-                !sentReq ? (
-                  <button onClick={openCreateRequest} title="Create Intake Request" className={btnO}>
-                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Intake Request
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleOpenAdditionalRequest}
-                    disabled={!!waitingAdditional}
-                    title={waitingAdditional ? `${waitingAdditional.id} is still waiting for the client` : "Additional Request"}
-                    className={btnO}
-                  >
-                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Additional Request
-                  </button>
-                ),
-                // Nothing to view before a request has been sent.
-                !!sentReq,
-              );
-
-              // Documents — the attorney's own uploads; client files only when there are some
-              const byAttorney = sharedDocs.filter((d) => d.source === "Attorney").length;
-              const byClient = sharedDocs.filter((d) => d.source === "Plaintiff").length;
-              const docsCard = card(
-                "documents", Upload, "Upload Documents", null,
-                `${byAttorney} uploaded by attorney`, "pill pill-neutral",
-                <>
-                  {byClient > 0 && <p>{byClient} from client submissions</p>}
-                  {runningCount > 0 && <p className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} /> {runningCount} processing</p>}
-                  {failedCount > 0 && <p className="text-[#B91C1C]">{failedCount} failed</p>}
-                </>,
-                <button onClick={() => docInputRef.current?.click()} className={btnP}><Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Documents</button>,
-              );
-
-              // Media
-              const allMedia = [...media.videos.map((v) => ({ src: v.source, f: v.file })), ...media.sets.flatMap((x) => x.files.map((f) => ({ src: x.source, f })))];
-              const mediaByClient = allMedia.filter((m) => m.src === "Client").length;
-              const mediaProcessing = allMedia.filter((m) => mediaFileStatus(m.f) === "processing").length;
-              const mediaFailed = allMedia.filter((m) => mediaFileStatus(m.f) === "failed").length;
-              const mediaCardEl = card(
-                "media", Camera, "Upload Media", null,
-                `${allMedia.length} media ${allMedia.length === 1 ? "file" : "files"}`, "pill pill-neutral",
-                <>
-                  {allMedia.length > 0 && <p>{media.videos.length} {media.videos.length === 1 ? "video" : "videos"} · {media.sets.length} photo {media.sets.length === 1 ? "set" : "sets"}</p>}
-                  {mediaByClient > 0 && <p>{mediaByClient} from client submissions</p>}
-                  {mediaProcessing > 0 && <p className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} /> {mediaProcessing} processing</p>}
-                  {mediaFailed > 0 && <p className="text-[#B91C1C]">{mediaFailed} failed</p>}
-                </>,
-                <button onClick={openMediaUpload} className={btnP}><Camera className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Media</button>,
-              );
-              return <>{retainerCard}{requestCard}{docsCard}{mediaCardEl}</>;
+              // Retainer and request cards only until either exists — after
+              // that, their full sections above take over.
+              const c = collectionCards("compact");
+              return <>{showIntroCards && c.retainerCard}{showIntroCards && c.requestCard}{c.docsCard}{c.mediaCardEl}</>;
             })()}
           </div>
+
+          {/* Upload Docs — the two upload cards, large */}
+          {uploadPopupOpen && (() => {
+            const c = collectionCards("large");
+            return (
+              <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={() => setUploadPopupOpen(false)}>
+                <div role="dialog" aria-modal="true" aria-label="Upload to this case" className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-sm" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+                    <h2 className="card-title">Upload to this case</h2>
+                    <button onClick={() => setUploadPopupOpen(false)} aria-label="Close" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
+                  </div>
+                  <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 bg-offwhite">
+                    {c.docsCard}
+                    {c.mediaCardEl}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* The selected card's details — one panel, under the cards */}
           {cardPanel && (
             <div id="card-panel" className="lg-card overflow-hidden scroll-mt-[150px]">
               <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-line">
                 <span className="card-title">
-                  {{ retainer: "Retainer details", request: "Request history", documents: "Uploaded documents", media: "Media evidence" }[cardPanel]}
+                  {{ retainer: "Retainer", request: "Requests", documents: "Uploaded documents", media: "Media evidence" }[cardPanel]}
                 </span>
                 <button onClick={() => setCardPanel(null)} aria-label="Close details" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
               </div>
               <div className="p-4 bg-offwhite">
-                {cardPanel === "retainer" && (
-                  <div className="space-y-3">
-                    {newestRetainer?.status === "Signed" && (
-                      <p className="text-xs text-[#5B6B78]">
-                        Signed copy: {retainerSource === "attorney" ? (retainerFile ? `uploaded by the attorney (${retainerFile.name})` : "marked signed by the attorney — no document uploaded") : "signed by the client"}
-                      </p>
-                    )}
-                    {effectiveRetainers.length === 0 ? (
-                      <p className="secondary-text">No retainer has been sent or uploaded for this case.</p>
-                    ) : (
-          <div id="retainer-section" className="lg-card overflow-hidden scroll-mt-[150px]">
-            {/* Section header */}
-            <div className="flex items-center justify-between gap-4 px-6 py-5">
-              <span className="card-title">Retainer</span>
-              <div className="flex items-center gap-3 shrink-0">
-                {effectiveRetainers.length > 1 ? (
-                  /* Status filter — multiple retainers */
-                  <div className="inline-flex items-center bg-track border border-line rounded-lg p-0.5">
-                    {([["Awaiting Signature", "Awaiting Signature"], ["Signed", "Signed"], ["all", "All"]] as const).map(([val, label]) => (
-                      <button
-                        key={val}
-                        onClick={() => setRetainerFilter(val)}
-                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${retainerFilter === val ? "bg-white text-ink shadow-sm" : "text-[#5B6B78] hover:text-ink"}`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="border-t border-line">
-                {effectiveRetainers.length === 0 ? (
-                  /* ── EMPTY: no retainer sent ── */
-                  <div className="text-center py-10 px-6">
-                    <div className="inline-flex p-4 bg-tint rounded-full mb-4">
-                      <FileText className="w-8 h-8 text-[#5B6B78]" strokeWidth={1.75} />
-                    </div>
-                    <h3 className="card-title mb-1">No Retainer Agreement Sent</h3>
-                    <p className="secondary-text mb-6">Send a retainer agreement to the plaintiff to begin the representation.</p>
-                    <div className="flex items-center justify-center gap-3">
-                      <Button onClick={handleOpenSendRetainerModal} className="bg-brand hover:bg-deep text-white border-0 gap-2">
-                        Send Retainer
-                      </Button>
-                      <Button onClick={handleMarkAsSigned} className="bg-white border border-line text-ink hover:bg-wash">
-                        Upload a Signed doc
-                      </Button>
-                    </div>
-                  </div>
-
-                ) : effectiveRetainers.length === 1 ? (
-                  /* ── SINGLE retainer — compact, content directly in the section ── */
-                  (() => {
-                    const r = effectiveRetainers[0];
-                    const signed = r.status === "Signed";
-                    const fields = signed
-                      ? [
-                          { label: "Status", value: "Signed" },
-                          { label: "Signed Date", value: r.signedDate || "Jun 11, 2026" },
-                          { label: "Recipient", value: r.recipient },
-                          { label: "Template", value: r.template },
-                        ]
-                      : [
-                          { label: "Status", value: "Sent" },
-                          { label: "Date Sent", value: r.sentDate },
-                          { label: "Recipient", value: r.recipient },
-                          { label: "Template", value: r.template },
-                        ];
-                    const docName = signed
-                      ? (r.signedDocName || "No signed document uploaded")
-                      : (r.sentDocName || "PI_Retainer_Agreement.pdf");
-                    const retainerDoc = { name: docName, source: "Retainer", date: signed ? (r.signedDate || "Jun 11, 2026") : r.sentDate, status: signed ? "Signed" : "Sent" };
-                    return (
-                      <>
-                      <div className="bg-offwhite p-4 space-y-3">
-                        {/* Box 1 — info grid */}
-                        <div className="bg-white border border-line rounded-xl overflow-hidden">
-                          <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-line">
-                            {fields.map(({ label, value }) => (
-                              <div key={label} className="px-5 py-3.5">
-                                <div className="eyebrow mb-1">{label}</div>
-                                <div className="text-sm font-semibold text-ink truncate">{value}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Box 2 — document (sent doc while awaiting, signed doc once signed) */}
-                        <div className="bg-white border border-line rounded-xl px-5 py-3.5 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 bg-tint border border-line rounded-lg flex items-center justify-center shrink-0">
-                              <FileTypeIcon name={docName} className="w-4 h-4 text-deep" />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="eyebrow mb-0.5">{signed ? "Signed Document" : "Sent Document"}</div>
-                              <div className="mono-ref text-ink flex items-center gap-2">{docName}<FileTypeTag name={docName} /></div>
-                            </div>
-                          </div>
-                          {signed && (
-                            <DocActions
-                              onPreview={() => handlePreviewDocument(retainerDoc)}
-                              onInsights={() => handleOpenInsights(retainerDoc)}
-                              onDownload={() => handleDownloadDocument(retainerDoc)}
-                            />
-                          )}
-                        </div>
-                      </div>
-
-                        {/* Bottom bar — actions on a white bar */}
-                        <div className="flex items-center justify-end gap-3 bg-white border-t border-line px-4 py-3">
-                          {signed ? (
-                            <button onClick={handleGenerateNewRetainer} className="px-4 py-2 bg-ink hover:bg-deep text-white rounded-lg text-sm font-medium transition-all flex items-center gap-1.5">
-                              <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Generate New Retainer
-                            </button>
-                          ) : (
-                            <>
-                              <button onClick={handleOpenSendRetainerModal} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all flex items-center gap-1.5">
-                                <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
-                              </button>
-                              <button onClick={openUploadAgreement} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
-                                <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Agreement
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </>
-                    );
-                  })()
-
-                ) : (
-                  /* ── MULTIPLE retainers — each repeats the exact single-retainer card ── */
-                  (() => {
-                    const sorted = [...effectiveRetainers].sort((a, b) => b.id - a.id);
-                    const shown = retainerFilter === "all" ? sorted : sorted.filter((r) => r.status === retainerFilter);
-                    return (
-                      <div className="bg-wash p-4 space-y-4">
-                        {shown.length === 0 ? (
-                          <div className="text-center py-8 secondary-text">No retainers match this filter.</div>
-                        ) : (
-                          shown.map((r) => {
-                            const signed = r.status === "Signed";
-                            const fields = signed
-                              ? [
-                                  { label: "Status", value: "Signed" },
-                                  { label: "Signed Date", value: r.signedDate || "Jun 11, 2026" },
-                                  { label: "Recipient", value: r.recipient },
-                                  { label: "Template", value: r.template },
-                                ]
-                              : [
-                                  { label: "Status", value: "Awaiting Signature" },
-                                  { label: "Date Sent", value: r.sentDate },
-                                  { label: "Recipient", value: r.recipient },
-                                  { label: "Template", value: r.template },
-                                ];
-                            const docName = signed
-                              ? (r.signedDocName || "No signed document uploaded")
-                              : (r.sentDocName || "PI_Retainer_Agreement.pdf");
-                            const retainerDoc = { name: docName, source: "Retainer", date: signed ? (r.signedDate || r.sentDate) : r.sentDate, status: r.status };
-                            return (
-                              <div key={r.id} className="border border-line rounded-xl overflow-hidden">
-                                <div className="bg-offwhite p-4 space-y-3">
-                                  {/* Box 1 — info grid */}
-                                  <div className="bg-white border border-line rounded-xl overflow-hidden">
-                                    <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-line">
-                                      {fields.map(({ label, value }) => (
-                                        <div key={label} className="px-5 py-3.5">
-                                          <div className="eyebrow mb-1">{label}</div>
-                                          <div className="text-sm font-semibold text-ink truncate">{value}</div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-
-                                  {/* Box 2 — document (sent doc while awaiting, signed doc once signed) */}
-                                  <div className="bg-white border border-line rounded-xl px-5 py-3.5 flex items-center justify-between gap-3">
-                                    <div className="flex items-center gap-3 min-w-0">
-                                      <div className="w-8 h-8 bg-tint border border-line rounded-lg flex items-center justify-center shrink-0">
-                                        <FileTypeIcon name={docName} className="w-4 h-4 text-deep" />
-                                      </div>
-                                      <div className="min-w-0">
-                                        <div className="eyebrow mb-0.5">{signed ? "Signed Document" : "Sent Document"}</div>
-                                        <div className="mono-ref text-ink flex items-center gap-2">{docName}<FileTypeTag name={docName} /></div>
-                                      </div>
-                                    </div>
-                                    {signed && (
-                                      <DocActions
-                                        onPreview={() => handlePreviewDocument(retainerDoc)}
-                                        onInsights={() => handleOpenInsights(retainerDoc)}
-                                        onDownload={() => handleDownloadDocument(retainerDoc)}
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Bottom bar — actions only while awaiting signature */}
-                                {!signed && (
-                                  <div className="flex items-center justify-end gap-3 bg-white border-t border-line px-4 py-3">
-                                    <button onClick={handleOpenSendRetainerModal} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all flex items-center gap-1.5">
-                                      <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
-                                    </button>
-                                    <button onClick={openUploadAgreement} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
-                                      <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Agreement
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })
-                        )}
-
-                        {/* Section-level action — not attached to any single card */}
-                        <div className="flex justify-end pt-1">
-                          <button onClick={handleGenerateNewRetainer} className="px-4 py-2 bg-ink hover:bg-deep text-white rounded-lg text-sm font-medium transition-all flex items-center gap-1.5">
-                            <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Generate New Retainer
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })()
-                )}
-              </div>
-          </div>
-                    )}
-                  </div>
-                )}
-
-                {cardPanel === "request" && (
-                  storedRequests.length === 0 ? (
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <p className="secondary-text">No intake request has been sent for this case.</p>
-                      <button onClick={openCreateRequest} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold"><Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Request</button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {[...storedRequests].reverse().map((x) => {
-                        const xp = progressOf(x);
-                        return (
-                          <div key={x.id} className="bg-white border border-line rounded-xl px-4 py-3">
-                            <div className="flex items-center justify-between gap-3 flex-wrap">
-                              <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                <span className="mono-ref font-bold">{x.id}</span>
-                                <span className={REQUEST_STATUS_PILL[xp.status] ?? "pill pill-neutral"}>{xp.status}</span>
-                                {x.followUpOf && <span className="text-xs text-[#5B6B78]">Follow-up to {x.followUpOf}</span>}
-                                <span className="text-xs text-[#5B6B78]">{xp.recipient} · sent {sentLabel(x.lastSentAt)}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <button onClick={() => { setProgressReqId(x.id); setCardPanel(null); window.setTimeout(() => document.getElementById("request-progress")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash">Show progress</button>
-                                <button onClick={() => handleModifyRequest(x.id)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-line bg-white text-ink text-xs font-semibold hover:bg-wash"><Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Modify</button>
-                                <button onClick={() => handleOpenResend(x.id)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-line bg-white text-ink text-xs font-semibold hover:bg-wash"><RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend</button>
-                              </div>
-                            </div>
-                            <p className="text-xs text-[#5B6B78] mt-1.5">
-                              {xp.satisfied} of {xp.total} received · Requested: {[...x.requestedDocs, ...selectedMediaOptions(x.requestedMedia).map((o) => o.title)].join(", ")}
-                            </p>
-                          </div>
-                        );
-                      })}
-                      <div className="flex justify-end pt-1">
-                        <button
-                          onClick={handleOpenAdditionalRequest}
-                          disabled={!!waitingAdditional}
-                          title={waitingAdditional ? `${waitingAdditional.id} is still waiting for the client` : undefined}
-                          className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Additional Request
-                        </button>
-                      </div>
-                    </div>
-                  )
-                )}
-
                 {cardPanel === "documents" && (
                   sharedDocs.length === 0 ? (
                     <p className="secondary-text">No documents on this case yet.</p>
@@ -3811,10 +3936,11 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
               <h2 className="card-title flex items-center gap-2"><Trash2 className="w-4 h-4 text-[#B91C1C]" strokeWidth={1.75} /> Delete this retainer document?</h2>
               <p className="body-text"><span className="mono-ref text-ink">{retainerDelete.name}</span> will be removed from Retainer documents. This cannot be undone.</p>
               {retainerDelete.status === "Signed" && <p className="text-xs text-[#B45309]">This is the signed agreement. Deleting the file does not change the retainer's signing status on this case.</p>}
+              {retainerDeleteError && <p role="alert" className="text-sm text-[#B91C1C]">{retainerDeleteError}</p>}
             </div>
             <div className="flex items-center justify-end gap-2 px-6 py-4 bg-wash border-t border-line rounded-b-xl">
               <button onClick={() => setRetainerDelete(null)} className="btn btn-secondary">Cancel</button>
-              <button onClick={() => { setRetainerDocs((ds) => ds.filter((d) => d.id !== retainerDelete.id)); setRetainerDelete(null); }} className="btn bg-[#B91C1C] border border-[#B91C1C] text-white hover:bg-[#991B1B]">Delete document</button>
+              <button onClick={() => void confirmRetainerDelete()} className="btn bg-[#B91C1C] border border-[#B91C1C] text-white hover:bg-[#991B1B]">Delete document</button>
             </div>
           </div>
         </div>

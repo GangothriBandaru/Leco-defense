@@ -19,7 +19,18 @@ export interface Cite {
   note: string;
 }
 
+/** Which negligence element a liability element speaks to. */
+export type NegligenceElement = "duty" | "breach" | "causation" | "damages";
+
 export interface LiabilityElement {
+  /** The negligence element it addresses — Duty, Breach, Causation, Damages. */
+  kind?: NegligenceElement;
+  /** The Liability Analysis card: its category label, finding statement and
+   *  explanation, and the legal authority it rests on, where one is recorded. */
+  category?: string;
+  finding?: string;
+  description?: string;
+  authorityId?: string;
   name: string;
   status: ElementStatus;
   cite?: Cite;
@@ -171,11 +182,11 @@ export const CASE_DEFENDANTS: CaseDefendants[] = [
         },
         elementsLabel: "Negligence",
         elements: [
-          { name: "Owed her a duty of care", status: "Indicated", cite: { sourceId: SRC.caregiver, note: "staff caring for her" }, missing: "Residency or admission agreement not on file." },
-          { name: "Breached it: delayed emergency escalation", status: "Shown", cite: { sourceId: SRC.callLog, note: "911 call delayed" } },
-          { name: "Answers for the staff on duty", status: "Indicated", cite: { sourceId: SRC.caregiver, note: "facility staff entries" }, missing: "Employment of the staff on duty not yet documented." },
-          { name: "The delay caused or worsened the injury", status: "Not yet known", missing: "Needs a medical expert's opinion on the treatment window; the MRI confirms the stroke, not the effect of the delay." },
-          { name: "Damages", status: "Shown", cite: { sourceId: SRC.imaging, note: "ischemic stroke confirmed" } },
+          { kind: "duty", category: "Custodial duty of care", finding: "Reasonable care for a memory-care resident", description: "As the operator caring for a memory-care resident, the facility owed her reasonable care — including recognising an emergency and escalating it in time. The residency agreement setting out that care is not on file.", authorityId: "il-210-45", name: "Owed her a duty of care", status: "Indicated", cite: { sourceId: SRC.caregiver, note: "staff caring for her" }, missing: "Residency or admission agreement not on file." },
+          { kind: "breach", category: "Emergency escalation", finding: "Delayed 911 call after documented stroke signs", description: "Staff recorded facial droop, slurred speech and right-side weakness; emergency escalation came about 145 minutes later.", name: "Breached it: delayed emergency escalation", status: "Shown", cite: { sourceId: SRC.callLog, note: "911 call delayed" } },
+          { kind: "duty", category: "Vicarious liability", finding: "Answers for the staff on duty", description: "An operator answers for the conduct of the employees caring for its resident. Whether the staff on duty were its employees or agency staff is not yet documented.", name: "Answers for the staff on duty", status: "Indicated", cite: { sourceId: SRC.caregiver, note: "facility staff entries" }, missing: "Employment of the staff on duty not yet documented." },
+          { kind: "causation", category: "Delay → harm", finding: "Delay worsened the stroke outcome", description: "Whether a timely call would have changed the outcome needs a medical expert. The MRI confirms the stroke, not the effect of the delay.", name: "The delay caused or worsened the injury", status: "Not yet known", missing: "Needs a medical expert's opinion on the treatment window; the MRI confirms the stroke, not the effect of the delay." },
+          { kind: "damages", category: "Injury linked to the delay", finding: "Ischemic stroke with ongoing rehabilitation", description: "MRI confirms an ischemic stroke; rehabilitation began Mar 4, 2026. Dollar figures belong to the Damages module.", name: "Damages", status: "Shown", cite: { sourceId: SRC.imaging, note: "ischemic stroke confirmed" } },
         ],
         requests: [
           "Illinois Secretary of State entity search for Memory Care Facility LLC",
@@ -227,10 +238,10 @@ export const CASE_DEFENDANTS: CaseDefendants[] = [
         },
         elementsLabel: "Negligence",
         elements: [
-          { name: "Owed her a duty of care", status: "Indicated", cite: { sourceId: SRC.caregiver, note: "caring for her on Feb 7" } },
-          { name: "Breached it: delayed escalation", status: "Shown", cite: { sourceId: SRC.caregiver, note: "signs documented before the delayed call" } },
-          { name: "Which individual made the decision", status: "Not yet known", missing: "Not in evidence yet · needs the staffing records and staff statements." },
-          { name: "The delay caused or worsened the injury", status: "Not yet known", missing: "Needs a medical expert's opinion." },
+          { kind: "duty", category: "Caregiver duty", finding: "Recognise and escalate a resident emergency", description: "The staff caring for her on Feb 7, 2026 owed her reasonable care in recognising the stroke signs and calling for help.", name: "Owed her a duty of care", status: "Indicated", cite: { sourceId: SRC.caregiver, note: "caring for her on Feb 7" } },
+          { kind: "breach", category: "Delayed escalation", finding: "Signs documented before the delayed call", description: "The caregiver log records the stroke signs before the delayed 911 call.", name: "Breached it: delayed escalation", status: "Shown", cite: { sourceId: SRC.caregiver, note: "signs documented before the delayed call" } },
+          { kind: "breach", category: "Individual decision", finding: "Who decided when to call 911", description: "Which staff member made the escalation decision — and why — is not in evidence yet.", name: "Which individual made the decision", status: "Not yet known", missing: "Not in evidence yet · needs the staffing records and staff statements." },
+          { kind: "causation", category: "Delay → harm", finding: "Delay worsened the stroke outcome", description: "Needs a medical expert's opinion on the treatment window.", name: "The delay caused or worsened the injury", status: "Not yet known", missing: "Needs a medical expert's opinion." },
         ],
         requests: [
           "Staff roster and schedule for Feb 7, 2026",
@@ -271,8 +282,8 @@ export const CASE_DEFENDANTS: CaseDefendants[] = [
         },
         elementsLabel: "Connection to the harm",
         elements: [
-          { name: "Connected to the facility or her care", status: "Not yet known", missing: "No record links it to the facility. Needs an entity search and ownership records." },
-          { name: "Owed her a duty of care", status: "Not yet known", missing: "Depends on its connection to the facility." },
+          { kind: "duty", category: "Connection to the facility", finding: "Tie to the facility or her care", description: "Logistics Co. is named in the caption, but no record links it to the facility, its ownership or her care.", name: "Connected to the facility or her care", status: "Not yet known", missing: "No record links it to the facility. Needs an entity search and ownership records." },
+          { kind: "duty", category: "Duty of care", finding: "Duty owed to her", description: "Whether Logistics Co. owed her any duty depends on its connection to the facility, which is not established.", name: "Owed her a duty of care", status: "Not yet known", missing: "Depends on its connection to the facility." },
         ],
         requests: [
           "Illinois Secretary of State entity search for Logistics Co.",
@@ -317,8 +328,8 @@ export const CASE_DEFENDANTS: CaseDefendants[] = [
         },
         elementsLabel: "Negligence",
         elements: [
-          { name: "A medication error occurred", status: "Not yet known", missing: "No medication administration record is on file." },
-          { name: "The error caused or worsened the injury", status: "Not yet known", missing: "Needs the records and a medical expert's opinion." },
+          { kind: "breach", category: "Medication management", finding: "Medication given as ordered", description: "The case description alleges negligent medication management. No medication administration record is on file, so no error is shown.", name: "A medication error occurred", status: "Not yet known", missing: "No medication administration record is on file." },
+          { kind: "causation", category: "Medication → harm", finding: "Medication error contributed to the stroke", description: "Whether any medication error contributed to the stroke or its outcome needs the records and an expert.", name: "The error caused or worsened the injury", status: "Not yet known", missing: "Needs the records and a medical expert's opinion." },
         ],
         requests: [
           "Medication administration record for February 2026",

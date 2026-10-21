@@ -107,15 +107,22 @@ export default function App() {
   const caseKey = selectedCase?.caseId ?? "";
   // The Defendant Analysis is shared by Analysis and Case Ready; this is the
   // stage it was opened from, the one it returns to, and the defendant to select.
-  const [defendantOrigin, setDefendantOrigin] = useState<"analysis" | "case-ready">("analysis");
+  // "analysis-detail": opened from the Liability Analysis workspace, and returns to it.
+  const [defendantOrigin, setDefendantOrigin] = useState<"analysis" | "analysis-detail" | "case-ready">("analysis");
+  // Where the Jurisdiction review returns to — the stage, or the Liability Analysis workspace.
+  const [jurisdictionReturn, setJurisdictionReturn] = useState<"analysis" | "analysis-detail">("analysis");
+  const openJurisdictionFrom = (origin: "analysis" | "analysis-detail") => {
+    setJurisdictionReturn(origin);
+    setActivePage("jurisdiction");
+  };
   const [defendantFocus, setDefendantFocus] = useState<string | undefined>(undefined);
-  const openDefendantsFrom = (origin: "analysis" | "case-ready", focus?: string) => {
+  const openDefendantsFrom = (origin: "analysis" | "analysis-detail" | "case-ready", focus?: string) => {
     setDefendantOrigin(origin);
     setDefendantFocus(focus);
     setActivePage("defendants");
   };
   const backToDefendantOrigin = () => {
-    setReturnToSection(defendantOrigin === "case-ready" ? "defendant-deliverable" : "case-intelligence");
+    if (defendantOrigin !== "analysis-detail") setReturnToSection(defendantOrigin === "case-ready" ? "defendant-deliverable" : "case-intelligence");
     setActivePage(defendantOrigin);
   };
   const jurisdictionDecision = jurisdictionDecisions[caseKey];
@@ -266,7 +273,7 @@ export default function App() {
               setActivePage("valuation");
             }}
             onOpenInsurance={() => openInsuranceFrom("analysis")}
-            onOpenJurisdiction={() => setActivePage("jurisdiction")}
+            onOpenJurisdiction={() => openJurisdictionFrom("analysis")}
             onOpenDefendants={(name) => openDefendantsFrom("analysis", name)}
             governingLaw={jurisdictionDecision?.status === "approved" ? jurisdictionDecision.governingLaw : undefined}
             scrollToSection={returnToSection}
@@ -287,8 +294,8 @@ export default function App() {
               setActivePage("valuation");
             }}
             onOpenInsurance={() => openInsuranceFrom("analysis")}
-            onOpenJurisdiction={() => setActivePage("jurisdiction")}
-            onOpenDefendants={(name) => openDefendantsFrom("analysis", name)}
+            onOpenJurisdiction={() => openJurisdictionFrom("analysis-detail")}
+            onOpenDefendants={(name) => openDefendantsFrom("analysis-detail", name)}
             governingLaw={jurisdictionDecision?.status === "approved" ? jurisdictionDecision.governingLaw : undefined}
             detail={analysisDetail}
             onBackToAnalysis={backToAnalysis}
@@ -304,7 +311,7 @@ export default function App() {
             caseData={selectedCase}
             decision={jurisdictionDecision}
             onDecisionChange={(next) => setJurisdictionDecisions((prev) => ({ ...prev, [caseKey]: next }))}
-            onBack={() => setActivePage("analysis")}
+            onBack={() => setActivePage(jurisdictionReturn)}
             onStageClick={handleStageNavigation}
           />
         );
@@ -316,7 +323,7 @@ export default function App() {
             jurisdictionDecision={jurisdictionDecision}
             focusName={defendantFocus}
             stage={defendantOrigin === "case-ready" ? "Case Ready" : "Analysis"}
-            backLabel={defendantOrigin === "case-ready" ? "Back to Case Ready" : "Back to Analysis"}
+            backLabel={defendantOrigin === "case-ready" ? "Back to Case Ready" : defendantOrigin === "analysis-detail" ? "Back to Liability Analysis" : "Back to Analysis"}
             onBack={backToDefendantOrigin}
             onStageClick={handleStageNavigation}
           />
@@ -426,7 +433,7 @@ export default function App() {
     classification: "Collection",
     analysis: "Analysis",
     jurisdiction: "Analysis",
-    defendants: defendantOrigin === "analysis" ? "Analysis" : "Case Ready",
+    defendants: defendantOrigin === "case-ready" ? "Case Ready" : "Analysis",
     insurance: insuranceOrigin === "analysis" ? "Analysis" : "Case Ready",
     "insurance-detail": insuranceOrigin === "analysis" ? "Analysis" : "Case Ready",
     valuation: "Valuation",

@@ -4,7 +4,7 @@ import { StageNavigator } from "../components/StageNavigator";
 import {
   ChevronLeft, ChevronRight, ChevronDown, CheckCircle, FileText, Eye, Download, X,
   AlertCircle, ArrowRight, User, Building2, Shield, Scale, Stethoscope, Gavel,
-  Users, Bot, Sparkles, ArrowUpRight, Plus, Pencil, Trash2, RotateCcw, ClipboardList, ExternalLink
+  Users, Bot, Sparkles, ArrowUpRight, Plus, Pencil, Trash2, RotateCcw, ClipboardList, ExternalLink, CalendarDays
 } from "lucide-react";
 import { INSURANCE_ANALYSIS } from "../insurance/insuranceData";
 import { Button } from "../components/ui/button";
@@ -21,6 +21,8 @@ import { VIOLATION_CARDS, VIOLATION_SEVERITY_PILL } from "../workspace/Workspace
 import { governingLawSummary } from "../jurisdiction/jurisdictionData";
 import { defendantsForCase } from "../defendants/defendantData";
 import { useDefendantDecisions } from "../defendants/defendantDecisionStore";
+import { LiabilityWorkspace } from "./LiabilityWorkspace";
+import { liabilityForCase } from "../liability/liabilityData";
 import {
   useCaseTimeline, addTimelineEvent, updateManualEvent, editExtractedEvent, removeTimelineEvent, restoreExtractedEvents,
   EVENT_TYPES, type EventFields, type EventType,
@@ -62,7 +64,7 @@ interface AnalysisPageProps {
   onDocumentsUpdate?: (fn: (docs: CaseDocument[]) => CaseDocument[]) => void;
 }
 
-export type AnalysisDetail = "liability" | "injury" | "violations";
+export type AnalysisDetail = "liability" | "injury" | "violations" | "timeline";
 
 // Case narrative — incident → treatment → injury → damages → case ready
 interface TimelineEvent {
@@ -407,7 +409,13 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
 
   const liabilitySignals = signals.filter((s) => s.kind === "liability");
   const injurySignals = signals.filter((s) => s.kind === "injury");
-  const liabilityCount = liabilitySignals.length;
+  // With a liability analysis on record, Liability Signals opens that workspace,
+  // so the card counts its findings: the defendant elements and plaintiff checks.
+  const liabilityRecord = liabilityForCase(caseData?.caseId ?? "PI-2024-001");
+  const liabilityDefendants = liabilityRecord ? defendantsForCase(caseData?.caseId ?? "PI-2024-001") : undefined;
+  const liabilityCount = liabilityRecord && liabilityDefendants
+    ? liabilityDefendants.candidates.reduce((n, c) => n + c.elements.filter((e) => e.kind).length, 0) + liabilityRecord.plaintiff.checks.length + liabilityRecord.sharedFindings.length
+    : liabilitySignals.length;
   const injuryCount = injurySignals.length;
   const violationCount = VIOLATION_CARDS.length;
   const verifiedCount = verifiedDocuments.length || 12;
@@ -661,17 +669,127 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
       description: "Review policy validity, coverage, limits, red flags, liens, and insurer information.", onOpen: onOpenInsurance },
     { title: "Medical Chronology", category: "Medical", icon: ClipboardList, meta: "Treatment timeline",
       description: "Review the treatment timeline, key medical events, and supporting records from the incident through the present.", onOpen: onOpenChronology },
+    { title: "Case Timeline Overview", category: "Timeline", icon: CalendarDays, meta: `${events.length} key ${events.length === 1 ? "event" : "events"}`,
+      description: "Key events extracted from the case timeline, with supporting evidence for each event.", onOpen: () => onOpenDetail?.("timeline") },
   ];
 
   const DETAIL_META: Record<AnalysisDetail, { title: string; category: string; icon: any; count: number; description: string }> = {
     liability: { title: "Liability Signals", category: "Liability", icon: Scale, count: liabilityCount, description: "Key findings identifying potential liability and the evidence supporting each finding." },
     injury: { title: "Injury Signals", category: "Medical", icon: Stethoscope, count: injuryCount, description: "Key injury findings, medical evidence, and documented impacts relevant to the case." },
     violations: { title: "Violation Analysis", category: "Analysis", icon: Gavel, count: violationCount, description: "Identified violations, supporting evidence, and their relevance to potential liability." },
+    timeline: { title: "Case Timeline Overview", category: "Timeline", icon: CalendarDays, count: events.length, description: "Key events extracted from the case timeline, with supporting evidence for each event." },
   };
   // One findings set on its own page: the same cards, evidence and Preview /
   // Insights the stage showed in its tabs, every finding at once.
   const renderDetail = (signalTab: AnalysisDetail) => {
     const meta = DETAIL_META[signalTab];
+    // Liability Signals: the full liability analysis workspace, when the case has one.
+    if (signalTab === "liability" && liabilityRecord) return (
+      <LiabilityWorkspace
+        caseData={data as any}
+        documents={documents}
+        events={events.map((ev) => ({ id: ev.id, iso: ev.iso, date: ev.date, title: ev.title, summary: ev.summary, description: ev.description, evidence: ev.evidence, origin: ev.origin }))}
+        docSignals={liabilitySignals}
+        governingLaw={governingLaw}
+        onOpenJurisdiction={onOpenJurisdiction}
+        onOpenDefendants={onOpenDefendants}
+        onProceedToValuation={onProceedToValuation}
+        onOpenDocs={(files, view, context, insight, panel) => openSets([files.map(docForFile)], [context], 0, view, [insight], [panel])}
+      />
+    );
+    // The timeline page: its own panel carries the title, the count and Add Event.
+    if (signalTab === "timeline") return (
+      <div className="space-y-4">
+        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-tint text-deep">
+          <meta.icon className="w-3.5 h-3.5" strokeWidth={1.75} />
+          {meta.category}
+        </div>
+          {/* The case timeline — the same panel the stage showed, on its own page */}
+          <div id="case-timeline" className="lg-card p-6">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div className="min-w-0">
+                <h1 className="page-title mb-1" style={{ fontSize: "24px" }}>Case Timeline Overview</h1>
+                <p className="secondary-text">
+                  {events.length} Key {events.length === 1 ? "Event" : "Events"} from {EXTRACTED_EVENT_COUNT} Extracted Events
+                  {addedCount > 0 && ` · ${addedCount} added by attorney`}
+                  {removedCount > 0 && (
+                    <>
+                      {` · ${removedCount} removed `}
+                      <button
+                        onClick={() => {
+                          try { restoreExtractedEvents(data.caseId, Object.fromEntries(timelineEvents.map((e) => [e.id, { title: e.title, date: e.date }])), REVIEWER); }
+                          catch { setEventError(NOT_SAVED); }
+                        }}
+                        className="inline-flex items-center gap-1 text-deep font-medium hover:underline"
+                      >
+                        <RotateCcw className="w-3 h-3" strokeWidth={2} /> Restore
+                      </button>
+                    </>
+                  )}
+                </p>
+                {eventError && <p role="alert" className="text-xs text-[#B91C1C] mt-1">{eventError}</p>}
+              </div>
+              <button
+                onClick={() => { setEventError(null); setEventForm({ mode: "add" }); }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Add Event
+              </button>
+            </div>
+
+            <div className="relative">
+              {events.length === 0 && (
+                <p className="secondary-text py-6 text-center border border-dashed border-line rounded-lg">No events on the timeline. Add one, or restore removed events.</p>
+              )}
+              {events.map((ev, i) => {
+                const isLast = i === events.length - 1;
+                return (
+                  <div key={ev.id} className="relative flex gap-3 pb-3 last:pb-0">
+                    {/* Marker + connector line */}
+                    <div className="flex flex-col items-center shrink-0">
+                      <div className="w-3 h-3 rounded-full border-2 bg-white border-soft mt-2.5" />
+                      {!isLast && <div className="w-px flex-1 bg-line mt-1" />}
+                    </div>
+
+                    {/* Compact event card — date, title, supporting doc count, View Details, then Edit / Delete */}
+                    <div className="group flex-1 min-w-0 flex items-center rounded-lg border border-line bg-white mb-1 transition-colors hover:border-soft hover:bg-wash">
+                      <button
+                        onClick={() => setDrawerEventIndex(i)}
+                        className="flex-1 min-w-0 flex items-center justify-between gap-3 text-left pl-4 pr-2 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <div className="mono-ref mb-1 flex items-center gap-2 flex-wrap">
+                            {ev.date}
+                            {ev.origin === "manual" && <span className="pill pill-neutral text-[10px]">Added by attorney</span>}
+                            {ev.edit && <span className="pill pill-neutral text-[10px]">Edited</span>}
+                          </div>
+                          <div className="text-sm font-semibold text-ink leading-snug mb-1.5">{ev.title}</div>
+                          <div className="flex items-center gap-1.5 secondary-text">
+                            <FileText className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} />
+                            {ev.evidence.length} Supporting {ev.evidence.length === 1 ? "Doc" : "Docs"}
+                          </div>
+                        </div>
+                        <span className="hidden sm:flex items-center gap-1 text-sm font-medium text-deep opacity-60 group-hover:opacity-100 transition-opacity shrink-0">
+                          View Details
+                          <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
+                        </span>
+                      </button>
+                      <div className="flex items-center pr-2 shrink-0">
+                        <RowMenu
+                          name={ev.title}
+                          onEdit={() => { setEventError(null); setEventForm({ mode: "edit", ev }); }}
+                          onDelete={() => { setEventError(null); setEventDelete(ev); }}
+                          onDownload={() => downloadEventSummary(ev)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+      </div>
+    );
     return (
       <div className="space-y-6">
         <div>
@@ -884,21 +1002,21 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
           <span className="text-[#5B6B78]">Stage 2 -</span> <span className="text-ink">Analysis</span>
         </h1>
 
-        {/* ── Case Intelligence + Timeline Hero (45 / 55) ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-[45fr_55fr] gap-6 items-start">
+        {/* ── Case Intelligence — the timeline now has its own page ── */}
+        <div className="grid grid-cols-1 gap-6 items-start">
 
-          {/* LEFT (45%) — Case Intelligence Summary, compact card grid (sticky while timeline scrolls) */}
-          <div id="case-intelligence" className="lg-card p-6 flex flex-col lg:sticky lg:top-[150px] self-start scroll-mt-[150px]">
-            <div className="flex items-center gap-2.5 mb-5">
+          {/* Case Intelligence Summary, compact card grid */}
+          <div id="case-intelligence" className="lg-card px-6 py-5 flex flex-col scroll-mt-[150px]">
+            <div className="flex items-center gap-2.5 mb-4">
               <h2 className="section-header">Case Intelligence Summary</h2>
               <span className="pill pill-complete">92% Complete</span>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
               {summaryRows.map(({ icon: Icon, label, value, note, onClick, hint }) => {
                 const body = (
                   <>
-                    <div className="eyebrow flex items-center gap-1.5 mb-1.5">
+                    <div className="eyebrow flex items-center gap-1.5 mb-1">
                       <Icon className="w-4 h-4 text-deep" strokeWidth={1.75} />
                       {label}
                     </div>
@@ -913,18 +1031,18 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                     onClick={onClick}
                     title={hint}
                     aria-label={`${label}: ${value}. ${hint}`}
-                    className="group relative text-left flex flex-col justify-start lg-zone lg-zone-grey p-4 cursor-pointer transition-all hover:border-soft hover:shadow-sm active:scale-[0.99]"
+                    className="group relative text-left flex flex-col justify-start lg-zone lg-zone-grey px-4 py-3 cursor-pointer transition-all hover:border-soft hover:shadow-sm active:scale-[0.99]"
                   >
                     {body}
                     <ArrowUpRight className="absolute top-3 right-3 w-3.5 h-3.5 text-deep opacity-60 group-hover:opacity-100 transition-opacity" strokeWidth={2} />
                   </button>
                 ) : (
-                  <div key={label} className="lg-zone lg-zone-grey p-4">{body}</div>
+                  <div key={label} className="lg-zone lg-zone-grey px-4 py-3">{body}</div>
                 );
               })}
 
-              <div className="lg-zone lg-zone-grey p-4">
-                <div className="eyebrow flex items-center gap-1.5 mb-1.5">
+              <div className="lg-zone lg-zone-grey px-4 py-3">
+                <div className="eyebrow flex items-center gap-1.5 mb-1">
                   <Users className="w-4 h-4 text-deep" strokeWidth={1.75} />
                   Key Witnesses
                 </div>
@@ -932,8 +1050,8 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                 <p className="text-sm font-semibold text-ink leading-snug">John Peterson</p>
               </div>
 
-              <div className="lg-zone lg-zone-grey p-4">
-                <div className="eyebrow flex items-center gap-1.5 mb-1.5">
+              <div className="lg-zone lg-zone-grey px-4 py-3">
+                <div className="eyebrow flex items-center gap-1.5 mb-1">
                   <Stethoscope className="w-4 h-4 text-deep" strokeWidth={1.75} />
                   Primary Medical Providers
                 </div>
@@ -941,16 +1059,16 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                 <p className="text-sm font-semibold text-ink leading-snug">Physical Therapy Associates</p>
               </div>
 
-              <div className="lg-zone lg-zone-grey p-4">
-                <div className="eyebrow flex items-center gap-1.5 mb-1.5">
+              <div className="lg-zone lg-zone-grey px-4 py-3">
+                <div className="eyebrow flex items-center gap-1.5 mb-1">
                   <Shield className="w-4 h-4 text-deep" strokeWidth={1.75} />
                   Verified Evidence
                 </div>
                 <p className="text-sm font-semibold text-ink leading-snug">{verifiedCount} <span className="font-medium text-[#5B6B78]">Documents</span></p>
               </div>
 
-              <div className="lg-zone lg-zone-grey p-4">
-                <div className="eyebrow flex items-center gap-1.5 mb-1.5">
+              <div className="lg-zone lg-zone-grey px-4 py-3">
+                <div className="eyebrow flex items-center gap-1.5 mb-1">
                   <CheckCircle className="w-4 h-4 text-deep" strokeWidth={1.75} />
                   Analysis Status
                 </div>
@@ -961,97 +1079,13 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
             {/* Primary CTA pinned full-width at the bottom */}
             <Button
               onClick={onProceedToValuation}
-              className="btn btn-primary gap-2 w-full mt-5"
+              className="btn btn-primary gap-2 w-full mt-4"
             >
               Proceed To Valuation
               <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
             </Button>
           </div>
 
-          {/* RIGHT (55%) — High-level Case Timeline */}
-          <div className="lg-card p-6">
-            <div className="flex items-start justify-between gap-3 mb-5">
-              <div className="min-w-0">
-                <h2 className="section-header mb-1">Case Timeline Overview</h2>
-                <p className="secondary-text">
-                  {events.length} Key {events.length === 1 ? "Event" : "Events"} from {EXTRACTED_EVENT_COUNT} Extracted Events
-                  {addedCount > 0 && ` · ${addedCount} added by attorney`}
-                  {removedCount > 0 && (
-                    <>
-                      {` · ${removedCount} removed `}
-                      <button
-                        onClick={() => {
-                          try { restoreExtractedEvents(data.caseId, Object.fromEntries(timelineEvents.map((e) => [e.id, { title: e.title, date: e.date }])), REVIEWER); }
-                          catch { setEventError(NOT_SAVED); }
-                        }}
-                        className="inline-flex items-center gap-1 text-deep font-medium hover:underline"
-                      >
-                        <RotateCcw className="w-3 h-3" strokeWidth={2} /> Restore
-                      </button>
-                    </>
-                  )}
-                </p>
-                {eventError && <p role="alert" className="text-xs text-[#B91C1C] mt-1">{eventError}</p>}
-              </div>
-              <button
-                onClick={() => { setEventError(null); setEventForm({ mode: "add" }); }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Add Event
-              </button>
-            </div>
-
-            <div className="relative">
-              {events.length === 0 && (
-                <p className="secondary-text py-6 text-center border border-dashed border-line rounded-lg">No events on the timeline. Add one, or restore removed events.</p>
-              )}
-              {events.map((ev, i) => {
-                const isLast = i === events.length - 1;
-                return (
-                  <div key={ev.id} className="relative flex gap-3 pb-3 last:pb-0">
-                    {/* Marker + connector line */}
-                    <div className="flex flex-col items-center shrink-0">
-                      <div className="w-3 h-3 rounded-full border-2 bg-white border-soft mt-2.5" />
-                      {!isLast && <div className="w-px flex-1 bg-line mt-1" />}
-                    </div>
-
-                    {/* Compact event card — date, title, supporting doc count, View Details, then Edit / Delete */}
-                    <div className="group flex-1 min-w-0 flex items-center rounded-lg border border-line bg-white mb-1 transition-colors hover:border-soft hover:bg-wash">
-                      <button
-                        onClick={() => setDrawerEventIndex(i)}
-                        className="flex-1 min-w-0 flex items-center justify-between gap-3 text-left pl-4 pr-2 py-2.5"
-                      >
-                        <div className="min-w-0">
-                          <div className="mono-ref mb-1 flex items-center gap-2 flex-wrap">
-                            {ev.date}
-                            {ev.origin === "manual" && <span className="pill pill-neutral text-[10px]">Added by attorney</span>}
-                            {ev.edit && <span className="pill pill-neutral text-[10px]">Edited</span>}
-                          </div>
-                          <div className="text-sm font-semibold text-ink leading-snug mb-1.5">{ev.title}</div>
-                          <div className="flex items-center gap-1.5 secondary-text">
-                            <FileText className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} />
-                            {ev.evidence.length} Supporting {ev.evidence.length === 1 ? "Doc" : "Docs"}
-                          </div>
-                        </div>
-                        <span className="hidden sm:flex items-center gap-1 text-sm font-medium text-deep opacity-60 group-hover:opacity-100 transition-opacity shrink-0">
-                          View Details
-                          <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
-                        </span>
-                      </button>
-                      <div className="flex items-center pr-2 shrink-0">
-                        <RowMenu
-                          name={ev.title}
-                          onEdit={() => { setEventError(null); setEventForm({ mode: "edit", ev }); }}
-                          onDelete={() => { setEventError(null); setEventDelete(ev); }}
-                          onDownload={() => downloadEventSummary(ev)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
 
         {/* ── Analysis Summary + Signals (20 / 80) ── */}
