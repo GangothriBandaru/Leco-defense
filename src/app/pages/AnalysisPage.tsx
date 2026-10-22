@@ -1002,17 +1002,17 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
           <span className="text-[#5B6B78]">Stage 2 -</span> <span className="text-ink">Analysis</span>
         </h1>
 
-        {/* ── Case Intelligence — the timeline now has its own page ── */}
-        <div className="grid grid-cols-1 gap-6 items-start">
+        {/* ── Case Intelligence Summary (40) beside Analysis Findings (60) — the timeline now has its own page ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6 items-start">
 
-          {/* Case Intelligence Summary, compact card grid */}
-          <div id="case-intelligence" className="lg-card px-6 py-5 flex flex-col scroll-mt-[150px]">
-            <div className="flex items-center gap-2.5 mb-4">
+          {/* Case Intelligence Summary, compact two-column card grid */}
+          <div id="case-intelligence" className="lg-card px-5 py-4 flex flex-col min-w-0 scroll-mt-[150px]">
+            <div className="flex items-center gap-2.5 mb-3">
               <h2 className="section-header">Case Intelligence Summary</h2>
               <span className="pill pill-complete">92% Complete</span>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {summaryRows.map(({ icon: Icon, label, value, note, onClick, hint }) => {
                 const body = (
                   <>
@@ -1031,17 +1031,17 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                     onClick={onClick}
                     title={hint}
                     aria-label={`${label}: ${value}. ${hint}`}
-                    className="group relative text-left flex flex-col justify-start lg-zone lg-zone-grey px-4 py-3 cursor-pointer transition-all hover:border-soft hover:shadow-sm active:scale-[0.99]"
+                    className="group relative text-left flex flex-col justify-start lg-zone lg-zone-grey px-3.5 py-2.5 pr-8 cursor-pointer transition-all hover:border-soft hover:shadow-sm active:scale-[0.99]"
                   >
                     {body}
                     <ArrowUpRight className="absolute top-3 right-3 w-3.5 h-3.5 text-deep opacity-60 group-hover:opacity-100 transition-opacity" strokeWidth={2} />
                   </button>
                 ) : (
-                  <div key={label} className="lg-zone lg-zone-grey px-4 py-3">{body}</div>
+                  <div key={label} className="lg-zone lg-zone-grey px-3.5 py-2.5">{body}</div>
                 );
               })}
 
-              <div className="lg-zone lg-zone-grey px-4 py-3">
+              <div className="lg-zone lg-zone-grey px-3.5 py-2.5">
                 <div className="eyebrow flex items-center gap-1.5 mb-1">
                   <Users className="w-4 h-4 text-deep" strokeWidth={1.75} />
                   Key Witnesses
@@ -1050,7 +1050,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                 <p className="text-sm font-semibold text-ink leading-snug">John Peterson</p>
               </div>
 
-              <div className="lg-zone lg-zone-grey px-4 py-3">
+              <div className="lg-zone lg-zone-grey px-3.5 py-2.5">
                 <div className="eyebrow flex items-center gap-1.5 mb-1">
                   <Stethoscope className="w-4 h-4 text-deep" strokeWidth={1.75} />
                   Primary Medical Providers
@@ -1059,7 +1059,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                 <p className="text-sm font-semibold text-ink leading-snug">Physical Therapy Associates</p>
               </div>
 
-              <div className="lg-zone lg-zone-grey px-4 py-3">
+              <div className="lg-zone lg-zone-grey px-3.5 py-2.5">
                 <div className="eyebrow flex items-center gap-1.5 mb-1">
                   <Shield className="w-4 h-4 text-deep" strokeWidth={1.75} />
                   Verified Evidence
@@ -1067,7 +1067,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                 <p className="text-sm font-semibold text-ink leading-snug">{verifiedCount} <span className="font-medium text-[#5B6B78]">Documents</span></p>
               </div>
 
-              <div className="lg-zone lg-zone-grey px-4 py-3">
+              <div className="lg-zone lg-zone-grey px-3.5 py-2.5">
                 <div className="eyebrow flex items-center gap-1.5 mb-1">
                   <CheckCircle className="w-4 h-4 text-deep" strokeWidth={1.75} />
                   Analysis Status
@@ -1079,28 +1079,20 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
             {/* Primary CTA pinned full-width at the bottom */}
             <Button
               onClick={onProceedToValuation}
-              className="btn btn-primary gap-2 w-full mt-4"
+              className="btn btn-primary gap-2 w-full mt-3"
             >
               Proceed To Valuation
               <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
             </Button>
           </div>
 
-        </div>
-
-        {/* ── Analysis Summary + Signals (20 / 80) ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-[80fr_20fr] gap-6 items-start">
-
-        {/* LEFT (80%) — Signals + Evidence Verification (the tall, scrolling column) */}
-        <div className="space-y-8 min-w-0 lg:order-1">
-
-        {/* ── Analysis findings — five deliverable cards, as in Case Ready ── */}
-        <div id="analysis-deliverables" className="lg-card overflow-hidden scroll-mt-[150px]">
+        {/* ── Analysis findings — six deliverable cards, as in Case Ready ── */}
+        <div id="analysis-deliverables" className="lg-card overflow-hidden min-w-0 scroll-mt-[150px]">
           <div className="flex items-center justify-between px-6 py-4 border-b border-line">
             <h2 className="section-header">Analysis Findings</h2>
             <span className="secondary-text">{analysisCards.length} analyses</span>
           </div>
-          <div className="p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {analysisCards.map((item) => (
               <div
                 key={item.title}
@@ -1134,6 +1126,14 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
             ))}
           </div>
         </div>
+
+        </div>{/* end Summary + Findings grid */}
+
+        {/* ── Evidence Verification + Analysis Complete (80 / 20) ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-[80fr_20fr] gap-6 items-start">
+
+        {/* LEFT (80%) — Evidence Verification (the tall, scrolling column) */}
+        <div className="space-y-8 min-w-0 lg:order-1">
 
         {/* ── Evidence Verification ── */}
         <div id="evidence-verification" className="lg-card !p-0 overflow-hidden scroll-mt-[150px]">
@@ -1197,7 +1197,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
           </table>
         </div>
 
-        </div>{/* end signals/evidence column */}
+        </div>{/* end evidence column */}
 
         {/* RIGHT (20%) — Analysis Complete: sticky progress + navigation panel */}
         <div className="lg:order-2 lg:sticky lg:top-[150px] self-start">
@@ -1249,7 +1249,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
           </div>
         </div>
 
-        </div>{/* end Signals + Analysis Summary grid */}
+        </div>{/* end Evidence + Analysis Complete grid */}
 
         </>
         )}
