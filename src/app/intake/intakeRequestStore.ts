@@ -67,6 +67,10 @@ export interface IntakeRequest {
   followUpOf?: string;
   /** Uploads the attorney deleted from the case documents — not added again. */
   removedUploadIds?: string[];
+  /** Removed from the dashboard. The record is kept — its ID, history,
+   *  submissions and documents stay — and the client link is not revoked. */
+  removedAt?: string;
+  removedBy?: string;
 }
 
 const STORAGE_KEY = "leco.intake.requests.v1";
@@ -182,6 +186,13 @@ export function updateIntakeRequest(token: string, patch: Partial<IntakeRequest>
   requests = requests.map((r) => (r.token === token ? { ...r, ...(typeof patch === "function" ? patch(r) : patch) } : r));
   save();
   emit();
+}
+
+/** Removes a request from the dashboard without deleting it: the record, its
+ *  submissions and the documents it brought stay, and IDs stay unique. Nothing
+ *  is recalled or revoked — the client keeps the message and the link. */
+export function removeIntakeRequestFromDashboard(token: string, by: string) {
+  updateIntakeRequest(token, { removedAt: new Date().toISOString(), removedBy: by });
 }
 
 /** A client's submitted file the attorney deleted from the case: not added

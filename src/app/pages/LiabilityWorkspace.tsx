@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Scale, AlertTriangle, CheckCircle, FileText, ChevronDown, Eye, Sparkles, BookOpen, RefreshCw,
   ArrowRight, ShieldAlert, Search, Download, X, Clock, Info, Lock, ExternalLink, Check, Circle, Zap,
@@ -8,7 +8,7 @@ import type { DocInsights, DocContextPanel } from "../components/DocumentWorkspa
 import { downloadTextFile, safeFileName } from "../components/downloadText";
 import { defendantsForCase, type ElementStatus } from "../defendants/defendantData";
 import { useDefendantDecisions } from "../defendants/defendantDecisionStore";
-import { jurisdictionForCase, stateOfJurisdiction, workingDeadline, formatDate } from "../jurisdiction/jurisdictionData";
+import { jurisdictionForCase, stateOfJurisdiction } from "../jurisdiction/jurisdictionData";
 import { liabilityForCase, type PlaintiffStatus, type PlaybookEffect, type Priority } from "../liability/liabilityData";
 import { rulesForState, type Authority } from "../liability/liabilityRules";
 import { useLiabilityInputs, updateLiability, stampNow, type Override } from "../liability/liabilityStore";
@@ -44,21 +44,23 @@ const LEDGER_PILL: Record<string, string> = {
 const PARTY_BAR = ["bg-deep", "bg-brand", "bg-[#6FA8BC]", "bg-soft", "bg-[#B7C9D3]"];
 const BTN_S = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white border border-line text-ink rounded-lg text-xs font-semibold hover:bg-wash transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 const BTN_P = "inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+// Recommendation CTAs: one height, kept on one line.
+const REC_BTN = "!h-7 !px-2.5 !text-[11px] whitespace-nowrap";
 const INPUT = "w-full px-3 py-2 rounded-lg border border-line text-sm bg-white focus:outline-none focus:border-brand";
 
 const Pill = ({ className, children }: { className: string; children: React.ReactNode }) => (
   <span className={`pill ${className} text-[11px] max-w-full`}>{children}</span>
 );
 
-function Section({ id, eyebrow, title, sub, right, children, className = "" }: {
-  id: string; eyebrow?: string; title: string; sub?: React.ReactNode; right?: React.ReactNode; children: React.ReactNode; className?: string;
+function Section({ id, eyebrow, title, sub, right, children, className = "", titleClassName = "section-header" }: {
+  id: string; eyebrow?: string; title: string; sub?: React.ReactNode; right?: React.ReactNode; children: React.ReactNode; className?: string; titleClassName?: string;
 }) {
   return (
     <section id={id} tabIndex={-1} className={`lg-card overflow-hidden scroll-mt-[150px] focus:outline-none ${className}`}>
       <div className="flex items-start justify-between gap-3 flex-wrap px-5 py-4 border-b border-line">
         <div className="min-w-0">
           {eyebrow && <div className="eyebrow mb-1">{eyebrow}</div>}
-          <h2 className="section-header leading-snug">{title}</h2>
+          <h2 className={`${titleClassName} leading-snug`}>{title}</h2>
           {sub && <p className="secondary-text mt-0.5 max-w-3xl">{sub}</p>}
         </div>
         {right}
@@ -208,28 +210,38 @@ function Workspace({ caseData, documents, events, docSignals, governingLaw, onOp
 
   return (
     <div className="space-y-6">
-      <Header caseData={caseData} model={model} inputs={inputs} jurisdiction={jurisdiction} liability={liability} running={running} onRerun={rerun}
-        signedCurrent={signedCurrent} notice={notice} error={error} onDismiss={() => { setNotice(null); setError(null); }} follow={follow} />
+      <Header running={running} onRerun={rerun} notice={notice} error={error} onDismiss={() => { setNotice(null); setError(null); }} />
 
-      <div id="liability-overview" className="grid grid-cols-1 lg:grid-cols-3 gap-4 scroll-mt-[150px]">
-        <FaultRuleCard rules={rules} model={model} governingLaw={governingLaw} state={state} onOpenJurisdiction={onOpenJurisdiction} onLaw={openLaw} />
+      <div id="liability-overview" className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch scroll-mt-[150px]">
+        <FaultRuleCard rules={rules} model={model} governingLaw={governingLaw} state={state} onLaw={openLaw} />
         <NoFaultCard rules={rules} liability={liability} />
         <PartySummary model={model} rules={rules} inputs={inputs} onLaw={openLaw} />
       </div>
 
       <FaultAllocation model={model} rules={rules} inputs={inputs} liability={liability} />
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
-        <div className="space-y-6 min-w-0">
+      {/* Recommendations (left) beside L4 (right): the list takes L4's height and scrolls within it. */}
+      <div className="grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-6">
+        <div className="min-w-0 order-2 xl:order-1 xl:relative">
+          <div className="xl:absolute xl:inset-0">
+            <Recommendations model={model} caseData={caseData} save={save} />
+          </div>
+        </div>
+        <div className="min-w-0 order-1 xl:order-2">
           <PlaintiffModule model={model} liability={liability} inputs={inputs} save={save} rules={rules}
             onOpen={(f, view) => openFinding({ kind: "plaintiff", f }, view)} onLaw={openLaw} onDetails={(f) => setFindingOpen({ kind: "plaintiff", f })} />
+        </div>
+      </div>
+
+      {/* Supporting cards (left) beside L5 and the rest of the analysis (right), as in the row above. */}
+      <div className="grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-6 items-start xl:items-stretch">
+        <div className="flex flex-col gap-6 min-w-0 order-1 xl:order-2 [&>*:last-child]:xl:flex-1">
           <DefendantModule model={model} inputs={inputs} save={save}
+            footer={<OtherParties model={model} liability={liability} onOpenDefendants={onOpenDefendants} onOpenJurisdiction={onOpenJurisdiction} />}
             onOpen={(f, view) => openFinding({ kind: "defendant", f }, view)} onLaw={openLaw} onDetails={(f) => setFindingOpen({ kind: "defendant", f })} />
-          <OtherParties model={model} liability={liability} onOpenDefendants={onOpenDefendants} onOpenJurisdiction={onOpenJurisdiction} />
           <NegligenceTimeline model={model} onFinding={(f) => setFindingOpen({ kind: "defendant", f })} onOpenDocs={onOpenDocs} />
         </div>
-        <aside className="space-y-6 min-w-0" aria-label="Supporting analysis">
-          <Recommendations model={model} caseData={caseData} save={save} />
+        <aside className="flex flex-col gap-6 min-w-0 order-2 xl:order-1 [&>*:last-child]:xl:flex-1" aria-label="Supporting analysis">
           <Research liability={liability} />
           <Exceptions liability={liability} onLaw={openLaw} />
           <Simulator model={model} liability={liability} inputs={inputs} save={save} />
@@ -276,36 +288,15 @@ function Workspace({ caseData, documents, events, docSignals, governingLaw, onOp
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header({ caseData, model, inputs, jurisdiction, liability, running, onRerun, signedCurrent, notice, error, onDismiss, follow }: {
-  caseData: LiabilityWorkspaceProps["caseData"]; model: LiabilityModel; inputs: Inputs; jurisdiction: Jx; liability: Liability; running: boolean; onRerun: () => void;
-  signedCurrent: boolean; notice: string | null; error: string | null; onDismiss: () => void; follow: (t: string) => void;
+// The case details live on the case overview; this header names the page and
+// carries its two actions.
+function Header({ running, onRerun, notice, error, onDismiss }: {
+  running: boolean; onRerun: () => void; notice: string | null; error: string | null; onDismiss: () => void;
 }) {
-  const status = signedCurrent ? "Signed off" : inputs.signOff ? "Changed since sign-off" : model.blocking.length ? "Blocked — attorney inputs needed" : "Ready for sign-off";
-  const accrual = workingDeadline(jurisdiction);
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="min-w-0 flex-1 basis-[420px]">
-          <div className="eyebrow mb-1.5 flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Liability Analysis · Pre-suit</div>
-          <h1 className="page-title" style={{ fontSize: "24px" }}>{caseData.caseName}</h1>
-          <div className="flex items-center gap-x-2 gap-y-1.5 flex-wrap mt-2 secondary-text">
-            {caseData.caseType && (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-ink text-white text-xs font-semibold">
-                {[caseData.caseType, caseData.caseSubType].filter(Boolean).join(" · ")}
-              </span>
-            )}
-            <span className="mono-ref text-ink">{caseData.caseId}</span>
-            <span>· Incident {model.fmtIso(model.recorded)} <span className="text-[#8A98A3]">(record · time not on record)</span></span>
-            {model.datesDiffer && <Pill className="pill-progress">Evidence places it on {model.fmtIso(model.anchor)}</Pill>}
-            {caseData.jurisdiction && <span>· {caseData.jurisdiction}</span>}
-            <span>· Accrual {accrual ? <>{formatDate(accrual.row.start)} <span className="text-[#8A98A3]">({accrual.row.status === "Open" ? "working" : "uncertain"}, not verified)</span></> : "Not available"}</span>
-            <span>· {liability.filing}</span>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap mt-2 text-xs text-[#5B6B78]">
-            <Pill className={signedCurrent ? "pill-complete" : model.blocking.length ? "pill-risk" : "pill-progress"}>{status}</Pill>
-            <span>{inputs.lastRun ? `Last run ${inputs.lastRun.at} by ${inputs.lastRun.by}` : "Not yet run — figures below are built from the current record"}</span>
-          </div>
-        </div>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <h1 className="page-title min-w-0" style={{ fontSize: "21px", fontWeight: 600, lineHeight: 1.25 }}>Liability Signals</h1>
         <div className="flex items-center gap-2 flex-wrap shrink-0">
           <button onClick={onRerun} disabled={running} aria-busy={running} className="btn btn-secondary gap-2">
             <RefreshCw className={`w-4 h-4 ${running ? "animate-spin" : ""}`} strokeWidth={1.75} /> {running ? "Running…" : "Rerun analysis"}
@@ -325,33 +316,36 @@ function Header({ caseData, model, inputs, jurisdiction, liability, running, onR
 
 // ── The three summary cards ───────────────────────────────────────────────────
 
-function FaultRuleCard({ rules, model, governingLaw, state, onOpenJurisdiction, onLaw }: {
-  rules: Rules; model: LiabilityModel; governingLaw?: string; state?: string; onOpenJurisdiction?: () => void; onLaw: (id?: string) => void;
+// Compact, reference-sized cards: an eyebrow, one bold line, one short line
+// and a single status row. The full explanations live in the sections below.
+const CARD = "lg-card px-4 py-3.5 flex flex-col h-full min-w-0";
+
+function FaultRuleCard({ rules, model, governingLaw, state, onLaw }: {
+  rules: Rules; model: LiabilityModel; governingLaw?: string; state?: string; onLaw: (id?: string) => void;
 }) {
   const auth = model.authorities.find((a) => a.id === "il-2-1116");
   const verified = auth && !model.unverified.some((a) => a.id === auth.id);
+  // One indicator for the governing-law and authority review status.
+  const status = governingLaw && verified ? "Verified" : governingLaw ? "Authority unverified" : "Provisional · verify";
+  const statusHint = governingLaw && verified ? "Governing law approved; authority verified" : governingLaw ? "Governing law approved; authority not yet verified" : "Governing law provisional — attorney verification required";
   return (
-    <div className="lg-card p-5 flex flex-col">
-      <div className="eyebrow mb-2">Governing fault rule</div>
+    <div className={CARD}>
+      <div className="eyebrow mb-1.5">Governing fault rule</div>
       {rules ? (
         <>
-          <h3 className="card-title">{rules.state} · {rules.faultRuleLabel}</h3>
-          <p className="secondary-text mt-1.5 leading-relaxed">{rules.plaintiffFault}</p>
-          <p className="text-xs text-[#5B6B78] mt-1.5">Threshold: <span className="font-semibold text-ink">{rules.threshold}</span></p>
-          {auth && (
-            <button onClick={() => onLaw(auth.id)} className="text-xs text-deep font-semibold hover:text-ink mt-1 self-start inline-flex items-center gap-1">
-              <BookOpen className="w-3.5 h-3.5" strokeWidth={1.75} /> {auth.citation}
-            </button>
-          )}
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            <Pill className={GREY}>From Jurisdiction module · read-only</Pill>
-            <Pill className={governingLaw ? "pill-complete" : "pill-progress"}>{governingLaw ? "Governing law approved" : "Governing law provisional"}</Pill>
-            <Pill className={verified ? "pill-complete" : "pill-progress"}>{verified ? "Verified by attorney" : "Unverified — attorney review required"}</Pill>
+          <h3 className="card-title leading-snug">{rules.state} · {rules.faultRuleName}</h3>
+          <p className="text-xs text-[#5B6B78] mt-1 leading-snug">{rules.plaintiffFaultShort}</p>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 mt-2.5">
+            {auth && (
+              <button onClick={() => onLaw(auth.id)} title="Open the authority" className="text-[11px] text-deep font-semibold hover:text-ink inline-flex items-center gap-1">
+                <BookOpen className="w-3.5 h-3.5" strokeWidth={1.75} /> {auth.citation}
+              </button>
+            )}
+            <span title={statusHint}><Pill className={governingLaw && verified ? "pill-complete" : "pill-progress"}>{status}</Pill></span>
           </div>
-          <button onClick={onOpenJurisdiction} className="mt-auto pt-3 self-start text-xs font-semibold text-deep hover:text-ink inline-flex items-center gap-1">Review in Jurisdiction module <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.75} /></button>
         </>
       ) : (
-        <p className="secondary-text">No liability rules are recorded for {state ?? "this jurisdiction"}. Pending verification — the fault rule needs attorney review.</p>
+        <p className="text-xs text-[#5B6B78]">No rules recorded for {state ?? "this jurisdiction"} — needs attorney review.</p>
       )}
     </div>
   );
@@ -359,70 +353,59 @@ function FaultRuleCard({ rules, model, governingLaw, state, onOpenJurisdiction, 
 
 function NoFaultCard({ rules, liability }: { rules: Rules; liability: Liability }) {
   return (
-    <div className="lg-card p-5">
-      <div className="eyebrow mb-2">No-fault / PIP</div>
+    <div className={CARD}>
+      <div className="eyebrow mb-1.5">No-fault / PIP</div>
       {rules ? (
         <>
-          <h3 className="card-title">Tort claim · {rules.noFault.applicable ? "Threshold applies" : "No threshold"}</h3>
-          <p className="secondary-text mt-1.5 leading-relaxed">{rules.noFault.detail}</p>
-          <div className="flex flex-wrap gap-1.5 mt-3">
+          <h3 className="card-title leading-snug">Tort claim · {rules.noFault.applicable ? "Threshold applies" : "No threshold"}</h3>
+          <p className="text-xs text-[#5B6B78] mt-1 leading-snug">{rules.noFault.short}</p>
+          <div className="mt-2.5">
             <Pill className={rules.noFault.applicable ? "pill-progress" : "pill-complete"}>Threshold check: {rules.noFault.applicable ? "applies" : "not applicable"}</Pill>
-            <Pill className={GREY}>Medical payments (MedPay): not applicable</Pill>
           </div>
-          <div className="mt-3 pt-3 border-t border-line space-y-1">
-            <p className="eyebrow">Recovery sources</p>
-            {liability.recoverySources.map((r) => (
-              <p key={r.name} className="text-xs text-[#5B6B78]"><span className="font-semibold text-ink">{r.name}</span> · {r.why}</p>
-            ))}
-            <p className="text-[11px] text-[#8A98A3]">Recovery sources are excluded from fault allocation.</p>
-          </div>
+          {liability.recoverySources.map((r) => (
+            <p key={r.name} title={`${r.name} · ${r.status}, not a fault party. ${r.why}`} className="text-[11px] text-[#5B6B78] leading-snug mt-2 truncate">
+              <span className="font-semibold text-ink">{r.name}</span> · {r.status}, not a fault party
+            </p>
+          ))}
         </>
-      ) : <p className="secondary-text">Pending verification — no rules recorded for this jurisdiction.</p>}
+      ) : <p className="text-xs text-[#5B6B78]">No rules recorded for this jurisdiction — needs attorney review.</p>}
     </div>
   );
 }
 
 function PartySummary({ model, rules, inputs, onLaw }: { model: LiabilityModel; rules: Rules; inputs: Inputs; onLaw: (id?: string) => void }) {
   const p = inputs.plaintiffOverride;
+  const js = model.authorities.find((a) => a.id === "il-2-1117");
+  const jsVerified = js && !model.unverified.some((a) => a.id === js.id);
+  const value = (o?: { expected: number; low?: number; high?: number }) => o
+    ? <><span className="font-semibold text-ink tabular-nums">{o.expected}%</span>{range(o) && <span className="mono-ref text-[11px] ml-1.5">{range(o)}</span>}</>
+    : <span className="text-[11px] text-[#9BA8B4]">Not calculated</span>;
   return (
-    <div className="lg-card p-5">
+    <div className={CARD}>
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="eyebrow">Defendant liability</div>
-        <span className="text-[11px] text-[#8A98A3]">Expected · range</span>
+        <span className="text-[11px] text-[#9BA8B4]">Expected · range</span>
       </div>
-      <ul className="space-y-2">
+      <ul className="space-y-1">
         {model.parties.map((pt, i) => (
-          <li key={pt.candidate.id} className={`flex items-start gap-2 ${pt.choice === "do-not-pursue" ? "opacity-60" : ""}`}>
-            <span className={`w-2.5 h-2.5 rounded-sm mt-1 shrink-0 ${pt.choice === "do-not-pursue" ? "bg-line" : PARTY_BAR[i % PARTY_BAR.length]}`} />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-ink leading-snug">{pt.candidate.short} <span className="font-normal text-[#5B6B78]">{pt.candidate.role.split("·")[0].trim().toLowerCase()}</span></p>
-              <p className="text-[11px] text-[#5B6B78]">{pt.shown}/{pt.total} elements shown · {pt.choice === "name" ? "Name" : pt.choice === "investigate" ? "Investigate" : "Do not pursue"} ({pt.confirmed ? "attorney" : "system"})</p>
-            </div>
-            <div className="text-right shrink-0">
-              <p className="text-sm font-semibold text-ink tabular-nums">{pt.override ? `${pt.override.expected}%` : <span className="text-xs font-normal text-[#8A98A3]">Not calculated</span>}</p>
-              {range(pt.override) && <p className="mono-ref text-[11px]">{range(pt.override)}</p>}
-            </div>
+          <li key={pt.candidate.id} title={`${pt.candidate.name} · ${pt.candidate.role} · ${pt.shown}/${pt.total} elements shown`} className={`flex items-center gap-2 text-xs leading-tight ${pt.choice === "do-not-pursue" ? "opacity-60" : ""}`}>
+            <span className={`w-2 h-2 rounded-full shrink-0 ${pt.choice === "do-not-pursue" ? "bg-line" : PARTY_BAR[i % PARTY_BAR.length]}`} />
+            <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-ink">{pt.candidate.short}</span> <span className="text-[#8A98A3]">· {pt.candidate.roleLabel ?? pt.candidate.role.split("·")[0].trim()}</span></span>
+            <span className="shrink-0 text-right">{value(pt.override)}</span>
           </li>
         ))}
-        <li className="flex items-start gap-2 pt-2 border-t border-line">
-          <span className="w-2.5 h-2.5 rounded-sm mt-1 shrink-0 bg-[#B91C1C]" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-ink">Plaintiff <span className="font-normal text-[#5B6B78]">{p ? "attorney estimate · no fault on record" : "no fault on record"}</span></p>
-            <p className="text-[11px] text-[#5B6B78]">{model.plaintiffFindings.filter((x) => x.status === "Not yet known").length} open checks · none indicates fault</p>
-          </div>
-          <div className="text-right shrink-0">
-            <p className="text-sm font-semibold text-ink tabular-nums">{p ? `${p.expected}%` : <span className="text-xs font-normal text-[#8A98A3]">Not calculated</span>}</p>
-            {range(p) && <p className="mono-ref text-[11px]">{range(p)}</p>}
-          </div>
+        <li className="flex items-center gap-2 text-xs leading-tight pt-1.5">
+          <span className="w-2 h-2 rounded-full shrink-0 bg-[#B91C1C]" />
+          <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-[#B91C1C]">Plaintiff</span> <span className="text-[#8A98A3]">· {p ? "Attorney estimate" : "No fault established"}</span></span>
+          <span className="shrink-0 text-right">{value(p)}</span>
         </li>
       </ul>
-      {rules && (
-        <p className="text-[11px] text-[#5B6B78] mt-3 leading-snug">
-          Joint and several: medical expenses jointly; other damages split at 25% of total fault.{" "}
-          <button onClick={() => onLaw("il-2-1117")} className="text-[11px] font-semibold text-deep hover:text-ink">735 ILCS 5/2-1117 · unverified</button>
+      {rules && js && (
+        <p className="text-[11px] text-[#9BA8B4] mt-auto pt-2 leading-snug">
+          Joint and several ·{" "}
+          <button onClick={() => onLaw(js.id)} className="text-[11px] text-deep hover:text-ink">{js.citation} · {jsVerified ? "Verified" : "Unverified"}</button>
         </p>
       )}
-      <p className="text-[11px] text-[#8A98A3] mt-1.5 leading-snug">Shares appear only when the attorney enters them — no allocation model is calculated.</p>
     </div>
   );
 }
@@ -432,16 +415,17 @@ function PartySummary({ model, rules, inputs, onLaw }: { model: LiabilityModel; 
 function AllocationBar({ shares, empty }: { shares: { key: string; label: string; value: number; cls: string }[]; empty: string[] }) {
   const total = shares.reduce((n, s) => n + s.value, 0);
   return (
-    <div className="flex h-10 rounded-lg overflow-hidden border border-line" role="img"
-      aria-label={shares.length ? `Attorney-assessed shares: ${shares.map((s) => `${s.label} ${s.value}%`).join(", ")}` : "No shares calculated"}>
+    <div className="flex h-7 rounded-lg overflow-hidden border border-line" role="img"
+      aria-label={shares.length ? `Attorney-assessed shares: ${shares.map((s) => `${s.label} ${s.value}%`).join(", ")}` : "Allocation not calculated"}>
       {shares.filter((s) => s.value > 0).map((s) => (
         <div key={s.key} className={`${s.cls} text-white text-xs font-semibold flex items-center px-2 min-w-0`} style={{ width: `${s.value}%` }} title={`${s.label} · ${s.value}%`}>
-          <span className="truncate">{s.label} · {s.value}%</span>
+          {/* Labels only where the segment has room for them. */}
+          {s.value >= 6 && <span className="truncate">{s.value >= 15 ? `${s.label} · ${s.value}%` : `${s.value}%`}</span>}
         </div>
       ))}
       {total < 100 && (
-        <div className="flex-1 bg-track text-[11px] text-[#5B6B78] flex items-center px-3 min-w-0">
-          <span className="truncate">{shares.length ? `Not allocated · ${100 - total}%` : "Not calculated"}{empty.length ? ` — ${empty.join(", ")}` : ""}</span>
+        <div className="flex-1 bg-track text-[11px] text-[#8A98A3] flex items-center px-3 min-w-0" title={empty.length ? `Not estimated: ${empty.join(", ")}` : undefined}>
+          <span className="truncate">{shares.length ? `Not allocated · ${100 - total}%` : "Allocation not calculated"}</span>
         </div>
       )}
     </div>
@@ -456,84 +440,76 @@ function FaultAllocation({ model, rules, inputs, liability }: { model: Liability
   const notEstimated = [...(p ? [] : ["Plaintiff"]), ...parties.filter((x) => !x.override).map((x) => x.candidate.short)];
   const plaintiffShare = (v?: number) => (v !== undefined ? [{ key: "plaintiff", label: "Plaintiff", value: v, cls: "bg-[#B91C1C]" }] : []);
   return (
-    <Section
-      id="liability-allocation"
-      eyebrow={`Fault allocation · ${view === "expected" ? "Expected" : view === "defense" ? "Defense view" : "Litigation outlook"}`}
-      title="How responsibility may be distributed"
-      sub="Analytical shares for demand strategy and insurer targeting — not a verdict or settlement prediction."
-      right={
-        <div role="tablist" aria-label="Allocation view" className="flex items-center gap-1.5 flex-wrap">
+    <section id="liability-allocation" tabIndex={-1} aria-label="How responsibility may be distributed" className="lg-card px-5 py-3.5 space-y-2.5 scroll-mt-[150px] focus:outline-none">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="eyebrow">Fault allocation · {view === "expected" ? "Expected" : view === "defense" ? "Defense view" : "Litigation outlook"}</div>
+          <p className="text-xs text-[#5B6B78] mt-0.5">How responsibility may be distributed — analytical shares guide demand strategy and insurer targeting.</p>
+        </div>
+        <div role="tablist" aria-label="Allocation view" className="flex items-center gap-1.5">
           {([["defense", "Defense view"], ["expected", "Expected"], ["outlook", "Litigation outlook"]] as const).map(([k, l]) => (
             <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${view === k ? "bg-deep text-white border-deep" : "bg-white text-ink border-line hover:bg-wash"}`}>{l}</button>
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border whitespace-nowrap transition-colors ${view === k ? "bg-deep text-white border-deep" : "bg-white text-ink border-line hover:bg-wash"}`}>{l}</button>
           ))}
-        </div>
-      }
-    >
-      <div className="p-5 space-y-3">
-        {view === "expected" && (
-          <>
-            <AllocationBar shares={[...plaintiffShare(p?.expected), ...defendantShares]} empty={notEstimated} />
-            <p className="text-xs text-[#5B6B78]">Expected: the attorney's working estimates, entered with reasons in the estimate panels. No model estimate exists.</p>
-          </>
-        )}
-        {view === "defense" && (
-          <>
-            <AllocationBar shares={plaintiffShare(p?.defense)} empty={p?.defense === undefined ? ["Plaintiff (defense view)"] : []} />
-            <p className="text-xs text-[#5B6B78]">Qualitative — how the defense may characterise the current record. {p?.defense !== undefined ? `Attorney's defense-view plaintiff share: ${p.defense}%.` : "Enter a defense-view share in the plaintiff override to show it."}</p>
-            <ul className="space-y-2">
-              {model.plaintiffFindings.filter((x) => x.status === "Not yet known").map((x) => (
-                <li key={x.id} className="flex items-start gap-2 text-sm flex-wrap sm:flex-nowrap"><Pill className="pill-progress">{x.code} · open</Pill><span className="text-[#5B6B78]"><span className="font-semibold text-ink">{x.title}.</span> {x.description}</span></li>
-              ))}
-              {model.causationOpen.map((f) => (
-                <li key={f.id} className="flex items-start gap-2 text-sm flex-wrap sm:flex-nowrap"><Pill className="pill-progress">{f.code} · {f.candidate.short}</Pill><span className="text-[#5B6B78]">{f.title}: {f.missing ?? "not yet known"}</span></li>
-              ))}
-              {parties.map((x) => (
-                <li key={x.candidate.id} className="flex items-start gap-2 text-sm flex-wrap sm:flex-nowrap"><Pill className={GREY}>{x.candidate.short}</Pill><span className="text-[#5B6B78]">{x.candidate.couldUndo}</span></li>
-              ))}
-            </ul>
-          </>
-        )}
-        {view === "outlook" && (
-          <div className="space-y-2 text-sm">
-            <p className="text-xs text-[#5B6B78]">Scenario-based and qualitative. The fault rule's effect is calculated only from the attorney's plaintiff estimate.</p>
-            <p className="text-ink">
-              {rules ? <>Under {rules.state} {rules.faultRuleLabel.toLowerCase()}: </> : null}
-              {model.ruleResult
-                ? <>at the expected plaintiff share of {p!.expected}%, recovery would be <span className="font-semibold">{model.ruleResult.label}</span>{model.defenseResult && <>; at the defense view of {p!.defense}%, <span className="font-semibold">{model.defenseResult.label}</span></>}.</>
-                : <>no plaintiff fault is on record, so the rule would not reduce recovery unless fault is shown.</>}
-            </p>
-            <div className="grid grid-cols-3 gap-2 max-w-lg">
-              {([["Baseline", model.simulator.baseline], ["Pre-suit scenario", model.simulator.preSuit], ["Litigation outlook", model.simulator.litigation]] as const).map(([l, v]) => (
-                <div key={l} className="rounded-lg bg-wash p-2.5 text-center">
-                  <p className="eyebrow">{l}</p>
-                  <p className="text-base font-semibold text-ink tabular-nums">{v.shown}/{model.simulator.total}</p>
-                  <p className="text-[11px] text-[#5B6B78]">elements shown</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="flex flex-wrap gap-x-5 gap-y-1.5 pt-3 border-t border-line text-xs text-[#5B6B78]">
-          <span><span className="font-semibold text-[#B91C1C]">Plaintiff</span> · {p ? `${p.expected}% expected${range(p) ? ` · range ${range(p)}` : ""}${p.defense !== undefined ? ` · defense view ${p.defense}%` : ""}` : "not calculated — no plaintiff fault on record"}</span>
-          {model.groups.map((g) => (
-            <span key={g.head.id}><span className="font-semibold text-ink">{g.head.short} + {g.through.short}</span> grouped for a vicarious share; {g.through.short.toLowerCase()} scored separately</span>
-          ))}
-          {liability.recoverySources.map((r) => <span key={r.name}><span className="font-semibold text-ink">{r.name}</span> excluded (recovery source)</span>)}
-          <span><span className="font-semibold text-ink">Gaps</span> · {model.recommendations.filter((r) => r.state !== "received").length} records outstanding</span>
         </div>
       </div>
-    </Section>
+
+      {view === "expected" && <AllocationBar shares={[...plaintiffShare(p?.expected), ...defendantShares]} empty={notEstimated} />}
+      {view === "defense" && (
+        <>
+          <AllocationBar shares={plaintiffShare(p?.defense)} empty={p?.defense === undefined ? ["Plaintiff (defense view)"] : []} />
+          <p className="text-xs text-[#5B6B78]">Qualitative — how the defense may characterise the current record. {p?.defense !== undefined ? `Attorney's defense-view plaintiff share: ${p.defense}%.` : "Enter a defense-view share in the plaintiff override to show it."}</p>
+          <ul className="space-y-2">
+            {model.plaintiffFindings.filter((x) => x.status === "Not yet known").map((x) => (
+              <li key={x.id} className="flex items-start gap-2 text-sm flex-wrap sm:flex-nowrap"><Pill className="pill-progress">{x.code} · open</Pill><span className="text-[#5B6B78]"><span className="font-semibold text-ink">{x.title}.</span> {x.description}</span></li>
+            ))}
+            {model.causationOpen.map((f) => (
+              <li key={f.id} className="flex items-start gap-2 text-sm flex-wrap sm:flex-nowrap"><Pill className="pill-progress">{f.code} · {f.candidate.short}</Pill><span className="text-[#5B6B78]">{f.title}: {f.missing ?? "not yet known"}</span></li>
+            ))}
+            {parties.map((x) => (
+              <li key={x.candidate.id} className="flex items-start gap-2 text-sm flex-wrap sm:flex-nowrap"><Pill className={GREY}>{x.candidate.short}</Pill><span className="text-[#5B6B78]">{x.candidate.couldUndo}</span></li>
+            ))}
+          </ul>
+        </>
+      )}
+      {view === "outlook" && (
+        <div className="space-y-2 text-sm">
+          <p className="text-xs text-[#5B6B78]">Scenario-based and qualitative. The fault rule's effect is calculated only from the attorney's plaintiff estimate.</p>
+          <p className="text-ink">
+            {rules ? <>Under {rules.state} {rules.faultRuleLabel.toLowerCase()}: </> : null}
+            {model.ruleResult
+              ? <>at the expected plaintiff share of {p!.expected}%, recovery would be <span className="font-semibold">{model.ruleResult.label}</span>{model.defenseResult && <>; at the defense view of {p!.defense}%, <span className="font-semibold">{model.defenseResult.label}</span></>}.</>
+              : <>no plaintiff fault is on record, so the rule would not reduce recovery unless fault is shown.</>}
+          </p>
+          <div className="grid grid-cols-3 gap-2 max-w-lg">
+            {([["Baseline", model.simulator.baseline], ["Pre-suit scenario", model.simulator.preSuit], ["Litigation outlook", model.simulator.litigation]] as const).map(([l, v]) => (
+              <div key={l} className="rounded-lg bg-wash p-2.5 text-center">
+                <p className="eyebrow">{l}</p>
+                <p className="text-base font-semibold text-ink tabular-nums">{v.shown}/{model.simulator.total}</p>
+                <p className="text-[11px] text-[#5B6B78]">elements shown</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* One summary line: plaintiff, defendants, recovery sources. */}
+      <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-[#5B6B78]">
+        <span><span className="font-semibold text-[#B91C1C]">Plaintiff</span> · {p ? `${p.expected}% expected${range(p) ? ` · range ${range(p)}` : ""}${p.defense !== undefined ? ` · defense view ${p.defense}%` : ""}` : "Not calculated — no plaintiff fault established on the current record."}</span>
+        <span><span className="font-semibold text-ink">Defendants</span> · {defendantShares.length ? defendantShares.map((s) => `${s.label} ${s.value}%`).join(" · ") : "Liability shares not calculated."}</span>
+        {liability.recoverySources.map((r) => <span key={r.name}><span className="font-semibold text-ink">{r.name}</span> — {r.status.toLowerCase()}, excluded from fault allocation.</span>)}
+      </div>
+    </section>
   );
 }
 
 // ── Finding cards ─────────────────────────────────────────────────────────────
 
-function EvidenceBlock({ evidence, empty }: { evidence: EvidenceRef[]; empty: string }) {
+function EvidenceBlock({ evidence, empty, compact }: { evidence: EvidenceRef[]; empty: string; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const on = evidence.filter((e) => e.onFile).length;
   return (
-    <div className="mt-3 pt-3 border-t border-line">
+    <div className={`${compact ? "mt-2.5 pt-2.5" : "mt-3 pt-3"} border-t border-line`}>
       <button onClick={() => setOpen((o) => !o)} aria-expanded={open} disabled={!evidence.length} className="w-full flex items-center justify-between gap-2 group disabled:cursor-default">
         <span className="eyebrow group-hover:text-ink transition-colors">Evidence</span>
         {evidence.length > 0 && <ChevronDown className={`w-4 h-4 text-deep transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />}
@@ -556,37 +532,41 @@ function EvidenceBlock({ evidence, empty }: { evidence: EvidenceRef[]; empty: st
   );
 }
 
-function FindingCard({ code, category, title, party, body, status, statusCls, extra, scenario, evidence, emptyEvidence, onPreview, onInsights, law, reviewed, onDetails }: {
-  code: string; category: string; title: string; party?: string; body: React.ReactNode; status: string; statusCls: string; extra?: React.ReactNode; scenario?: ElementStatus;
+function FindingCard({ code, category, title, fullTitle, party, body, status, statusCls, extra, scenario, evidence, emptyEvidence, onPreview, onInsights, law, reviewed, onDetails, compact }: {
+  code: string; category: string; title: string; fullTitle?: string; party?: string; body: React.ReactNode; status: string; statusCls: string; extra?: React.ReactNode; scenario?: ElementStatus;
   evidence: EvidenceRef[]; emptyEvidence: string; onPreview: () => void; onInsights: () => void; law?: { onClick?: () => void; label: string }; reviewed?: string; onDetails: () => void;
+  /** Smaller type and spacing; the full description stays in the finding's details panel. */
+  compact?: boolean;
 }) {
+  const btn = compact ? "py-1.5" : "py-2";
   return (
-    <div className="lg-card-i rounded-xl border border-line bg-white p-4 flex flex-col">
-      <div className="flex items-start justify-between gap-2 mb-1.5">
-        <div className="eyebrow flex items-center gap-1.5 min-w-0"><Scale className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} /><span className="truncate">{category}</span></div>
-        {party ? <Pill className="pill-neutral">{party}</Pill> : <span className="mono-ref text-[11px]">{code}</span>}
+    <div className="lg-card-i rounded-xl border border-line bg-white flex flex-col p-4">
+      <div className={`flex items-start justify-between gap-2 ${compact ? "mb-1" : "mb-1.5"}`}>
+        <div className={`eyebrow flex items-center gap-1.5 min-w-0 ${compact ? "!text-[10px]" : ""}`}><Scale className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} /><span className="truncate">{category}</span></div>
+        {party ? <Pill className={`pill-neutral ${compact ? "whitespace-nowrap shrink-0" : ""}`}>{party}</Pill> : <span className="mono-ref text-[11px]">{code}</span>}
       </div>
-      <button onClick={onDetails} className="text-left card-title leading-snug hover:text-deep transition-colors">{title}</button>
-      <div className="secondary-text mt-1.5 leading-relaxed">{body}</div>
-      <div className="flex items-center gap-1.5 flex-wrap mt-2">
+      <button onClick={onDetails} title={compact ? fullTitle ?? title : undefined}
+        className={`text-left leading-snug hover:text-deep transition-colors ${compact ? "text-[13px] font-semibold text-ink truncate" : "card-title"}`}>{title}</button>
+      <div className={compact ? "text-xs text-[#5B6B78] mt-0.5 leading-snug line-clamp-2" : "secondary-text mt-1.5 leading-relaxed"}>{body}</div>
+      <div className={`flex items-center gap-1.5 flex-wrap ${compact ? "mt-2.5" : "mt-2"}`}>
         <Pill className={statusCls}>{status}</Pill>
         {party && <span className="mono-ref text-[11px]">{code}</span>}
         {extra}
         {scenario && <Pill className="pill-neutral">Scenario: {scenario}</Pill>}
         {reviewed && <Pill className={reviewed === "changed" ? "pill-risk" : "pill-complete"}>{reviewed === "changed" ? "Changed since review" : "Reviewed"}</Pill>}
       </div>
-      <EvidenceBlock evidence={evidence} empty={emptyEvidence} />
-      <div className="mt-auto pt-3 grid grid-cols-2 gap-2">
+      <EvidenceBlock evidence={evidence} empty={emptyEvidence} compact={compact} />
+      <div className={`mt-auto grid grid-cols-2 ${compact ? "pt-2.5 gap-1.5" : "pt-3 gap-2"}`}>
         {law && (
           <button onClick={law.onClick} disabled={!law.onClick} title={law.onClick ? undefined : "No legal authority is recorded for this finding"}
-            className="flex items-center justify-center gap-1.5 px-2 py-2 bg-tint border border-[#D6F2F7] text-deep rounded-lg text-xs font-semibold hover:bg-[#D6F2F7] disabled:bg-white disabled:border-line disabled:text-[#8A98A3] disabled:cursor-not-allowed transition-colors">
+            className={`flex items-center justify-center gap-1.5 px-2 ${btn} bg-tint border border-[#D6F2F7] text-deep rounded-lg text-xs font-semibold hover:bg-[#D6F2F7] disabled:bg-white disabled:border-line disabled:text-[#8A98A3] disabled:cursor-not-allowed transition-colors`}>
             <BookOpen className="w-3.5 h-3.5" strokeWidth={1.75} /> {law.label}
           </button>
         )}
-        <button onClick={onPreview} className="flex items-center justify-center gap-1.5 px-2 py-2 bg-white border border-line text-ink rounded-lg text-xs font-semibold hover:bg-wash transition-colors">
+        <button onClick={onPreview} className={`flex items-center justify-center gap-1.5 px-2 ${btn} bg-white border border-line text-ink rounded-lg text-xs font-semibold hover:bg-wash transition-colors`}>
           <Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> Preview
         </button>
-        <button onClick={onInsights} className={`flex items-center justify-center gap-1.5 px-2 py-2 bg-white border border-line text-deep rounded-lg text-xs font-semibold hover:bg-tint transition-colors ${law ? "col-span-2" : ""}`}>
+        <button onClick={onInsights} className={`flex items-center justify-center gap-1.5 px-2 ${btn} bg-white border border-line text-deep rounded-lg text-xs font-semibold hover:bg-tint transition-colors ${law ? "col-span-2" : ""}`}>
           <Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} /> Insights
         </button>
       </div>
@@ -612,8 +592,10 @@ function ElementTabs({ active, onChange, counts, label }: { active: ElementKey; 
 
 // ── Estimates ─────────────────────────────────────────────────────────────────
 
-function EstimateForm({ placeholder, current, withDefense, onSave, onReset }: {
-  placeholder: string; current?: Override; withDefense?: boolean;
+function EstimateForm({ placeholder, current, withDefense, compact, single, onSave, onReset }: {
+  placeholder: string; current?: Override; withDefense?: boolean; compact?: boolean;
+  /** One expected-share input and the reason; Apply appears once something is entered. */
+  single?: boolean;
   onSave: (e: { expected: number; low?: number; high?: number; defense?: number }, reason: string) => string | null; onReset: (reason: string) => string | null;
 }) {
   const blank = { expected: "", low: "", high: "", defense: "", reason: "" };
@@ -634,19 +616,41 @@ function EstimateForm({ placeholder, current, withDefense, onSave, onReset }: {
     if (!r) setF(blank);
   };
   const fields = [["expected", "Expected %"], ["low", "Low %"], ["high", "High %"], ...(withDefense ? [["defense", "Defense view %"]] : [])] as [keyof typeof blank, string][];
+  const input = compact ? `${INPUT} !py-1.5 !text-xs` : INPUT;
+  if (single) {
+    const touched = f.expected.trim() !== "" || f.reason.trim() !== "";
+    return (
+      // Fills its card: the reason box takes any spare height.
+      <div className="flex-1 flex flex-col gap-2">
+        <input inputMode="decimal" value={f.expected} onChange={(e) => setF({ ...f, expected: e.target.value.replace(/%$/, "") })} placeholder={placeholder}
+          aria-label="Expected plaintiff share, percent" className={`${INPUT} !py-1.5 !text-xs`} />
+        <label className="flex-1 flex flex-col">
+          <span className="text-[11px] text-[#5B6B78] mb-1">Reason (required)</span>
+          <textarea value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} rows={2} className={`${INPUT} !py-1.5 !text-xs resize-y flex-1 min-h-[56px]`} />
+        </label>
+        {err && <p role="alert" className="text-xs text-[#B91C1C]">{err}</p>}
+        {(touched || current) && (
+          <div className="flex justify-end gap-2">
+            {current && <button onClick={reset} className={BTN_S}>Reset to model</button>}
+            {touched && <button onClick={submit} className={BTN_P}>Apply override</button>}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
-    <div className="space-y-2">
-      <div className={`grid gap-2 ${withDefense ? "grid-cols-2" : "grid-cols-3"}`}>
+    <div className={compact ? "space-y-1.5" : "space-y-2"}>
+      <div className={`grid ${compact ? "gap-1.5" : "gap-2"} ${withDefense ? "grid-cols-2" : "grid-cols-3"}`}>
         {fields.map(([k, l]) => (
-          <label key={k} className="block">
-            <span className="text-[11px] text-[#5B6B78]">{l}</span>
-            <input inputMode="decimal" value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={k === "expected" ? placeholder : ""} className={INPUT} />
+          <label key={k} className="block min-w-0">
+            <span className="text-[11px] text-[#5B6B78] whitespace-nowrap">{compact ? l.replace(" view", "") : l}</span>
+            <input inputMode="decimal" value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={k === "expected" ? placeholder : ""} className={input} />
           </label>
         ))}
       </div>
       <label className="block">
         <span className="text-[11px] text-[#5B6B78]">Reason (required)</span>
-        <textarea value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} rows={2} className={`${INPUT} resize-y`} />
+        <textarea value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} rows={2} className={`${input} resize-y`} />
       </label>
       {err && <p role="alert" className="text-xs text-[#B91C1C]">{err}</p>}
       <div className="flex justify-end gap-2">
@@ -679,31 +683,26 @@ function PlaintiffModule({ model, liability, inputs, save, rules, onOpen, onLaw,
   const list = model.plaintiffFindings.filter((p) => p.element === tab);
   const [item, setItem] = useState(model.plaintiffFindings.find((p) => p.element === "breach")?.id ?? model.plaintiffFindings[0]?.id);
   const selected = model.plaintiffFindings.find((p) => p.id === item) ?? model.plaintiffFindings[0];
-  const reviewed = inputs.plaintiffReview?.signature === model.plaintiffSignature;
   const o = inputs.plaintiffOverride;
+  const [openRow, setOpenRow] = useState<string | null>(null);
   return (
+    // Marking the conduct items reviewed lives on the L7 sign-off checklist.
     <Section id="liability-plaintiff" eyebrow="L4 · Plaintiff negligence" title={`${liability.plaintiff.name} · what the defense can point to`}
-      sub="Checks run on her own conduct. None attributes fault to her; open questions are labelled as open, not as findings."
+      titleClassName="text-base font-medium text-ink"
       right={
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs text-[#5B6B78]">
-            Defense view <span className="font-semibold text-[#B91C1C]">{o?.defense !== undefined ? `${o.defense}%` : "—"}</span> → after playbook <span className="font-semibold text-[#15803D]">{o ? `${o.expected}%` : "—"}</span>
-            {!o && <span className="text-[#8A98A3]"> · not calculated</span>}
-          </span>
-          <button onClick={() => save((p) => ({ ...p, plaintiffReview: { at: stampNow(), by: REVIEWER, signature: model.plaintiffSignature } }), { action: "Plaintiff conduct items reviewed", detail: `${model.plaintiffFindings.length} checks` }, "Plaintiff conduct items marked reviewed.")}
-            disabled={reviewed} className={BTN_S}>
-            {reviewed ? <><Check className="w-3.5 h-3.5" strokeWidth={2} /> Reviewed</> : "Mark reviewed"}
-          </button>
-        </div>
+        <span className="text-[11px] text-[#8A98A3] self-center">
+          Defense view <span className="font-semibold text-[#B91C1C]">{o?.defense !== undefined ? `${o.defense}%` : "—"}</span> → after playbook <span className="font-semibold text-[#15803D]">{o ? `${o.expected}%` : "—"}</span>
+          {!o && <span className="text-[#8A98A3]"> · not calculated</span>}
+        </span>
       }>
       <ElementTabs active={tab} onChange={setTab} counts={counts} label="Plaintiff negligence elements" />
-      <div className="p-5 bg-offwhite">
+      <div className="p-4 bg-offwhite">
         {list.length === 0 ? (
           <p className="secondary-text py-6 text-center border border-dashed border-line rounded-lg bg-white">No {ELEMENTS.find((e) => e.key === tab)!.label.toLowerCase()} check applies to her on the current record.</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {list.map((p) => (
-              <FindingCard key={p.id} code={p.code} category={p.category} title={p.title} body={p.description}
+              <FindingCard key={p.id} compact code={p.code} category={p.category} title={p.shortTitle ?? p.title} fullTitle={p.title} body={p.summary ?? p.description}
                 status={p.status} statusCls={PLAINTIFF_PILL[p.status]} evidence={p.evidence}
                 extra={p.element === "breach" ? <span className="text-[11px] text-[#5B6B78]">Share: not calculated</span> : undefined}
                 emptyEvidence={p.status === "Not applicable" ? "No documents needed" : p.moduleSource ? `From ${p.moduleSource}` : "No documents linked"}
@@ -713,54 +712,30 @@ function PlaintiffModule({ model, liability, inputs, save, rules, onOpen, onLaw,
           </div>
         )}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-4 p-5 border-t border-line">
-        <div className="rounded-xl border border-line p-4 min-w-0">
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-            <h3 className="eyebrow text-deep">Reduction playbook</h3>
-            <label className="flex items-center gap-2 text-xs text-[#5B6B78] min-w-0 max-w-full">Item
-              <select value={selected?.id} onChange={(e) => setItem(e.target.value)} className="px-2 py-1 rounded-lg border border-line text-xs bg-white text-ink max-w-[260px] min-w-0 w-full sm:w-auto">
-                {model.plaintiffFindings.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.title}</option>)}
-              </select>
-            </label>
+      {/* Reduction playbook (left, ~2/3) beside the plaintiff estimate (right, ~1/3); stacked on small screens. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4 items-start lg:items-stretch p-4 border-t border-line">
+        {/* Plaintiff estimate, then the attorney override, as two small cards (reference 6).
+            On desktop the column takes the playbook's height; the override card fills the rest. */}
+        <div className="flex flex-col gap-4 min-w-0 lg:col-start-2 lg:row-start-1">
+        <div className="rounded-xl border border-line px-4 py-3.5">
+          <h3 className="eyebrow mb-2">Plaintiff estimate</h3>
+          <div className="grid grid-cols-3 text-center">
+            {([["Low", o?.low], ["Expected", o?.expected], ["High", o?.high]] as const).map(([l, v]) => (
+              <div key={l}>
+                <p className={`text-lg font-semibold tabular-nums leading-tight ${v === undefined ? "text-[#9BA8B4]" : l === "High" ? "text-[#B91C1C]" : l === "Low" ? "text-[#15803D]" : "text-ink"}`}>{pct(v)}</p>
+                <p className="text-[11px] text-[#5B6B78]">{l}</p>
+              </div>
+            ))}
           </div>
-          {selected && (
-            <ol className="divide-y divide-line">
-              {selected.rows.map((pb, i) => (
-                <li key={pb.factor} className="py-2.5 flex items-start gap-3">
-                  <span className="text-xs text-[#8A98A3] tabular-nums w-4 shrink-0 mt-0.5">{i + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-ink"><span className="font-semibold">{pb.factor}</span> · {pb.explanation}</p>
-                    <p className="text-xs text-[#5B6B78] mt-0.5">Evidence: {pb.evidence}{pb.followUp && <> · Next: {pb.followUp}</>}{pb.origin === "record" && <span className="text-[#8A98A3]"> · read from the record</span>}</p>
-                    {pb.authorityId && <button onClick={() => onLaw(pb.authorityId)} className="text-[11px] font-semibold text-deep hover:text-ink mt-0.5">Authority · {model.authorities.find((a) => a.id === pb.authorityId)?.citation}</button>}
-                  </div>
-                  <Pill className={EFFECT_PILL[pb.effect]}>{pb.effect}</Pill>
-                </li>
-              ))}
-            </ol>
-          )}
-          <p className="text-[11px] text-[#8A98A3] mt-2">Adverse facts are shown, not hidden. A factor marked Pending is unresolved, not favourable.</p>
+          <p className="text-[11px] text-[#5B6B78] leading-snug mt-4" title={o ? overrideLine(o) : undefined}>
+            {o ? `Attorney override · ${o.by}.` : "No validated model — not calculated."}
+            {rules && <> Legal risk: <span className="font-semibold text-ink">{rules.threshold.toLowerCase()}</span>{model.ruleResult ? ` (at ${o!.expected}%: ${model.ruleResult.label})` : ""}.</>}
+          </p>
         </div>
-        <div className="space-y-4">
-          <div className="rounded-xl border border-line p-4">
-            <h3 className="eyebrow mb-3">Plaintiff estimate</h3>
-            <div className="grid grid-cols-3 text-center">
-              {([["Low", o?.low], ["Expected", o?.expected], ["High", o?.high]] as const).map(([l, v]) => (
-                <div key={l}>
-                  <p className={`text-xl font-semibold tabular-nums ${v === undefined ? "text-[#9BA8B4]" : l === "High" ? "text-[#B91C1C]" : l === "Low" ? "text-[#15803D]" : "text-ink"}`}>{pct(v)}</p>
-                  <p className="text-[11px] text-[#5B6B78]">{l}</p>
-                </div>
-              ))}
-            </div>
-            <div className="text-[11px] text-[#5B6B78] mt-3 space-y-1 leading-snug">
-              <p>Her share of fault — not a settlement or verdict probability.</p>
-              <p><span className="font-semibold text-ink">Method:</span> no validated model; the model estimate is not calculated. Values shown are the attorney's override{o ? ` — ${overrideLine(o)}` : " — none entered"}.</p>
-              {rules && <p><span className="font-semibold text-ink">Legal risk:</span> under {rules.state} {rules.faultRuleLabel.toLowerCase()}, her fault reduces damages up to 50% and bars recovery only above it — the risk is the size of a reduction, not a bar{model.ruleResult ? ` (at ${o!.expected}%: ${model.ruleResult.label})` : ""}.</p>}
-              <p><span className="font-semibold text-ink">Confidence:</span> not scored.</p>
-            </div>
-          </div>
-          <div className="rounded-xl border border-line p-4">
-            <h3 className="eyebrow mb-2">Attorney override</h3>
-            <EstimateForm placeholder="e.g. 5" current={o} withDefense
+        <div className="rounded-xl border border-line px-4 py-3.5 lg:flex-1 flex flex-col">
+          <h3 className="eyebrow mb-2.5">Attorney override</h3>
+          <div className="lg:flex-1 flex flex-col">
+              <EstimateForm placeholder="e.g. Expected 5%" current={o} single
               onSave={(est, reason) => {
                 if (totalWith(inputs, "plaintiff", est.expected) > 100) return OVER_100;
                 return save((p) => ({ ...p, plaintiffOverride: { ...est, reason, by: REVIEWER, at: stampNow(), previous: p.plaintiffOverride ? { expected: p.plaintiffOverride.expected, low: p.plaintiffOverride.low, high: p.plaintiffOverride.high, defense: p.plaintiffOverride.defense } : null } }),
@@ -769,6 +744,42 @@ function PlaintiffModule({ model, liability, inputs, save, rules, onOpen, onLaw,
               onReset={(reason) => save((p) => ({ ...p, plaintiffOverride: undefined }), { action: "Plaintiff override removed", from: o ? `${o.expected}%` : undefined, to: "Not calculated", reason }, "Override removed — the model value (not calculated) is shown.") ? null : "Not saved."} />
           </div>
         </div>
+        </div>
+
+        <div className="rounded-xl border border-line px-4 py-3 min-w-0 lg:col-start-1 lg:row-start-1">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+            <h3 className="eyebrow text-deep">Reduction playbook</h3>
+            <label className="flex items-center gap-2 text-[11px] text-[#5B6B78] min-w-0 max-w-full">Item
+              <select value={selected?.id} onChange={(e) => { setItem(e.target.value); setOpenRow(null); }} className="px-2 py-1 rounded-lg border border-line text-xs bg-white text-ink max-w-[280px] min-w-0 w-full sm:w-auto">
+                {model.plaintiffFindings.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.title}</option>)}
+              </select>
+            </label>
+          </div>
+          {selected && (
+            <ol className="divide-y divide-line">
+              {selected.rows.map((pb, i) => {
+                const open = openRow === pb.factor;
+                return (
+                  <li key={pb.factor}>
+                    {/* One line per factor; the row opens to its evidence and authority. */}
+                    <button onClick={() => setOpenRow(open ? null : pb.factor)} aria-expanded={open}
+                      className="w-full py-1.5 flex items-center gap-2.5 text-left group">
+                      <span className="text-[11px] text-[#8A98A3] tabular-nums w-3.5 shrink-0">{i + 1}</span>
+                      <span className={`min-w-0 flex-1 text-xs text-ink leading-snug ${open ? "" : "truncate"}`}><span className="font-semibold">{pb.factor}</span> · {pb.explanation}</span>
+                      <Pill className={EFFECT_PILL[pb.effect]}>{pb.effect}</Pill>
+                    </button>
+                    {open && (
+                      <p className="pl-6 pb-2 text-[11px] text-[#5B6B78] leading-snug">
+                        Evidence: {pb.evidence}{pb.followUp && <> · Next: {pb.followUp}</>}{pb.origin === "record" && <span className="text-[#8A98A3]"> · from the record</span>}
+                        {pb.authorityId && <> · <button onClick={() => onLaw(pb.authorityId)} className="text-[11px] font-semibold text-deep hover:text-ink">{model.authorities.find((a) => a.id === pb.authorityId)?.citation}</button></>}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
       </div>
     </Section>
   );
@@ -776,8 +787,10 @@ function PlaintiffModule({ model, liability, inputs, save, rules, onOpen, onLaw,
 
 // ── L5 · Defendant negligence ────────────────────────────────────────────────
 
-function DefendantModule({ model, inputs, save, onOpen, onLaw, onDetails }: {
+function DefendantModule({ model, inputs, save, onOpen, onLaw, onDetails, footer }: {
   model: LiabilityModel; inputs: Inputs; save: Save; onOpen: (f: DefendantFinding, view: "preview" | "insights") => void; onLaw: (id?: string) => void; onDetails: (f: DefendantFinding) => void;
+  /** Shown at the foot of the card, beneath the playbook and estimates (Other parties). */
+  footer?: React.ReactNode;
 }) {
   const all = model.parties.map((p) => p.candidate.id);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(all));
@@ -786,27 +799,26 @@ function DefendantModule({ model, inputs, save, onOpen, onLaw, onDetails }: {
   const counts = Object.fromEntries(ELEMENTS.map((e) => [e.key, filtered.filter((f) => f.kind === e.key).length]));
   const list = filtered.filter((f) => f.kind === tab);
   const allOn = selected.size === all.length;
-  const toggle = (id: string) => setSelected((s) => {
-    if (s.size === all.length) return new Set([id]);
-    const n = new Set(s);
-    n.has(id) ? n.delete(id) : n.add(id);
-    return n;
-  });
+  // A party chip shows that defendant alone — switching replaces the selection,
+  // so findings from the previous party never carry over.
+  const toggle = (id: string) => setSelected(new Set([id]));
+  const focusId = !allOn && selected.size === 1 ? [...selected][0] : undefined;
   const reviewState = (f: DefendantFinding) => {
     const r = inputs.reviewed[f.id];
     if (!r) return undefined;
     return r.signature === model.snapshot[f.id] ? "reviewed" : "changed";
   };
   return (
+    // Status and evidence are changed in the Defendant Analysis, not here.
     <Section id="liability-defendants" eyebrow="L5 · Defendant negligence" title="Defendants from Defendants module"
-      sub="Each card is a liability element recorded for that party in the Defendant Analysis, with its source. Status and evidence are changed there, not here."
+      titleClassName="text-base font-medium text-ink"
       right={
         <div className="flex items-center gap-2">
           <button onClick={() => setSelected(new Set(all))} disabled={allOn} className={BTN_S}>Select all</button>
           <button onClick={() => setSelected(new Set())} disabled={selected.size === 0} className={BTN_S}>Deselect all</button>
         </div>
       }>
-      <div className="px-5 pt-4 flex flex-wrap gap-2" role="group" aria-label="Defendant filter">
+      <div className="px-5 pt-3 flex flex-wrap gap-2" role="group" aria-label="Defendant filter">
         <button onClick={() => setSelected(new Set(all))} aria-pressed={allOn}
           className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${allOn ? "bg-ink text-white border-ink" : "bg-white text-ink border-line hover:bg-wash"}`}>All defendants</button>
         {model.parties.map((p) => {
@@ -819,17 +831,18 @@ function DefendantModule({ model, inputs, save, onOpen, onLaw, onDetails }: {
           );
         })}
       </div>
-      <div className="mt-3"><ElementTabs active={tab} onChange={setTab} counts={counts} label="Defendant negligence elements" /></div>
-      <div className="p-5 bg-offwhite">
+      <div className="mt-2"><ElementTabs active={tab} onChange={setTab} counts={counts} label="Defendant negligence elements" /></div>
+      <div className="p-4 bg-offwhite">
         {selected.size === 0 ? (
           <p className="secondary-text py-6 text-center border border-dashed border-line rounded-lg bg-white">No defendants selected. Choose one above, or Select all.</p>
         ) : list.length === 0 ? (
           <p className="secondary-text py-6 text-center border border-dashed border-line rounded-lg bg-white">No {ELEMENTS.find((e) => e.key === tab)!.label.toLowerCase()} element is recorded for the selected {selected.size === 1 ? "defendant" : "defendants"}.</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {list.map((f) => (
-              <FindingCard key={f.id} code={f.code} category={f.category} title={f.title} party={f.shared ? "All" : f.candidate.short}
-                body={<>{f.description ?? (f.note ? `Record: ${f.note}.` : "No source recorded.")}{f.missing && f.status !== "Shown" && f.description !== f.missing && <span className="block text-[#B45309] mt-1">Missing: {f.missing}</span>}</>}
+              // The card shows the short summary; the full description and what is missing open in the finding panel.
+              <FindingCard key={f.id} compact code={f.code} category={f.category} title={f.shortTitle ?? f.title} fullTitle={f.title} party={f.shared ? "All" : f.candidate.short}
+                body={<span title={[f.description, f.missing && f.status !== "Shown" ? `Missing: ${f.missing}` : ""].filter(Boolean).join(" ")}>{f.summary ?? f.description ?? (f.note ? `Record: ${f.note}.` : "No source recorded.")}</span>}
                 status={f.status} statusCls={ELEMENT_PILL[f.status]} scenario={f.scenarioStatus} evidence={f.evidence}
                 emptyEvidence={f.status === "Not yet known" ? "No documents yet" : "No documents linked"}
                 onPreview={() => onOpen(f, "preview")} onInsights={() => onOpen(f, "insights")} onDetails={() => onDetails(f)}
@@ -838,115 +851,152 @@ function DefendantModule({ model, inputs, save, onOpen, onLaw, onDetails }: {
           </div>
         )}
       </div>
-      <Strengthening model={model} inputs={inputs} save={save} />
+      <Strengthening model={model} inputs={inputs} save={save} focusId={focusId} />
+      {footer}
     </Section>
   );
 }
 
-function Strengthening({ model, inputs, save }: { model: LiabilityModel; inputs: Inputs; save: Save }) {
+function Strengthening({ model, inputs, save, focusId }: { model: LiabilityModel; inputs: Inputs; save: Save; focusId?: string }) {
   const [pid, setPid] = useState(model.inAnalysis[0]?.candidate.id ?? model.parties[0]?.candidate.id);
+  // Follows the defendant chosen in the L5 filter.
+  useEffect(() => { if (focusId && model.parties.some((p) => p.candidate.id === focusId)) setPid(focusId); }, [focusId, model.parties]);
   const rows = model.strengtheningFor(pid);
-  const [overrideFor, setOverrideFor] = useState(model.inAnalysis[0]?.candidate.id);
-  const target = model.inAnalysis.find((p) => p.candidate.id === overrideFor) ?? model.inAnalysis[0];
+  const [openRow, setOpenRow] = useState<string | null>(null);
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-4 p-5 border-t border-line">
-      <div className="rounded-xl border border-line p-4 min-w-0">
-        <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+    // Strengthening playbook (left, ~3/5) beside the defendant estimates and override (right).
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-4 items-start lg:items-stretch p-4 border-t border-line">
+      <div className="rounded-xl border border-line px-4 py-3 min-w-0">
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
           <h3 className="eyebrow text-deep">Strengthening playbook</h3>
-          <label className="flex items-center gap-2 text-xs text-[#5B6B78]">Defendant
-            <select value={pid} onChange={(e) => setPid(e.target.value)} className="px-2 py-1 rounded-lg border border-line text-xs bg-white text-ink">
+          <label className="flex items-center gap-2 text-[11px] text-[#5B6B78]">Defendant
+            <select value={pid} onChange={(e) => { setPid(e.target.value); setOpenRow(null); }} className="px-2 py-1 rounded-lg border border-line text-xs bg-white text-ink">
               {model.parties.map((p) => <option key={p.candidate.id} value={p.candidate.id}>{p.candidate.short}</option>)}
             </select>
           </label>
         </div>
         <ol className="divide-y divide-line">
-          {rows.map((r, i) => (
-            <li key={r.title} className="py-2.5 flex items-start gap-3">
-              <span className="text-xs text-[#8A98A3] tabular-nums w-4 shrink-0 mt-0.5">{i + 1}</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-ink"><span className="font-semibold">{r.title}</span> · {r.explanation}</p>
-                <p className="text-xs text-[#5B6B78] mt-0.5">Evidence: {r.evidence}{r.followUp && <> · Next: {r.followUp}</>}</p>
-              </div>
-              <Pill className={TONE_PILL[r.tone]}>{r.status}</Pill>
-            </li>
-          ))}
+          {rows.map((r, i) => {
+            const open = openRow === r.title;
+            return (
+              <li key={r.title}>
+                {/* One line per item; the row opens to its evidence and next step. */}
+                <button onClick={() => setOpenRow(open ? null : r.title)} aria-expanded={open} className="w-full py-1.5 flex items-center gap-2.5 text-left">
+                  <span className="text-[11px] text-[#8A98A3] tabular-nums w-3.5 shrink-0">{i + 1}</span>
+                  <span className={`min-w-0 flex-1 text-xs text-ink leading-snug ${open ? "" : "truncate"}`}><span className="font-semibold">{r.title}</span> · {r.explanation}</span>
+                  <Pill className={`${TONE_PILL[r.tone]} whitespace-nowrap shrink-0`}>{r.status}</Pill>
+                </button>
+                {open && <p className="pl-6 pb-2 text-[11px] text-[#5B6B78] leading-snug">Evidence: {r.evidence}{r.followUp && <> · Next: {r.followUp}</>}</p>}
+              </li>
+            );
+          })}
         </ol>
       </div>
-      <div className="space-y-4">
-        <div className="rounded-xl border border-line p-4">
-          <h3 className="eyebrow mb-2">Defendant estimates</h3>
+      {/* Estimates on top, override below; the override's reason box takes any spare
+          height so the column ends level with the playbook. */}
+      <div className="flex flex-col gap-3 min-w-0">
+        <div id="liability-estimates" className="rounded-xl border border-line px-4 py-3">
+          <h3 className="eyebrow mb-1.5">Defendant estimates</h3>
           <table className="w-full text-xs">
-            <thead><tr className="text-[#5B6B78]"><th className="text-left font-semibold py-1">Party</th><th className="text-right font-semibold py-1">Expected</th><th className="text-right font-semibold py-1">Range</th></tr></thead>
+            <thead><tr className="text-[#8A98A3] text-[10px] uppercase tracking-wide"><th className="text-left font-medium py-1">Party</th><th className="text-right font-medium py-1">Expected</th><th className="text-right font-medium py-1 pl-4 w-16">Range</th></tr></thead>
             <tbody>
               {model.inAnalysis.map((p) => (
-                <tr key={p.candidate.id} className="border-t border-line">
-                  <td className="py-1.5 text-ink">{p.candidate.short}</td>
-                  <td className="py-1.5 text-right tabular-nums font-semibold">{p.override ? `${p.override.expected}%` : <span className="font-normal text-[#8A98A3]">Not calculated</span>}</td>
-                  <td className="py-1.5 text-right tabular-nums text-[#5B6B78]">{range(p.override) ?? "—"}</td>
+                <tr key={p.candidate.id} title={p.override ? overrideLine(p.override) : undefined}>
+                  <td className="py-1 text-ink truncate max-w-0 w-full">{p.candidate.short}</td>
+                  <td className="py-1 text-right tabular-nums font-semibold whitespace-nowrap">{p.override ? `${p.override.expected}%` : <span className="font-normal text-[11px] text-[#9BA8B4]">Not calculated</span>}</td>
+                  <td className="py-1 pl-4 text-right tabular-nums text-[#5B6B78] mono-ref text-[11px]">{range(p.override) ?? "—"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="text-[11px] text-[#8A98A3] mt-2 leading-snug">Shares are attorney entries. Under joint and several liability a share is not the amount a defendant can be made to pay.</p>
         </div>
-        {target && (
-          <div className="rounded-xl border border-line p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <h3 className="eyebrow">Attorney override</h3>
-              <select value={target.candidate.id} onChange={(e) => setOverrideFor(e.target.value)} aria-label="Defendant to override" className="px-2 py-1 rounded-lg border border-line text-xs bg-white text-ink max-w-[150px]">
-                {model.inAnalysis.map((p) => <option key={p.candidate.id} value={p.candidate.id}>{p.candidate.short}</option>)}
-              </select>
-            </div>
-            {target.override && <p className="text-[11px] text-[#5B6B78] mb-2">Current: {overrideLine(target.override)}</p>}
-            <EstimateForm key={target.candidate.id} placeholder="e.g. 60" current={target.override}
-              onSave={(est, reason) => {
-                if (totalWith(inputs, target.candidate.id, est.expected) > 100) return OVER_100;
-                const prev = inputs.defendantOverrides[target.candidate.id];
-                return save((p) => ({ ...p, defendantOverrides: { ...p.defendantOverrides, [target.candidate.id]: { ...est, reason, by: REVIEWER, at: stampNow(), previous: prev ? { expected: prev.expected, low: prev.low, high: prev.high } : null } } }),
-                  { action: `Estimate overridden · ${target.candidate.short}`, from: prev ? `${prev.expected}%` : "Not calculated", to: `${est.expected}%`, reason }, `${target.candidate.short} estimate saved as an attorney override.`) ? null : "Not saved.";
-              }}
-              onReset={(reason) => save((p) => { const { [target.candidate.id]: _, ...rest } = p.defendantOverrides; return { ...p, defendantOverrides: rest }; },
-                { action: `Override removed · ${target.candidate.short}`, to: "Not calculated", reason }, "Override removed.") ? null : "Not saved."} />
-          </div>
-        )}
+        {model.inAnalysis.length > 0 && <DefendantOverride model={model} inputs={inputs} save={save} />}
       </div>
     </div>
+  );
+}
+
+/** The defendant override as one line — "<party> <n>%" — and a reason. Saved on
+ *  Enter in the line, or Ctrl/⌘+Enter in the reason, through the same checks and
+ *  save as the estimate form. */
+function DefendantOverride({ model, inputs, save }: { model: LiabilityModel; inputs: Inputs; save: Save }) {
+  const [line, setLine] = useState("");
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const parties = model.inAnalysis;
+  const example = parties[0]?.candidate.short ?? "Party";
+  const submit = () => {
+    const text = line.trim().toLowerCase();
+    // The party whose name the line starts with — the longest match wins.
+    const target = [...parties]
+      .filter((p) => [p.candidate.short, p.candidate.name].some((n) => text.startsWith(n.toLowerCase()) || text.startsWith(n.toLowerCase().split(" ")[0])))
+      .sort((a, b) => b.candidate.short.length - a.candidate.short.length)[0];
+    if (!target) { setErr(`Start with a party: ${parties.map((p) => p.candidate.short).join(", ")}.`); return; }
+    const pct = text.match(/(\d+(?:\.\d+)?)\s*%?\s*$/)?.[1] ?? "";
+    const e = estimateError({ expected: pct, low: "", high: "", reason });
+    if (e) { setErr(e); return; }
+    const expected = Number(pct);
+    if (totalWith(inputs, target.candidate.id, expected) > 100) { setErr(OVER_100); return; }
+    const prev = inputs.defendantOverrides[target.candidate.id];
+    const ok = save((p) => ({ ...p, defendantOverrides: { ...p.defendantOverrides, [target.candidate.id]: { expected, reason: reason.trim(), by: REVIEWER, at: stampNow(), previous: prev ? { expected: prev.expected, low: prev.low, high: prev.high } : null } } }),
+      { action: `Estimate overridden · ${target.candidate.short}`, from: prev ? `${prev.expected}%` : "Not calculated", to: `${expected}%`, reason: reason.trim() }, `${target.candidate.short} estimate saved as an attorney override.`);
+    if (!ok) { setErr("Not saved."); return; }
+    setErr(null); setLine(""); setReason("");
+  };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); submit(); }} title="Press Enter to apply (Ctrl+Enter in the reason)"
+      className="rounded-xl border border-line px-4 py-3 lg:flex-1 flex flex-col gap-1.5">
+      <h3 className="eyebrow mb-0.5">Attorney override</h3>
+      <input value={line} onChange={(e) => setLine(e.target.value)} placeholder={`e.g. ${example} 15%`} aria-label="Override: party and expected percentage"
+        className={`${INPUT} !py-1.5 !text-xs`} />
+      <label className="flex-1 flex flex-col">
+        <span className="text-[11px] text-[#5B6B78] mb-1">Reason (required)</span>
+        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } }}
+          className={`${INPUT} !py-1.5 !text-xs resize-y flex-1 min-h-[56px]`} />
+      </label>
+      {err && <p role="alert" className="text-xs text-[#B91C1C]">{err}</p>}
+    </form>
   );
 }
 
 // ── Other parties ─────────────────────────────────────────────────────────────
 
 function OtherParties({ model, liability, onOpenDefendants, onOpenJurisdiction }: { model: LiabilityModel; liability: Liability; onOpenDefendants?: (n: string) => void; onOpenJurisdiction?: () => void }) {
-  const link = (label: string, onClick?: () => void) => <button onClick={onClick} className="text-xs font-semibold text-deep hover:text-ink underline underline-offset-2 text-left">{label}</button>;
+  const link = (label: string, onClick?: () => void) => <button onClick={onClick} className="text-[11px] font-semibold text-deep hover:text-ink underline underline-offset-2 text-left leading-snug">{label}</button>;
   const rows = [
     ...model.parties.filter((p) => p.choice !== "name").map((p) => ({
       name: p.candidate.name, sub: p.candidate.role, status: p.choice === "investigate" ? "Under investigation" : "Not pursued",
-      cls: p.choice === "investigate" ? "pill-progress" : GREY, why: p.candidate.summary,
+      cls: p.choice === "investigate" ? "pill-progress" : GREY, why: p.candidate.summary, short: p.candidate.summaryShort,
       action: link("Review in Defendant Analysis", () => onOpenDefendants?.(p.candidate.name)),
     })),
-    ...liability.recoverySources.map((r) => ({ name: r.name, sub: "Insurance", status: r.status, cls: "pill-neutral", why: r.why, action: <span className="text-xs text-[#5B6B78]">{r.next}</span> })),
-    ...liability.notPursued.map((n) => ({ name: n.name, sub: "Named in the record", status: "Not pursued", cls: GREY, why: n.why, action: link("Review in Jurisdiction module", onOpenJurisdiction) })),
+    ...liability.recoverySources.map((r) => ({ name: r.name, sub: "Insurance", status: r.status, cls: "pill-neutral", why: r.why, short: r.short, action: <span className="text-[11px] text-[#5B6B78] leading-snug">{r.next}</span> })),
+    ...liability.notPursued.map((n) => ({ name: n.name, sub: "Named in the record", status: "Not pursued", cls: GREY, why: n.why, short: n.short, action: link("Review in Jurisdiction module", onOpenJurisdiction) })),
   ];
   return (
-    <Section id="liability-other-parties" title="Other parties" sub="Parties whose responsibility is unresolved, and sources of recovery that are not fault parties.">
+    // Unresolved parties and recovery sources that are not fault parties; full reasons on hover.
+    // Sits at the foot of the L5 card, set off by a divider rather than its own card.
+    <div id="liability-other-parties" tabIndex={-1} className="border-t border-line scroll-mt-[150px] focus:outline-none">
+      <h3 className="px-4 pt-3 pb-2 text-sm font-medium text-ink">Other parties</h3>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px]">
+        <table className="w-full min-w-[640px] table-fixed">
+          <colgroup><col className="w-[30%]" /><col className="w-[17%]" /><col /><col className="w-[18%]" /></colgroup>
           <thead className="bg-wash border-b border-line">
-            <tr>{["Other parties", "Status", "Why surfaced", "Action"].map((h) => <th key={h} className="px-5 py-2.5 text-left eyebrow">{h}</th>)}</tr>
+            <tr>{["Other parties", "Status", "Why surfaced", "Action"].map((h) => <th key={h} className="px-4 py-2 text-left eyebrow !text-[10px]">{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-line">
             {rows.map((r) => (
               <tr key={r.name}>
-                <td className="px-5 py-3 align-top"><p className="text-sm font-semibold text-ink">{r.name}</p><p className="text-xs text-[#5B6B78]">{r.sub}</p></td>
-                <td className="px-5 py-3 align-top"><Pill className={r.cls}>{r.status}</Pill></td>
-                <td className="px-5 py-3 align-top text-sm text-[#5B6B78] max-w-md">{r.why}</td>
-                <td className="px-5 py-3 align-top">{r.action}</td>
+                <td className="px-4 py-2.5 align-top"><p className="text-[13px] font-semibold text-ink leading-snug">{r.name}</p><p className="text-[11px] text-[#8A98A3] truncate" title={r.sub}>{r.sub}</p></td>
+                <td className="px-4 py-2.5 align-top"><Pill className={`${r.cls} whitespace-nowrap`}>{r.status}</Pill></td>
+                <td className="px-4 py-2.5 align-top text-xs text-[#5B6B78] leading-snug"><span className="line-clamp-2" title={r.why}>{r.short ?? r.why}</span></td>
+                <td className="px-4 py-2.5 align-top">{r.action}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-    </Section>
+    </div>
   );
 }
 
@@ -979,61 +1029,63 @@ function NegligenceTimeline({ model, onFinding, onOpenDocs }: { model: Liability
     const isWindow = t.kind === "window";
     const dateLabel = isWindow ? "window" : t.date.replace(/, \d{4}(,.*)?$/, "");
     const impact = t.kind === "impact";
-    const marker = isWindow
-      ? "bg-[#F5C26B] border-[#F5C26B]"
-      : impact ? "bg-ink border-ink" : `bg-white ${ring(t.party)}`;
+    const evidencePhase = t.phase === "evidence";
+    // Filled party marker; the causal window and the harm get their own.
+    const marker = isWindow ? "bg-[#F5C26B]" : impact ? "bg-deep" : evidencePhase ? "bg-white border-2 border-[#9BA8B4]" : dot(t.party);
+    const rail = isWindow ? "w-1 bg-[#F5C26B]" : "w-px bg-line";
     return (
-      <li className="grid grid-cols-[12px_minmax(0,1fr)] sm:grid-cols-[64px_12px_minmax(0,1fr)] gap-x-3">
+      <li className="grid grid-cols-[12px_minmax(0,1fr)] sm:grid-cols-[56px_12px_minmax(0,1fr)] gap-x-3">
         {/* Date — the record gives days, not times. On small screens it moves into the card. */}
-        <span className={`hidden sm:block mono-ref text-xs pt-2.5 ${isWindow ? "text-[#B45309]" : ""}`}>{dateLabel}</span>
+        <span className={`hidden sm:block mono-ref text-[11px] text-right pt-2 ${isWindow ? "text-[#B45309]" : "text-ink"}`}>{dateLabel}</span>
         {/* Rail: an unbroken line through every marker in the group */}
         <div className="flex flex-col items-center">
-          <div className={`w-px h-3 ${first ? "" : "bg-line"}`} />
-          <div className={`w-3 h-3 rounded-full border-2 shrink-0 ${marker}`} />
-          {!last && <div className="w-px flex-1 bg-line" />}
+          <div className={`h-2.5 ${first ? "" : rail}`} />
+          <div className={`w-3 h-3 rounded-full shrink-0 ring-2 ring-white ${marker}`} />
+          {!last && <div className={`flex-1 ${rail}`} />}
         </div>
-        <div className={last ? "" : "pb-3"}>
+        <div className={last ? "" : "pb-2.5"}>
           {isWindow ? (
-            <div className="rounded-lg border border-[#FDE6C8] bg-[#FFFBF5] px-4 py-2.5">
-              <div className="flex items-start justify-between gap-2 flex-wrap">
-                <span className="eyebrow text-[#B45309]"><span className="sm:hidden mono-ref mr-1.5">{model.fmtIso(t.iso).replace(/, \d{4}$/, "")} ·</span>{t.title}</span>
-                <span className="text-[11px] text-[#B45309]">Causal window</span>
+            <div className="rounded-lg border border-[#F5D9A8] bg-[#FFF8EC] px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-[#B45309]"><span className="sm:hidden mono-ref mr-1.5 normal-case">{model.fmtIso(t.iso).replace(/, \d{4}$/, "")} ·</span>{t.title}</span>
+                <span className="mono-ref text-[11px] text-[#B45309]">Causal window</span>
               </div>
-              <p className="secondary-text text-ink mt-1 leading-relaxed">{t.detail}</p>
+              <p className="text-[11px] text-[#5B6B78] mt-0.5 leading-snug line-clamp-2" title={t.detail}>{t.detail}</p>
             </div>
           ) : (
-            <div className={`rounded-lg border bg-white px-4 py-2.5 transition-colors hover:border-soft ${t.phase === "evidence" ? "border-dashed border-line" : "border-line"}`}>
-              <div className="flex items-start justify-between gap-x-3 gap-y-1 flex-wrap">
-                <span className="eyebrow text-deep flex items-center gap-1.5 flex-wrap">
-                  <span className="sm:hidden mono-ref text-ink normal-case">{dateLabel} ·</span>
-                  {impact && <span className="pill pill-risk text-[10px]">Harm</span>}
-                  {t.party}
+            <div className={`rounded-lg border px-3 py-2 transition-colors ${impact ? "bg-deep border-deep" : evidencePhase ? "bg-white border-dashed border-line" : "bg-white border-line hover:border-soft"}`}>
+              <div className="flex items-center justify-between gap-x-3 gap-y-0.5 flex-wrap">
+                <span className={`text-[10px] font-semibold uppercase tracking-wide flex items-center gap-1.5 ${impact ? "text-white/85" : "text-deep"}`}>
+                  <span className={`sm:hidden mono-ref normal-case ${impact ? "text-white" : "text-ink"}`}>{dateLabel} ·</span>
+                  {impact ? "Harm · " : ""}{t.party}
                 </span>
                 {t.findings.length > 0 && (
-                  <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                  <div className="flex flex-wrap gap-x-2">
                     {t.findings.map((f) => (
-                      <button key={f.id} onClick={() => onFinding(f)} title={f.title} className="mono-ref text-[11px] text-deep hover:underline">{f.code} · {f.shared ? "All" : f.candidate.short}</button>
+                      <button key={f.id} onClick={() => onFinding(f)} title={f.title} className={`mono-ref text-[11px] hover:underline ${impact ? "text-white" : "text-deep"}`}>{f.code} · {f.shared ? "All" : f.candidate.short}</button>
                     ))}
                   </div>
                 )}
               </div>
-              <p className="text-sm font-semibold text-ink leading-snug mt-1">{t.title}</p>
-              {t.detail && <p className="secondary-text leading-relaxed mt-1">{t.detail}</p>}
-              <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap mt-2">
-                {t.origin !== "record" && (
-                  <span className="flex items-center gap-1.5 secondary-text">
-                    <FileText className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} />
-                    {t.evidence.length === 0 ? "No supporting docs linked" : `${t.evidence.length} Supporting ${t.evidence.length === 1 ? "Doc" : "Docs"} · ${on.length} on file`}
-                  </span>
-                )}
-                {t.origin === "manual" && <Pill className="pill-neutral">Added by attorney</Pill>}
-                {t.conflict && <Pill className="pill-progress">Disputed date · {t.conflict}</Pill>}
-                {on.length > 0 && (
-                  <button onClick={() => onOpenDocs(on.map((e) => e.file), "preview", { contextType: "Timeline Event", reference: t.title })} className="text-xs font-semibold inline-flex items-center gap-1 text-deep hover:text-ink">
-                    <Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> Preview
-                  </button>
-                )}
-              </div>
+              <p className={`text-[13px] font-semibold leading-snug mt-0.5 ${impact ? "text-white" : "text-ink"}`}>{t.title}</p>
+              {t.detail && <p className={`text-[11px] leading-snug mt-0.5 truncate ${impact ? "text-white/90" : "text-[#5B6B78]"}`} title={t.detail}>{t.detail}</p>}
+              {(t.origin !== "record" || t.conflict || on.length > 0) && (
+                <div className={`flex items-center gap-x-2.5 gap-y-1 flex-wrap mt-1 text-[11px] ${impact ? "text-white/85" : "text-[#8A98A3]"}`}>
+                  {t.origin !== "record" && (
+                    <span className="inline-flex items-center gap-1">
+                      <FileText className="w-3 h-3" strokeWidth={1.75} />
+                      {t.evidence.length === 0 ? "No docs linked" : `${t.evidence.length} ${t.evidence.length === 1 ? "doc" : "docs"} · ${on.length} on file`}
+                    </span>
+                  )}
+                  {t.origin === "manual" && <span>Added by attorney</span>}
+                  {t.conflict && <span className="text-[#B45309]" title={`Disputed date · ${t.conflict}`}>Disputed date</span>}
+                  {on.length > 0 && (
+                    <button onClick={() => onOpenDocs(on.map((e) => e.file), "preview", { contextType: "Timeline Event", reference: t.title })} className={`text-[11px] font-semibold inline-flex items-center gap-1 ${impact ? "text-white" : "text-deep hover:text-ink"}`}>
+                      <Eye className="w-3 h-3" strokeWidth={1.75} /> Preview
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1042,36 +1094,36 @@ function NegligenceTimeline({ model, onFinding, onOpenDocs }: { model: Liability
   };
 
   return (
-    <Section id="liability-timeline" eyebrow="Negligence timeline" title="How each breach led to the impact"
+    <Section id="liability-timeline" eyebrow="Negligence timeline" title="How each breach led to the impact" titleClassName="text-base font-medium text-ink" className="flex flex-col"
       right={
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#5B6B78]">
           {parties.map((p) => <span key={p} className="inline-flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${dot(p)}`} />{p}</span>)}
           {model.timeline.some((t) => t.kind === "window") && <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2 rounded-sm bg-[#F5C26B]" />Causal window</span>}
         </div>
       }>
-      <div className="p-5 space-y-6">
+      <div className="px-5 py-4 space-y-4 flex-1">
         {phases.map((ph) => {
           const items = model.timeline.filter((t) => t.phase === ph.key);
           return (
             <div key={ph.key}>
-              <div className="eyebrow pb-2 mb-3 border-b border-line">{ph.label}</div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-ink pb-1.5 mb-2.5 border-b border-[#C5CED6]">{ph.label}</div>
               {items.length === 0
-                ? <p className="secondary-text py-3 text-center border border-dashed border-line rounded-lg">{ph.key === "evidence" ? "No requests or preservation decisions recorded yet. They appear here when recorded in Recommendations or the Evidence Ledger." : "No events on the timeline in this phase."}</p>
+                ? <p className="text-xs text-[#8A98A3] py-2 text-center border border-dashed border-line rounded-lg">{ph.key === "evidence" ? "No requests or preservation decisions recorded yet." : "No events on the timeline in this phase."}</p>
                 : <ol>{items.map((t, i) => <Event key={t.id} t={t} first={i === 0} last={i === items.length - 1} />)}</ol>}
             </div>
           );
         })}
       </div>
-      <p className="px-5 py-3 border-t border-line bg-wash text-sm text-ink"><span className="font-semibold">Reading it:</span> {model.reading}</p>
+      <p className="px-5 py-2.5 border-t border-line bg-wash text-xs text-ink leading-snug" title={model.reading}><span className="font-semibold">Reading it:</span> {model.readingShort}</p>
     </Section>
   );
 }
 
 // ── Right column ──────────────────────────────────────────────────────────────
 
-function Panel({ id, eyebrow, title, badge, children }: { id?: string; eyebrow: string; title?: string; badge?: React.ReactNode; children: React.ReactNode }) {
+function Panel({ id, eyebrow, title, badge, className = "", children }: { id?: string; eyebrow: string; title?: string; badge?: React.ReactNode; className?: string; children: React.ReactNode }) {
   return (
-    <div id={id} tabIndex={id ? -1 : undefined} className="lg-card overflow-hidden scroll-mt-[150px] focus:outline-none">
+    <div id={id} tabIndex={id ? -1 : undefined} className={`lg-card overflow-hidden scroll-mt-[150px] focus:outline-none ${className}`}>
       <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-line">
         <div className="min-w-0">
           <h2 className="eyebrow">{eyebrow}</h2>
@@ -1110,29 +1162,33 @@ function requestLetter(r: RecommendationView, caseData: LiabilityWorkspaceProps[
 function Recommendations({ model, caseData, save }: { model: LiabilityModel; caseData: LiabilityWorkspaceProps["caseData"]; save: Save }) {
   const urgent = model.recommendations.filter((r) => r.priority === "Urgent" && r.state !== "received").length;
   return (
-    <Panel id="liability-recommendations" eyebrow="Recommendations" title="Evidence to request now" badge={urgent ? <Pill className="pill-risk">{urgent} urgent</Pill> : undefined}>
-      <ul className="divide-y divide-line">
+    <Panel id="liability-recommendations" eyebrow="Recommendations" title="Evidence to request now" badge={urgent ? <Pill className="pill-risk">{urgent} urgent</Pill> : undefined}
+      className="xl:h-full flex flex-col">
+      <ul className="divide-y divide-line xl:flex-1 xl:min-h-0 xl:overflow-y-auto">
         {model.recommendations.map((r) => {
           const codes = r.answers.map((a) => model.defendantFindings.find((f) => f.id === a)?.code).filter(Boolean);
           return (
-            <li key={r.id} className={`p-4 ${r.state === "received" ? "bg-wash" : ""}`}>
+            <li key={r.id} className={`px-4 py-2.5 ${r.state === "received" ? "bg-wash" : ""}`}>
               <div className="flex items-center justify-between gap-2">
                 <Pill className={r.state === "received" ? "pill-complete" : PRIORITY_PILL[r.priority]}>{r.state === "received" ? "Received" : r.priority}</Pill>
                 <span className="text-[11px] text-[#5B6B78] text-right">{codes.length ? `Answers ${codes.join(", ")}` : r.preSuit === "Yes" ? "Pre-suit" : r.preSuit}</span>
               </div>
-              <p className="text-sm font-semibold text-ink mt-1.5 leading-snug">{r.title}</p>
-              <p className="text-xs text-[#5B6B78] mt-0.5">From {r.custodian} · {r.method}</p>
-              <p className="text-xs text-ink mt-1 leading-relaxed break-words">{r.why}</p>
-              <p className="text-[11px] text-[#8A98A3] mt-1">
-                {r.state === "received" ? <>On file: <span className="mono-ref">{r.receivedFile}</span></> : r.state === "requested" ? `Request recorded ${r.requestedAt} · awaiting the record` : "Deadline: requires verification"}
-              </p>
+              {/* Title, source and reason are clamped to the reference's line counts; hover shows the full text. */}
+              <p className="text-xs font-semibold text-ink mt-1.5 leading-snug truncate" title={r.title}>{r.shortTitle ?? r.title}</p>
+              <p className="text-[11px] text-[#8A98A3] leading-snug truncate" title={`From ${r.custodian} · ${r.method}`}>{r.custodian} · {r.method}</p>
+              <p className="text-[11px] text-[#5B6B78] mt-0.5 leading-snug break-words line-clamp-2" title={`${r.why} Deadline: requires verification.`}>{r.short ?? r.why}</p>
+              {r.state !== "open" && (
+                <p className="text-[11px] text-[#8A98A3] mt-1 truncate">
+                  {r.state === "received" ? <>On file: <span className="mono-ref">{r.receivedFile}</span></> : `Requested ${r.requestedAt} · awaiting the record`}
+                </p>
+              )}
               {r.state !== "received" && (
-                <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-                  <button onClick={() => downloadTextFile(`${safeFileName(r.title)}_DRAFT.txt`, requestLetter(r, caseData))} className={r.priority === "Urgent" ? BTN_P : BTN_S}>
+                <div className="flex items-center gap-1.5 mt-2">
+                  <button onClick={() => downloadTextFile(`${safeFileName(r.title)}_DRAFT.txt`, requestLetter(r, caseData))} className={`${r.priority === "Urgent" ? BTN_P : BTN_S} ${REC_BTN}`}>
                     <Download className="w-3.5 h-3.5" strokeWidth={1.75} /> {r.draft.label}
                   </button>
                   {r.state === "open" && (
-                    <button onClick={() => save((p) => ({ ...p, requested: { ...p.requested, [r.id]: { at: stampNow(), by: REVIEWER } } }), { action: "Request recorded", detail: r.title }, `Recorded as requested: ${r.title}. Nothing was sent from here.`)} className={BTN_S}>
+                    <button onClick={() => save((p) => ({ ...p, requested: { ...p.requested, [r.id]: { at: stampNow(), by: REVIEWER } } }), { action: "Request recorded", detail: r.title }, `Recorded as requested: ${r.title}. Nothing was sent from here.`)} className={`${BTN_S} ${REC_BTN}`}>
                       Record as requested
                     </button>
                   )}
@@ -1142,7 +1198,6 @@ function Recommendations({ model, caseData, save }: { model: LiabilityModel; cas
           );
         })}
       </ul>
-      <p className="px-4 py-3 text-[11px] text-[#8A98A3] border-t border-line">A request shows Received when a matching file is added to the case documents. Nothing is sent from this page.</p>
     </Panel>
   );
 }
@@ -1154,17 +1209,15 @@ function Research({ liability }: { liability: Liability }) {
   return (
     <Panel eyebrow="Research" badge={<Pill className={GREY}>Partly connected</Pill>}>
       <div className="p-4 space-y-2">
-        <button disabled title="No case-profile database is connected to this application" className="w-full text-left rounded-lg border border-line px-3 py-2 opacity-60 cursor-not-allowed">
-          <span className="text-sm font-semibold text-ink flex items-center gap-1.5"><Search className="w-3.5 h-3.5" strokeWidth={1.75} /> Fetch matching case profiles</span>
-          <span className="block text-[11px] text-[#5B6B78]">{liability.research.profileQuery}</span>
-          <span className="block text-[11px] text-[#B45309]">Not connected — no case-profile database</span>
+        <button disabled title={`No case-profile database is connected to this application. Query: ${liability.research.profileQuery}`} className="w-full text-left rounded-lg border border-line px-3 py-2 opacity-60 cursor-not-allowed">
+          <span className="text-[13px] font-semibold text-ink flex items-center gap-1.5"><Search className="w-3.5 h-3.5" strokeWidth={1.75} /> Fetch matching case profiles</span>
+          <span className="block text-[11px] text-[#B45309] truncate">Not connected — no case-profile database</span>
         </button>
-        <a href={scholar} target="_blank" rel="noreferrer" className="block w-full text-left rounded-lg border border-line px-3 py-2 hover:bg-wash transition-colors">
-          <span className="text-sm font-semibold text-ink flex items-center gap-1.5"><Search className="w-3.5 h-3.5" strokeWidth={1.75} /> Web research <ExternalLink className="w-3 h-3 text-deep" strokeWidth={1.75} /></span>
-          <span className="block text-[11px] text-[#5B6B78]">Illinois case law: delayed stroke escalation in care facilities</span>
-          <span className="block text-[11px] text-[#8A98A3]">Opens Google Scholar · no case details are sent</span>
+        <a href={scholar} target="_blank" rel="noreferrer" title="Illinois case law: delayed stroke escalation in care facilities. Opens Google Scholar; no case details are sent." className="block w-full text-left rounded-lg border border-line px-3 py-2 hover:bg-wash transition-colors">
+          <span className="text-[13px] font-semibold text-ink flex items-center gap-1.5"><Search className="w-3.5 h-3.5" strokeWidth={1.75} /> Web research <ExternalLink className="w-3 h-3 text-deep" strokeWidth={1.75} /></span>
+          <span className="block text-[11px] text-[#5B6B78] truncate">Illinois case law · Google Scholar, no case details sent</span>
         </a>
-        <p className="text-[11px] text-[#8A98A3]">Findings stay unverified until reviewed, then feed the authority list. Nothing found there is added here automatically.</p>
+        <p className="text-[11px] text-[#8A98A3]" title="Nothing found there is added here automatically.">Findings stay unverified until reviewed.</p>
       </div>
     </Panel>
   );
@@ -1175,23 +1228,25 @@ function Exceptions({ liability, onLaw }: { liability: Liability; onLaw: (id?: s
     <Panel id="liability-exceptions" eyebrow="Fault-rule exceptions · Illinois">
       <ul className="divide-y divide-line">
         {liability.exceptions.map((e) => (
-          <li key={e.name} className="px-4 py-2.5 flex items-start justify-between gap-2">
+          <li key={e.name} className="px-4 py-2 flex items-center justify-between gap-2">
+            {/* One line of detail; the full text is on hover, the authority behind the book icon. */}
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-ink">{e.name}</p>
-              <p className="text-[11px] text-[#5B6B78]">{e.detail}</p>
-              {e.authorityId && <button onClick={() => onLaw(e.authorityId)} className="text-[11px] font-semibold text-deep hover:text-ink">Authority · unverified</button>}
+              <p className="text-[13px] font-semibold text-ink flex items-center gap-1.5">
+                {e.name}
+                {e.authorityId && <button onClick={() => onLaw(e.authorityId)} title="Authority · unverified" aria-label={`Authority for ${e.name} · unverified`} className="text-deep hover:text-ink"><BookOpen className="w-3.5 h-3.5" strokeWidth={1.75} /></button>}
+              </p>
+              <p className="text-[11px] text-[#5B6B78] truncate" title={e.detail}>{e.detail}</p>
             </div>
-            <Pill className={EXCEPTION_PILL[e.status]}>{e.status}</Pill>
+            <Pill className={`${EXCEPTION_PILL[e.status]} whitespace-nowrap shrink-0`}>{e.status}</Pill>
           </li>
         ))}
       </ul>
-      <p className="px-4 py-3 text-[11px] text-[#8A98A3] border-t border-line">Rated from the record and the Jurisdiction review; not verified.</p>
+      <p className="px-4 py-2.5 text-[11px] text-[#8A98A3] border-t border-line">Rated from the record; not verified.</p>
     </Panel>
   );
 }
 
 function Simulator({ model, liability, inputs, save }: { model: LiabilityModel; liability: Liability; inputs: Inputs; save: Save }) {
-  const [name, setName] = useState("");
   const toggle = (id: string) => {
     const sc = liability.scenarios.find((s) => s.id === id)!;
     const next = inputs.scenario.includes(id) ? inputs.scenario.filter((x) => x !== id)
@@ -1201,56 +1256,50 @@ function Simulator({ model, liability, inputs, save }: { model: LiabilityModel; 
   const { baseline, preSuit, litigation, total, chosen, ranked, impact } = model.simulator;
   return (
     <Panel id="liability-simulator" eyebrow="Liability simulator" badge={<span className="text-[11px] text-[#8A98A3]">Ranked by impact</span>}>
-      <div className="p-4 space-y-2">
+      <div className="p-3 space-y-2">
         {ranked.map((s) => {
           const on = inputs.scenario.includes(s.id);
           const n = impact(s);
           return (
-            <label key={s.id} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${on ? "border-brand bg-tint" : "border-line border-dashed hover:bg-wash"}`}>
-              <input type="checkbox" checked={on} onChange={() => toggle(s.id)} className="mt-0.5 accent-[#1E7C99]" />
+            // Title and one line of when/affects; the full assumption is on hover.
+            <label key={s.id} title={s.assumption} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${on ? "border-brand bg-tint" : "border-line border-dashed hover:bg-wash"}`}>
+              <input type="checkbox" checked={on} onChange={() => toggle(s.id)} className="mt-[3px] accent-[#1E7C99] shrink-0" />
               <span className="min-w-0 flex-1">
                 <span className="flex items-start justify-between gap-2">
-                  <span className="text-sm font-semibold text-ink leading-snug">{s.title}</span>
+                  <span className="text-xs font-semibold text-ink leading-snug line-clamp-2">{s.title}</span>
                   <span className="mono-ref text-[11px] text-deep shrink-0">{n ? `+${n}` : "0"}</span>
                 </span>
-                <span className="block text-[11px] text-[#5B6B78]">{s.assumption}</span>
-                <span className={`block text-[11px] ${s.when === "litigation" ? "text-[#B45309]" : "text-[#8A98A3]"}`}>{s.when === "litigation" ? "Litigation only" : "Pre-suit"} · affects {s.affects.join(", ")}</span>
+                <span className={`block text-[11px] leading-snug truncate ${s.when === "litigation" ? "text-[#B45309]" : "text-[#8A98A3]"}`}>{s.when === "litigation" ? "Litigation only" : "Pre-suit"} · {s.affects.join(", ")}</span>
               </span>
             </label>
           );
         })}
         <div className="grid grid-cols-2 gap-2 pt-1">
           {([["Pre-suit scenario", preSuit, chosen.some((s) => s.when === "pre-suit")], ["Litigation outlook", litigation, chosen.length > 0]] as const).map(([l, v, any]) => (
-            <div key={l} className="rounded-lg bg-wash p-2.5 text-center">
-              <p className="eyebrow">{l}</p>
-              <p className={`text-lg font-semibold tabular-nums ${any ? "text-deep" : "text-[#9BA8B4]"}`}>{v.shown}/{total}</p>
+            <div key={l} className="rounded-lg bg-wash px-2 py-2.5 text-center">
+              <p className="eyebrow !text-[10px]">{l}</p>
+              <p className={`text-lg font-semibold tabular-nums leading-tight mt-0.5 ${any ? "text-deep" : "text-[#9BA8B4]"}`}>{v.shown}/{total}</p>
               <p className="text-[11px] text-[#5B6B78]">elements shown</p>
             </div>
           ))}
-        </div>
-        <p className="text-[11px] text-[#5B6B78]">Baseline {baseline.shown}/{total} shown, {baseline.open} not yet known{chosen.length ? ` → ${litigation.open} with every selected scenario` : ""}{litigation.resolvedFlags.length ? ` · resolves ${litigation.resolvedFlags.length} record flag` : ""}. Allocation effect: not calculated.</p>
-        <div className="flex gap-2 pt-1">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scenario name" aria-label="Scenario name" className={`${INPUT} py-1.5 text-xs`} />
-          <button disabled={!name.trim() || !inputs.scenario.length}
-            onClick={() => { if (save((p) => ({ ...p, savedScenarios: [...p.savedScenarios, { id: `sv-${Date.now()}`, name: name.trim(), selected: p.scenario, at: stampNow() }] }), { action: "Scenario saved", detail: name.trim() }, `Scenario “${name.trim()}” saved separately from the baseline.`)) setName(""); }}
-            className={BTN_S}>Save</button>
         </div>
         {inputs.savedScenarios.length > 0 && (
           <ul className="space-y-1">
             {inputs.savedScenarios.map((sv) => (
               <li key={sv.id} className="flex items-center justify-between gap-2 text-[11px]">
                 <span className="text-ink truncate">{sv.name} · {sv.selected.length} assumption{sv.selected.length === 1 ? "" : "s"} · {sv.at}</span>
-                <button onClick={() => save((p) => ({ ...p, scenario: sv.selected }))} className="font-semibold text-deep hover:text-ink shrink-0">Load</button>
+                <button onClick={() => save((p) => ({ ...p, scenario: sv.selected }))} className="text-[11px] font-semibold text-deep hover:text-ink shrink-0">Load</button>
               </li>
             ))}
           </ul>
         )}
-        <p className="text-[11px] text-[#8A98A3]">Estimates for strategy, not verdict predictions. Scenarios are saved separately from the baseline.</p>
+        <p className="text-[11px] text-[#8A98A3] leading-snug">Estimates for strategy, not verdict predictions. Scenarios saved separately from baseline.</p>
       </div>
     </Panel>
   );
 }
 
+// Compact one-line rows throughout; full text is kept on hover.
 function AuthorityPanel({ model, inputs, onOpen }: { model: LiabilityModel; inputs: Inputs; onOpen: (a: Authority) => void }) {
   return (
     <Panel id="liability-authority" eyebrow="Legal authority" badge={<span className="text-[11px] text-[#8A98A3] text-right">No legal DB · {model.unverified.length} unverified</span>}>
@@ -1259,38 +1308,39 @@ function AuthorityPanel({ model, inputs, onOpen }: { model: LiabilityModel; inpu
           const v = inputs.authorityChecks[a.id];
           return (
             <li key={a.id}>
-              <button onClick={() => onOpen(a)} className="w-full text-left px-4 py-2.5 flex items-start justify-between gap-2 hover:bg-wash">
-                <span className="min-w-0"><span className="block mono-ref text-ink text-xs">{a.citation}</span><span className="block text-[11px] text-[#5B6B78]">{a.issue}</span></span>
-                <Pill className={v ? "pill-complete" : "pill-progress"}>{v ? "Verified" : "Verify"}</Pill>
+              <button onClick={() => onOpen(a)} title={`${a.citation} — ${a.issue}`} className="w-full text-left px-4 py-2 flex items-center justify-between gap-2 hover:bg-wash">
+                <span className="min-w-0 text-xs truncate"><span className="font-medium text-ink">{a.citation}</span> <span className="text-[#5B6B78]">{a.issue}</span></span>
+                <Pill className={`${v ? "pill-complete" : "pill-progress"} shrink-0`}>{v ? "Verified" : "Verify"}</Pill>
               </button>
             </li>
           );
         })}
       </ul>
-      <p className="px-4 py-3 text-[11px] text-[#8A98A3] border-t border-line">Unverified — attorney review required before any of these is relied on.</p>
+      <p className="px-4 py-2 text-[11px] text-[#8A98A3] border-t border-line">Unverified — attorney review required before reliance.</p>
     </Panel>
   );
 }
 
 function AllocationRules({ rules, model, inputs }: { rules: Rules; model: LiabilityModel; inputs: Inputs }) {
   if (!rules) return null;
+  const row = "px-4 py-2 flex items-start justify-between gap-3";
   return (
     <Panel eyebrow="Allocation rules applied">
       <dl className="divide-y divide-line">
         {rules.allocation.map((r) => {
           const ok = r.authorityId && inputs.authorityChecks[r.authorityId];
           return (
-            <div key={r.label} className="px-4 py-2 flex items-start justify-between gap-3">
+            <div key={r.label} className={row} title={`${r.value} — ${model.authorities.find((a) => a.id === r.authorityId)?.citation ?? "no authority"} · ${ok ? "verified" : "unverified"}`}>
               <dt className="text-xs text-[#5B6B78] shrink-0">{r.label}</dt>
-              <dd className="text-xs text-ink text-right">{r.value}<span className={`block text-[10px] ${ok ? "text-[#15803D]" : "text-[#B45309]"}`}>{model.authorities.find((a) => a.id === r.authorityId)?.citation} · {ok ? "verified" : "unverified"}</span></dd>
+              <dd className="text-xs font-semibold text-ink text-right min-w-0 truncate">{r.short ?? r.value}</dd>
             </div>
           );
         })}
-        <div className="px-4 py-2 flex items-start justify-between gap-3">
+        <div className={row}>
           <dt className="text-xs text-[#5B6B78] shrink-0">Grouping</dt>
           <dd className="text-xs font-semibold text-ink text-right">{model.groups.length ? model.groups.map((g) => `${g.head.short} + ${g.through.short} (vicarious)`).join("; ") : "No grouping"}</dd>
         </div>
-        <div className="px-4 py-2 flex items-start justify-between gap-3">
+        <div className={row}>
           <dt className="text-xs text-[#5B6B78] shrink-0">Settlements</dt>
           <dd className="text-xs font-semibold text-ink text-right">{inputs.settlementsNone ? "None to date · confirmed" : "None on record · unconfirmed"}</dd>
         </div>
@@ -1315,17 +1365,17 @@ function Outlook({ model, rules, inputs }: { model: LiabilityModel; rules: Rules
     <Panel eyebrow="Litigation outlook" badge={<span className="text-[11px] text-[#8A98A3]">Qualitative</span>}>
       <ul className="divide-y divide-line">
         {rows.map((r) => (
-          <li key={r.label} className="px-4 py-2.5 flex items-start justify-between gap-2">
-            <span className="min-w-0"><span className="block text-xs text-ink font-semibold">{r.label}</span><span className="block text-[11px] text-[#5B6B78]">{r.basis}</span></span>
-            <Pill className={r.cls}>{r.value}</Pill>
+          <li key={r.label} className="px-4 py-2 flex items-center justify-between gap-2" title={r.basis}>
+            <span className="min-w-0"><span className="block text-xs text-ink">{r.label}</span><span className="block text-[11px] text-[#8A98A3] truncate">{r.basis}</span></span>
+            <Pill className={`${r.cls} whitespace-nowrap shrink-0`}>{r.value}</Pill>
           </li>
         ))}
-        <li className="px-4 py-2.5 flex items-start justify-between gap-2">
-          <span className="block text-xs text-ink font-semibold">Litigation-only evidence</span>
+        <li className="px-4 py-2 flex items-center justify-between gap-2">
+          <span className="block text-xs text-ink">Litigation-only evidence</span>
           <span className="text-xs font-semibold text-ink tabular-nums">{model.litigationOnly.length} {model.litigationOnly.length === 1 ? "item" : "items"}</span>
         </li>
       </ul>
-      <p className="px-4 py-3 text-[11px] text-[#8A98A3] border-t border-line">Risks read from the record{rules ? ` and ${rules.state} rules` : ""}. Not a probability or a prediction.</p>
+      <p className="px-4 py-2 text-[11px] text-[#8A98A3] border-t border-line">Read from the record{rules ? ` and ${rules.state} rules` : ""} — not a prediction.</p>
     </Panel>
   );
 }
@@ -1333,16 +1383,16 @@ function Outlook({ model, rules, inputs }: { model: LiabilityModel; rules: Rules
 function JurisdictionComparison({ jurisdiction, onOpenJurisdiction }: { jurisdiction: Jx; onOpenJurisdiction?: () => void }) {
   const rulesUsed = new Set(jurisdiction?.forums.map((f) => f.appliedRule));
   return (
-    <Panel eyebrow="Jurisdiction comparison · read-only">
-      <div className="p-4 space-y-2">
+    <Panel eyebrow="Jurisdiction comparison · read-only" className="flex flex-col">
+      <div className="px-4 py-2.5 space-y-1.5 flex-1 flex flex-col">
         {jurisdiction ? jurisdiction.forums.map((f) => (
-          <div key={f.id} className="flex items-start justify-between gap-2 text-xs">
-            <span><span className="font-semibold text-ink">{f.title}</span>{f.defaultSelected && " · selected"}<span className="block text-[11px] text-[#5B6B78]">{f.court} · {f.cells.basis.value}</span></span>
-            <span className="text-right text-[#5B6B78]">{f.appliedRuleLabel}</span>
+          <div key={f.id} className="flex items-start justify-between gap-3 text-xs" title={`${f.court} · ${f.cells.basis.value}`}>
+            <span className="min-w-0"><span className="font-semibold text-ink">{f.title}</span><span className="text-[#5B6B78]">{f.defaultSelected ? " · selected" : ""}</span><span className="block text-[11px] text-[#8A98A3] truncate">{f.court}</span></span>
+            <span className="text-right text-[11px] text-ink max-w-[45%]">{f.appliedRuleLabel}</span>
           </div>
         )) : <p className="text-xs text-[#5B6B78]">No jurisdiction review on record.</p>}
-        {jurisdiction && <p className="text-[11px] text-[#5B6B78]">{rulesUsed.size === 1 ? "Rule difference: none — every candidate forum applies Illinois law." : "The candidate forums apply different fault rules."}</p>}
-        <button onClick={onOpenJurisdiction} className="text-xs font-semibold text-deep hover:text-ink underline underline-offset-2">Open in Jurisdiction module →</button>
+        {jurisdiction && <p className="text-[11px] text-[#8A98A3] pt-0.5">{rulesUsed.size === 1 ? "Rule difference: none — every forum applies Illinois law." : "The candidate forums apply different fault rules."}</p>}
+        <button onClick={onOpenJurisdiction} className="mt-auto self-start text-xs font-semibold text-deep hover:text-ink underline underline-offset-2">Open in Jurisdiction module →</button>
       </div>
     </Panel>
   );
@@ -1362,8 +1412,14 @@ function EvidenceLedger({ model, liability, inputs, save, onOpenDocs }: { model:
       const { [id]: _, ...rest } = p.clientChecklist;
       return { ...p, clientChecklist: state ? { ...rest, [id]: { at: stampNow(), by: REVIEWER, state } } : rest };
     }, { action: "Client preservation checklist", detail: item, to: state === "confirmed" ? "Kept by the client" : state === "not-held" ? "Client does not have it" : "Cleared" });
+  // One line per panel, read from the saved states; the controls open beneath it.
+  const checklistLine = checklist.map((c) => {
+    const st = inputs.clientChecklist[c.id]?.state;
+    return { id: c.id, label: c.short ?? c.item, mark: st === "confirmed" ? "✓" : st === "not-held" ? "not held" : "pending", done: !!st };
+  });
+  const td = "px-4 py-2 align-top";
   return (
-    <Section id="liability-ledger" eyebrow="Evidence ledger" title="Completeness, preservation and spoliation"
+    <Section id="liability-ledger" eyebrow="Evidence ledger" title="Completeness, preservation and spoliation" titleClassName="text-base font-medium text-ink"
       right={
         <div className="flex items-center gap-1.5 flex-wrap" title="Defendant elements marked Shown, of those recorded, for parties in the analysis">
           {model.completeness.map((c) => (
@@ -1372,88 +1428,107 @@ function EvidenceLedger({ model, liability, inputs, save, onOpenDocs }: { model:
         </div>
       }>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[860px]">
+        <table className="w-full min-w-[860px] table-fixed">
+          <colgroup><col className="w-[24%]" /><col className="w-[14%]" /><col className="w-[12%]" /><col className="w-[12%]" /><col className="w-[18%]" /><col /></colgroup>
           <thead className="bg-wash border-b border-line">
-            <tr>{["Evidence", "Held by", "Pre-suit?", "Status", "Proves", "Deadline / note"].map((h) => <th key={h} className="px-5 py-2.5 text-left eyebrow">{h}</th>)}</tr>
+            <tr>{["Evidence", "Held by", "Pre-suit?", "Status", "Proves", "Deadline / note"].map((h) => <th key={h} className="px-4 py-2 text-left eyebrow !text-[10px]">{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-line">
             {model.ledger.map((r) => {
               const on = r.files.filter((f) => f.onFile);
+              const files = r.files.length > 0 && r.sourceId !== "case-documents" ? r.files.map((f) => f.file).join(", ") : "";
               return (
-                <tr key={r.id} className="align-top">
-                  <td className="px-5 py-3">
-                    <p className="text-sm font-semibold text-ink">{r.name}</p>
-                    {r.files.length > 0 && r.sourceId !== "case-documents" && <p className="mono-ref text-[11px] break-all">{r.files.map((f) => f.file).join(", ")}</p>}
-                    {on.length > 0 && <button onClick={() => onOpenDocs(on.map((f) => f.file), "preview", { contextType: "Evidence", reference: r.name })} className="text-[11px] font-semibold text-deep hover:text-ink mt-0.5">Preview</button>}
+                <tr key={r.id}>
+                  <td className={td}>
+                    <p className="text-[13px] font-semibold text-ink leading-snug truncate" title={r.name}>{r.name}</p>
+                    {(files || on.length > 0) && (
+                      <p className="flex items-center gap-1.5 text-[11px] leading-snug min-w-0">
+                        {files && <span className="mono-ref text-[#8A98A3] truncate" title={files}>{files}</span>}
+                        {on.length > 0 && <button onClick={() => onOpenDocs(on.map((f) => f.file), "preview", { contextType: "Evidence", reference: r.name })} className="text-[11px] font-semibold text-deep hover:text-ink shrink-0">Preview</button>}
+                      </p>
+                    )}
                   </td>
-                  <td className="px-5 py-3 text-sm text-[#5B6B78]">{r.heldBy}</td>
-                  <td className="px-5 py-3"><Pill className={r.preSuit === "Yes" ? "pill-complete" : r.preSuit === "Discovery likely" ? "pill-progress" : GREY}>{r.preSuit === "Discovery likely" ? "Litigation likely" : r.preSuit}</Pill></td>
-                  <td className="px-5 py-3"><Pill className={LEDGER_PILL[r.status]}>{r.status}</Pill></td>
-                  <td className="px-5 py-3 text-sm text-[#5B6B78]">{r.proves}</td>
-                  <td className="px-5 py-3 text-xs text-[#5B6B78] max-w-xs">{r.note}</td>
+                  <td className={`${td} text-xs text-[#5B6B78]`}><span className="line-clamp-2" title={r.heldBy}>{r.heldBy}</span></td>
+                  <td className={td}><Pill className={`${r.preSuit === "Yes" ? "pill-complete" : r.preSuit === "Discovery likely" ? "pill-progress" : GREY} whitespace-nowrap`}>{r.preSuit === "Discovery likely" ? "Litigation" : r.preSuit}</Pill></td>
+                  <td className={td}><Pill className={`${LEDGER_PILL[r.status]} whitespace-nowrap`}>{r.status}</Pill></td>
+                  <td className={`${td} text-xs text-[#5B6B78]`}><span className="line-clamp-2" title={r.proves}>{r.proves}</span></td>
+                  <td className={`${td} text-[11px] text-[#5B6B78]`}><span className="line-clamp-2" title={r.note}>{r.note}</span></td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-5 border-t border-line">
-        <div id="decide-preservation" tabIndex={-1} className="rounded-xl border border-[#FDE6C8] bg-[#FFFBF5] p-4 scroll-mt-[150px] focus:outline-none">
-          <p className="text-sm font-semibold text-[#B45309] flex items-center gap-1.5"><ShieldAlert className="w-4 h-4" strokeWidth={1.75} /> Spoliation review ({model.spoliationFlags.length})</p>
-          <p className="text-xs text-ink mt-1">No confirmed loss, deletion or alleged deletion is on record. {risks.length} facility-held {risks.length === 1 ? "record is" : "records are"} not in the case file — a potential preservation risk, not a loss.</p>
-          {risks.length > 0 && <p className="text-[11px] text-[#5B6B78] mt-1">{risks.map((r) => r.name).join(" · ")}</p>}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start lg:items-stretch px-4 py-3 border-t border-line">
+        <div id="decide-preservation" tabIndex={-1} className="rounded-lg border border-[#FBD5D5] bg-[#FEF6F6] px-3.5 py-2.5 scroll-mt-[150px] focus:outline-none">
+          <p className="text-xs font-semibold text-[#B91C1C] flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5" strokeWidth={1.75} /> Spoliation review ({model.spoliationFlags.length})</p>
+          <p className="text-[11px] text-ink mt-0.5 leading-snug" title={risks.map((r) => r.name).join(" · ")}>
+            No confirmed loss or deletion on record{risks.length ? ` · ${risks.length} facility-held ${risks.length === 1 ? "record" : "records"} not in the file — a preservation risk, not a loss.` : "."}
+          </p>
           {inputs.preservation ? (
-            <p className="text-xs text-ink mt-3">Decision: <span className="font-semibold">{inputs.preservation.decision === "send" ? "Send a preservation request" : "Not needed"}</span> · {inputs.preservation.reason} · {inputs.preservation.by}, {inputs.preservation.at}</p>
+            <p className="text-[11px] text-[#5B6B78] mt-1">Decision: <span className="font-semibold text-ink">{inputs.preservation.decision === "send" ? "Send a preservation request" : "Not needed"}</span> · {inputs.preservation.reason} · {inputs.preservation.by}, {inputs.preservation.at}</p>
           ) : risks.length > 0 && (
-            <div className="mt-3 space-y-2">
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                {([["send", "Send a preservation request"], ["not-needed", "Not needed"]] as const).map(([k, l]) => (
-                  <label key={k} className="flex items-center gap-1.5 text-xs"><input type="radio" name="preservation" checked={dec.decision === k} onChange={() => setDec({ ...dec, decision: k })} className="accent-[#1E7C99]" />{l}</label>
-                ))}
+            // The existing decision form, opened on demand.
+            <details className="mt-1 group">
+              <summary className="text-[11px] font-semibold text-deep hover:text-ink cursor-pointer list-none inline-flex items-center gap-1">Preservation decision <ChevronDown className="w-3 h-3 transition-transform group-open:rotate-180" strokeWidth={2} /></summary>
+              <div className="mt-2 space-y-1.5">
+                <p className="text-[11px] text-[#5B6B78]">{risks.map((r) => r.name).join(" · ")}</p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {([["send", "Send a preservation request"], ["not-needed", "Not needed"]] as const).map(([k, l]) => (
+                    <label key={k} className="flex items-center gap-1.5 text-xs"><input type="radio" name="preservation" checked={dec.decision === k} onChange={() => setDec({ ...dec, decision: k })} className="accent-[#1E7C99]" />{l}</label>
+                  ))}
+                </div>
+                <input value={dec.reason} onChange={(e) => setDec({ ...dec, reason: e.target.value })} placeholder="Reason (required)" aria-label="Preservation decision reason" className={`${INPUT} py-1.5 text-xs`} />
+                {decErr && <p role="alert" className="text-xs text-[#B91C1C]">{decErr}</p>}
+                <button onClick={() => {
+                  if (!dec.decision || !dec.reason.trim()) { setDecErr("Choose a decision and give a reason."); return; }
+                  setDecErr(null);
+                  save((p) => ({ ...p, preservation: { decision: dec.decision as "send" | "not-needed", reason: dec.reason.trim(), at: stampNow(), by: REVIEWER } }),
+                    { action: "Preservation decision", to: dec.decision === "send" ? "Send request" : "Not needed", reason: dec.reason.trim() }, "Preservation decision recorded. Nothing was sent from here.");
+                }} className={BTN_P}>Record decision</button>
               </div>
-              <input value={dec.reason} onChange={(e) => setDec({ ...dec, reason: e.target.value })} placeholder="Reason (required)" aria-label="Preservation decision reason" className={`${INPUT} py-1.5 text-xs`} />
-              {decErr && <p role="alert" className="text-xs text-[#B91C1C]">{decErr}</p>}
-              <button onClick={() => {
-                if (!dec.decision || !dec.reason.trim()) { setDecErr("Choose a decision and give a reason."); return; }
-                setDecErr(null);
-                save((p) => ({ ...p, preservation: { decision: dec.decision as "send" | "not-needed", reason: dec.reason.trim(), at: stampNow(), by: REVIEWER } }),
-                  { action: "Preservation decision", to: dec.decision === "send" ? "Send request" : "Not needed", reason: dec.reason.trim() }, "Preservation decision recorded. Nothing was sent from here.");
-              }} className={BTN_P}>Record decision</button>
-            </div>
+            </details>
           )}
         </div>
-        <div className="rounded-xl border border-line bg-wash p-4 flex flex-col">
+        <div className="rounded-lg border border-line bg-wash px-3.5 py-2.5">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-ink">Client preservation checklist</p>
+            <p className="text-xs font-semibold text-ink">Client preservation checklist</p>
             <span className="text-[11px] text-[#5B6B78]">{confirmed} of {checklist.length} confirmed</span>
           </div>
-          <ul className="mt-2 space-y-1.5">
-            {checklist.map((c) => {
-              const st = inputs.clientChecklist[c.id];
-              return (
-                <li key={c.id} className="flex items-start justify-between gap-2">
-                  <span className="min-w-0 text-xs">
-                    <span className="flex items-center gap-1.5 font-semibold text-ink">
-                      {st?.state === "confirmed" ? <Check className="w-3.5 h-3.5 text-[#15803D]" strokeWidth={2} /> : <Circle className="w-3 h-3 text-[#9BA8B4]" strokeWidth={2} />}{c.item}
-                    </span>
-                    <span className="block text-[11px] text-[#5B6B78] pl-5">{st ? `${st.state === "confirmed" ? "Kept by the client" : "Client does not have it"} · ${st.at}` : c.why}</span>
-                  </span>
-                  <span className="flex gap-1 shrink-0">
-                    {st ? <button onClick={() => mark(c.id, c.item, undefined)} className="text-[11px] font-semibold text-deep hover:text-ink">Clear</button> : (
-                      <>
-                        <button onClick={() => mark(c.id, c.item, "confirmed")} className="text-[11px] font-semibold text-deep hover:text-ink">Kept</button>
-                        <span className="text-[#9BA8B4]">·</span>
-                        <button onClick={() => mark(c.id, c.item, "not-held")} className="text-[11px] font-semibold text-[#5B6B78] hover:text-ink">Not held</button>
-                      </>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="flex items-center justify-between gap-2 mt-auto pt-3 border-t border-line flex-wrap">
-            <p className="text-xs text-[#5B6B78]">{reviewed ? `Statuses reviewed · ${inputs.ledgerReview!.at}` : inputs.ledgerReview ? "Statuses changed since your review" : `${model.ledger.length} items not yet reviewed`}</p>
-            <button disabled={reviewed} onClick={() => save((p) => ({ ...p, ledgerReview: { at: stampNow(), by: REVIEWER, signature: model.ledgerSignature } }), { action: "Evidence statuses reviewed", detail: `${model.ledger.length} items` }, "Evidence statuses marked reviewed.")} className={BTN_S}>
+          <p className="text-[11px] text-ink mt-0.5 leading-snug">
+            {checklistLine.map((c, i) => (
+              <span key={c.id}>{i > 0 && <span className="text-[#9BA8B4]"> · </span>}{c.label} <span className={c.mark === "✓" ? "text-[#15803D] font-semibold" : c.done ? "text-[#5B6B78]" : "text-[#B45309]"}>{c.mark}</span></span>
+            ))}
+          </p>
+          <div className="flex items-center justify-between gap-2 mt-1 flex-wrap">
+            {/* Each item's status, opened on demand. */}
+            <details className="group min-w-0 basis-full order-last">
+              <summary className="text-[11px] font-semibold text-deep hover:text-ink cursor-pointer list-none inline-flex items-center gap-1">Item statuses <ChevronDown className="w-3 h-3 transition-transform group-open:rotate-180" strokeWidth={2} /></summary>
+              <ul className="mt-1.5 space-y-1">
+                {checklist.map((c) => {
+                  const st = inputs.clientChecklist[c.id];
+                  return (
+                    <li key={c.id} className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 text-[11px]">
+                        <span className="font-semibold text-ink">{c.item}</span>
+                        <span className="block text-[#5B6B78]">{st ? `${st.state === "confirmed" ? "Kept by the client" : "Client does not have it"} · ${st.at}` : c.why}</span>
+                      </span>
+                      <span className="flex gap-1 shrink-0">
+                        {st ? <button onClick={() => mark(c.id, c.item, undefined)} className="text-[11px] font-semibold text-deep hover:text-ink">Clear</button> : (
+                          <>
+                            <button onClick={() => mark(c.id, c.item, "confirmed")} className="text-[11px] font-semibold text-deep hover:text-ink">Kept</button>
+                            <span className="text-[#9BA8B4]">·</span>
+                            <button onClick={() => mark(c.id, c.item, "not-held")} className="text-[11px] font-semibold text-[#5B6B78] hover:text-ink">Not held</button>
+                          </>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+            <p className="text-[11px] text-[#5B6B78]">{reviewed ? `Statuses reviewed · ${inputs.ledgerReview!.at}` : inputs.ledgerReview ? "Statuses changed since your review" : `${model.ledger.length} items not yet reviewed`}</p>
+            <button disabled={reviewed} onClick={() => save((p) => ({ ...p, ledgerReview: { at: stampNow(), by: REVIEWER, signature: model.ledgerSignature } }), { action: "Evidence statuses reviewed", detail: `${model.ledger.length} items` }, "Evidence statuses marked reviewed.")} className={`${BTN_S} !py-1`}>
               {reviewed ? <><Check className="w-3.5 h-3.5" strokeWidth={2} /> Reviewed</> : "Mark statuses reviewed"}
             </button>
           </div>
@@ -1472,9 +1547,21 @@ function SignOff({ model, inputs, save, follow, caseData, rules, liability, sign
   const total = model.readiness.length;
   const done = model.readiness.filter((r) => r.done).length;
   // Open decisions, blocking first; spoliation and override reasons are always listed, with their state.
-  const decisions = model.readiness.filter((r) => r.decision && (!r.done || r.alwaysListed))
-    .sort((a, b) => Number(b.blocking && !b.done) - Number(a.blocking && !a.done) || Number(!!a.alwaysListed && a.done) - Number(!!b.alwaysListed && b.done));
+  const decisions = model.readiness.filter((r) => r.decision && r.blocking && !r.done);
+  // One short line per blocking decision; anything else keeps the model's own detail.
+  const SHORT: Record<string, string> = {
+    defendants: "Potential defendant decisions are not confirmed.",
+    "incident-date": `Record: ${model.fmtIso(model.recorded)} · Evidence: ${model.fmtIso(model.anchor)}`,
+  };
   const [date, setDate] = useState<{ choice: "record" | "evidence" | ""; reason: string }>({ choice: "", reason: "" });
+  // What the attorney must do for each blocking item, in a few words.
+  const ACTION: Record<string, string> = {
+    defendants: "Confirm the defendant selection", "governing-law": "Approve the governing law", "incident-date": "Choose the incident date for this analysis",
+    spoliation: "Decide on the spoliation flags", "changed-since-review": "Review the findings that changed",
+  };
+  const blockers = model.blocking.map((b) => ACTION[b.id] ?? `Resolve ${b.title.toLowerCase()}`);
+  const guidance = blockers.length === 1 ? `${blockers[0]} to enable sign-off.`
+    : blockers.length > 1 ? `Resolve ${blockers.length} blocking decisions to enable sign-off.` : "";
   const [dateErr, setDateErr] = useState<string | null>(null);
 
   const verified = (id?: string) => !!(id && inputs.authorityChecks[id]);
@@ -1513,18 +1600,18 @@ function SignOff({ model, inputs, save, follow, caseData, rules, liability, sign
   };
 
   return (
-    <section id="liability-signoff" tabIndex={-1} className="lg-card overflow-hidden scroll-mt-[150px] focus:outline-none grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)]">
-      <div className="p-5 bg-wash border-b lg:border-b-0 lg:border-r border-line flex flex-col">
-        <div className="eyebrow mb-1">L7 · Attorney inputs</div>
-        <h2 className="section-header">Ready for sign-off?</h2>
-        <p className="mt-4"><span className="text-4xl font-semibold text-ink tabular-nums">{done}</span><span className="text-2xl text-[#9BA8B4] tabular-nums">/{total}</span> <span className="secondary-text">inputs complete</span></p>
-        <div className="h-2 rounded-full bg-track mt-3 overflow-hidden" role="progressbar" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total}><div className="h-full bg-deep" style={{ width: `${(done / total) * 100}%` }} /></div>
-        <dl className="mt-4 space-y-1.5 text-sm">
+    <section id="liability-signoff" tabIndex={-1} className="lg-card overflow-hidden scroll-mt-[150px] focus:outline-none grid grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,7fr)]">
+      <div className="px-4 py-4 bg-wash border-b lg:border-b-0 lg:border-r border-line flex flex-col">
+        <div className="eyebrow mb-0.5">L7 · Attorney inputs</div>
+        <h2 className="text-base font-medium text-ink leading-snug">Ready for sign-off?</h2>
+        <p className="mt-3 leading-none"><span className="text-3xl font-semibold text-ink tabular-nums">{done}</span><span className="text-xl text-[#9BA8B4] tabular-nums">/{total}</span> <span className="text-xs text-[#5B6B78]">inputs complete</span></p>
+        <div className="h-1.5 rounded-full bg-track mt-2.5 overflow-hidden" role="progressbar" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total}><div className="h-full bg-deep" style={{ width: `${(done / total) * 100}%` }} /></div>
+        <dl className="mt-3 space-y-1 text-xs">
           <div className="flex justify-between"><dt className="text-[#5B6B78]">Blocking sign-off</dt><dd className="font-semibold text-[#B91C1C] tabular-nums">{model.blocking.length}</dd></div>
           <div className="flex justify-between"><dt className="text-[#5B6B78]">Open, not blocking</dt><dd className="font-semibold text-[#B45309] tabular-nums">{model.openItems.length}</dd></div>
           <div className="flex justify-between"><dt className="text-[#5B6B78]">Complete</dt><dd className="font-semibold text-[#15803D] tabular-nums">{done}</dd></div>
         </dl>
-        <div className="mt-auto pt-6 space-y-2">
+        <div className="mt-auto pt-5 space-y-2">
           {signedCurrent ? (
             <p className="text-sm text-[#15803D] flex items-center gap-1.5"><CheckCircle className="w-4 h-4" strokeWidth={1.75} /> Signed off by {inputs.signOff!.by} · {inputs.signOff!.at}</p>
           ) : inputs.signOff && (
@@ -1533,30 +1620,32 @@ function SignOff({ model, inputs, save, follow, caseData, rules, liability, sign
           <button
             disabled={model.blocking.length > 0 || signedCurrent}
             onClick={() => save((p) => ({ ...p, signOff: { at: stampNow(), by: REVIEWER, signature: model.signature } }), { action: "Attorney sign-off", detail: `${done}/${total} inputs complete; ${model.openItems.length} open, not blocking` }, "Liability analysis signed off. The case stage has not changed.")}
-            className="btn btn-primary w-full gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+            className="btn btn-primary w-full gap-2 !py-2 !text-sm disabled:opacity-50 disabled:cursor-not-allowed">
             {model.blocking.length ? <Lock className="w-4 h-4" strokeWidth={1.75} /> : <CheckCircle className="w-4 h-4" strokeWidth={1.75} />} Attorney sign-off
           </button>
-          {model.blocking.length > 0 && <p className="text-xs text-[#B91C1C]">Resolve to enable sign-off: {model.blocking.map((b) => b.title.toLowerCase()).join("; ")}.</p>}
+          {guidance && <p className="text-[11px] text-[#B91C1C] leading-snug">{guidance}</p>}
         </div>
       </div>
-      <div className="p-5 space-y-5 min-w-0">
+      <div className="px-4 py-4 space-y-4 min-w-0">
         <div>
           <h3 className="eyebrow mb-2">Needs your decision</h3>
-          {decisions.length === 0 ? <p className="text-sm text-[#15803D]">Nothing awaiting a decision.</p> : (
-            <ul className="space-y-2">
+          {decisions.length === 0 ? <p className="text-xs text-[#15803D]">No blocking decisions remain.</p> : (
+            <ul className="space-y-1.5">
               {decisions.map((d) => (
-                <li key={d.id} className={`rounded-lg border px-3 py-2.5 ${d.blocking && !d.done ? "border-[#FBD5D5] bg-[#FEF2F2]" : "border-line"}`}>
-                  <div className="flex items-start gap-3 flex-wrap sm:flex-nowrap">
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${d.done ? "bg-[#ECFDF3] text-[#15803D]" : d.blocking ? "bg-[#FBD5D5] text-[#B91C1C]" : "bg-[#FFF7ED] text-[#B45309]"}`}>{d.done ? <Check className="w-3 h-3" strokeWidth={2} /> : <AlertTriangle className="w-3 h-3" strokeWidth={2} />}</span>
+                <li key={d.id} className={`rounded-lg border px-3 py-2 ${d.blocking && !d.done ? "border-[#FBD5D5] bg-[#FFFAFA]" : "border-line"}`}>
+                  <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+                    <span className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${d.done ? "bg-[#ECFDF3] text-[#15803D]" : d.blocking ? "bg-[#FBD5D5] text-[#B91C1C]" : "bg-[#FFF7ED] text-[#B45309]"}`}>{d.done ? <Check className="w-2.5 h-2.5" strokeWidth={2.25} /> : <AlertTriangle className="w-2.5 h-2.5" strokeWidth={2.25} />}</span>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-ink">{d.title}</p>
-                      <p className="text-xs text-[#5B6B78]">{d.detail}</p>
+                      <p className="text-[13px] font-semibold text-ink leading-snug">{d.title}</p>
+                      <p className="text-[11px] text-[#5B6B78] leading-snug truncate" title={d.detail}>{SHORT[d.id] ?? d.detail}</p>
                     </div>
-                    <Pill className={d.done ? (d.alwaysListed === "optional" ? GREY : "pill-complete") : d.blocking ? "pill-risk" : "pill-progress"}>{d.done ? (d.alwaysListed === "optional" ? "Optional" : "None") : d.blocking ? "Blocking" : d.count ? `${d.count} open` : "Open"}</Pill>
+                    <Pill className={`${d.done ? (d.alwaysListed === "optional" ? GREY : "pill-complete") : d.blocking ? "pill-risk" : "pill-progress"} whitespace-nowrap shrink-0`}>{d.done ? (d.alwaysListed === "optional" ? "Optional" : "None") : d.blocking ? "Blocking" : d.count ? `${d.count} open` : "Open"}</Pill>
                     {d.id !== "incident-date" && <button onClick={() => follow(d.link.target)} className="text-xs font-semibold text-deep hover:text-ink underline underline-offset-2 shrink-0">{d.link.label}</button>}
                   </div>
                   {d.id === "incident-date" && (
-                    <div id="decide-incident-date" className="mt-3 sm:pl-8 space-y-2">
+                    <details id="decide-incident-date" className="mt-1 sm:pl-[26px] group">
+                    <summary className="text-[11px] font-semibold text-deep hover:text-ink cursor-pointer list-none inline-flex items-center gap-1">Choose the date <ChevronDown className="w-3 h-3 transition-transform group-open:rotate-180" strokeWidth={2} /></summary>
+                    <div className="mt-2 space-y-2">
                       <div className="flex flex-col gap-1 text-xs">
                         <label className="flex items-center gap-1.5 text-xs text-ink"><input type="radio" name="incident-date" checked={date.choice === "record"} onChange={() => setDate({ ...date, choice: "record" })} className="accent-[#1E7C99]" />{model.fmtIso(model.recorded)} · {liability.incidentOnRecord.source}</label>
                         <label className="flex items-center gap-1.5 text-xs text-ink"><input type="radio" name="incident-date" checked={date.choice === "evidence"} onChange={() => setDate({ ...date, choice: "evidence" })} className="accent-[#1E7C99]" />{model.fmtIso(model.anchor)} · {liability.incidentInEvidence.source}</label>
@@ -1571,6 +1660,7 @@ function SignOff({ model, inputs, save, follow, caseData, rules, liability, sign
                           "Incident date recorded for this analysis. The case record and the timeline are unchanged.");
                       }} className={BTN_P}>Record date</button>
                     </div>
+                    </details>
                   )}
                 </li>
               ))}
@@ -1582,50 +1672,46 @@ function SignOff({ model, inputs, save, follow, caseData, rules, liability, sign
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {(["facts", "legal"] as const).map((g) => (
-            <div key={g}>
-              <h3 className="eyebrow mb-2">{g === "facts" ? "Facts and parties" : "Evidence and legal"}</h3>
-              <ul className="space-y-2">
-                {model.readiness.filter((r) => r.group === g).map((r) => (
-                  <li key={r.id} className="rounded-lg border border-line px-3 py-2 flex items-start gap-2.5">
-                    {r.done ? <CheckCircle className="w-4 h-4 text-[#15803D] shrink-0 mt-0.5" strokeWidth={1.75} /> : r.blocking ? <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0 mt-0.5" strokeWidth={1.75} /> : <Circle className="w-4 h-4 text-[#B45309] shrink-0 mt-0.5" strokeWidth={1.75} />}
+        {(["facts", "legal"] as const).map((g) => (
+          <div key={g}>
+            <h3 className="eyebrow mb-2">{g === "facts" ? "Facts and parties" : "Evidence and legal"}</h3>
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {model.readiness.filter((r) => r.group === g).map((r) => {
+                // A link to where it is resolved — not back to this panel.
+                const link = r.link.target !== "liability-signoff" && r.link.target !== "decide-incident-date" ? r.link : null;
+                return (
+                  <li key={r.id} className="rounded-lg border border-line px-3 py-1.5 flex items-center gap-2 min-w-0" title={r.detail}>
+                    {r.done ? <CheckCircle className="w-3.5 h-3.5 text-[#15803D] shrink-0" strokeWidth={1.75} /> : r.blocking ? <AlertTriangle className="w-3.5 h-3.5 text-[#B91C1C] shrink-0" strokeWidth={1.75} /> : <Circle className="w-3.5 h-3.5 text-[#B45309] shrink-0" strokeWidth={1.75} />}
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-ink">{r.title}</p>
-                      <p className="text-xs text-[#5B6B78] break-words">{r.detail}</p>
-                      {r.id === "settlements" && !r.done && (
-                        <button onClick={() => save((p) => ({ ...p, settlementsNone: { at: stampNow(), by: REVIEWER } }), { action: "Confirmed no settlements or releases" }, "Recorded: no settlements or releases to date.")} className="text-xs font-semibold text-deep hover:text-ink mt-1">Confirm none to date</button>
-                      )}
+                      <p className="text-xs font-semibold text-ink leading-snug truncate">{r.title}{!r.done && r.count ? <span className="font-normal text-[#B45309]"> · {r.count} open</span> : null}</p>
+                      <p className="text-[11px] text-[#5B6B78] leading-snug truncate">{r.detail}</p>
                     </div>
+                    {r.id === "plaintiff-review" && !r.done ? (
+                      <button onClick={() => save((p) => ({ ...p, plaintiffReview: { at: stampNow(), by: REVIEWER, signature: model.plaintiffSignature } }), { action: "Plaintiff conduct items reviewed", detail: `${model.plaintiffFindings.length} checks` }, "Plaintiff conduct items marked reviewed.")} className="text-[11px] font-semibold text-deep hover:text-ink shrink-0 whitespace-nowrap">Mark reviewed</button>
+                    ) : r.id === "settlements" && !r.done ? (
+                      <button onClick={() => save((p) => ({ ...p, settlementsNone: { at: stampNow(), by: REVIEWER } }), { action: "Confirmed no settlements or releases" }, "Recorded: no settlements or releases to date.")} className="text-[11px] font-semibold text-deep hover:text-ink shrink-0 whitespace-nowrap">Confirm none to date</button>
+                    ) : link && (
+                      <button onClick={() => follow(link.target)} className="text-[11px] font-semibold text-deep hover:text-ink shrink-0">{link.label}</button>
+                    )}
                   </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
 
-        <div className="pt-4 border-t border-line">
+        <div className="pt-3 border-t border-line">
           <h3 className="eyebrow mb-2">Outputs</h3>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5 [&>button]:whitespace-nowrap [&>button]:!px-2.5">
             <button onClick={outputs.demand} className={BTN_S}><Download className="w-3.5 h-3.5" strokeWidth={1.75} /> Draft demand liability section</button>
             <button onClick={outputs.plan} className={BTN_S}><Download className="w-3.5 h-3.5" strokeWidth={1.75} /> Pre-suit evidence plan</button>
             <button onClick={outputs.outlook} className={BTN_S}><Download className="w-3.5 h-3.5" strokeWidth={1.75} /> Litigation outlook summary</button>
             <button onClick={onProceedToValuation} disabled={!signedCurrent || !onProceedToValuation} title={signedCurrent ? undefined : "Available after attorney sign-off"} className={BTN_S}>Send to Damages <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.75} /></button>
             <button onClick={() => follow("flags")} disabled={model.flags.length === 0} className={BTN_S}>Upstream flags ({model.flags.length})</button>
           </div>
-          <p className="text-[11px] text-[#8A98A3] mt-2">Unverified authority and not-yet-known findings are left out of the demand draft and listed at its end. Send to Damages uses the existing move to Valuation and is offered only after sign-off.</p>
+          <p className="text-[11px] text-[#8A98A3] mt-1.5" title="Not-yet-known findings are also left out and listed at the end of the draft. Send to Damages is offered only after sign-off.">Unverified authority is excluded from the demand draft until verified.</p>
         </div>
 
-        {inputs.audit.length > 0 && (
-          <details className="pt-4 border-t border-line">
-            <summary className="eyebrow cursor-pointer inline-flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" strokeWidth={1.75} /> Audit trail ({inputs.audit.length})</summary>
-            <ul className="mt-2 space-y-1 max-h-56 overflow-y-auto">
-              {[...inputs.audit].reverse().map((a, i) => (
-                <li key={i} className="text-[11px] text-[#5B6B78]"><span className="text-ink font-semibold">{a.action}</span>{a.detail && ` · ${a.detail}`}{a.from && ` · ${a.from} → ${a.to}`}{!a.from && a.to && ` · ${a.to}`}{a.reason && ` · “${a.reason}”`} — {a.by}, {a.at}</li>
-              ))}
-            </ul>
-          </details>
-        )}
       </div>
     </section>
   );
@@ -1666,7 +1752,9 @@ function FindingPanel({ target, model, inputs, save, onClose, onLaw, onPreview }
       </div>
       <div>
         <p className="eyebrow mb-1">{isD ? "What the record shows" : "The check"}</p>
-        <p className="body-text">{isD ? (d.note ? `${d.note[0].toUpperCase()}${d.note.slice(1)}.` : "No source note recorded.") : p.description}</p>
+        {/* The cards show a short summary; the full description is kept here. */}
+        {isD && d.description && <p className="body-text mb-1">{d.description}</p>}
+        <p className={isD && d.description ? "text-xs text-[#5B6B78]" : "body-text"}>{isD ? (d.note ? `Source note: ${d.note}.` : "No source note recorded.") : p.description}</p>
         {(isD ? d.missing : p.open) && <p className="text-sm text-[#B45309] mt-1">{isD ? "Missing" : "Open"}: {isD ? d.missing : p.open}</p>}
         {!isD && p.moduleSource && <p className="text-xs text-[#5B6B78] mt-1">Source: {p.moduleSource}</p>}
       </div>

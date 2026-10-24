@@ -24,7 +24,7 @@ async function copyText(text: string) {
   }
 }
 
-export function RequestLinkRow({ token, uploads }: { token: string; uploads: number }) {
+export function RequestLinkRow({ token, uploads, className = "px-5 py-3" }: { token: string; uploads: number; /** Padding, so the row can sit inside a smaller panel. */ className?: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const copied = state === "copied";
   useEffect(() => {
@@ -37,7 +37,7 @@ export function RequestLinkRow({ token, uploads }: { token: string; uploads: num
   const path = `/intake-request/${token}`;
 
   return (
-    <div className="px-5 py-3 flex items-center gap-3 flex-wrap">
+    <div className={`${className} flex items-center gap-3 flex-wrap`}>
       <div className="min-w-0 flex-1">
         <div className="eyebrow mb-1 flex items-center gap-1.5">
           <Link2 className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> Request Link

@@ -412,6 +412,9 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
   // With a liability analysis on record, Liability Signals opens that workspace,
   // so the card counts its findings: the defendant elements and plaintiff checks.
   const liabilityRecord = liabilityForCase(caseData?.caseId ?? "PI-2024-001");
+  // The Liability Signals workspace carries its back button and breadcrumb in
+  // one row below the stages rather than in the top bar.
+  const liabilityPage = detail === "liability" && !!liabilityRecord;
   const liabilityDefendants = liabilityRecord ? defendantsForCase(caseData?.caseId ?? "PI-2024-001") : undefined;
   const liabilityCount = liabilityRecord && liabilityDefendants
     ? liabilityDefendants.candidates.reduce((n, c) => n + c.elements.filter((e) => e.kind).length, 0) + liabilityRecord.plaintiff.checks.length + liabilityRecord.sharedFindings.length
@@ -940,18 +943,19 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
 
   return (
     <div className="min-h-screen bg-wash">
-      {/* Breadcrumb */}
+      {/* Breadcrumb — the Liability Signals page carries its breadcrumb and
+          Back to Analysis below the stages; this bar keeps Back to Case Intake. */}
       <div className="bg-white sticky top-0 z-40">
         <div className="max-w-[1400px] mx-auto px-8 py-4">
           <div className="flex items-center gap-4">
             <button
-              onClick={detail ? onBackToAnalysis : onBackToIntake}
+              onClick={detail && !liabilityPage ? onBackToAnalysis : onBackToIntake}
               className="flex items-center gap-2 secondary-text hover:text-ink transition-colors"
             >
               <ChevronLeft className="w-4 h-4" strokeWidth={1.75} />
-              {detail ? "Back to Analysis" : "Back to Case Intake"}
+              {detail && !liabilityPage ? "Back to Analysis" : "Back to Case Intake"}
             </button>
-            {detail ? (
+            {liabilityPage ? null : detail ? (
               <div className="secondary-text ml-auto flex items-center gap-2 min-w-0">
                 <span className="truncate">{data.caseName}</span>
                 <ChevronRight className="w-3.5 h-3.5 text-[#9BA8B4] shrink-0" strokeWidth={1.75} />
@@ -971,8 +975,25 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
 
       <StageNavigator currentStage="Analysis" onStageClick={onStageClick} />
 
-      <div className="max-w-[1400px] mx-auto px-8 py-8 space-y-8">
-        {detail ? renderDetail(detail) : (<>
+      <div className={`max-w-[1400px] mx-auto px-8 ${liabilityPage ? "pt-5 pb-8" : "py-8"} space-y-8`}>
+        {detail ? (liabilityPage ? (
+          <div className="space-y-5">
+            <div className="flex items-center justify-between gap-x-4 gap-y-2 flex-wrap">
+              <button onClick={onBackToAnalysis} className="-ml-2 inline-flex items-center gap-2.5 rounded-lg px-2 py-1 text-sm font-medium text-ink/80 hover:text-deep hover:bg-tint transition-colors">
+                <ChevronLeft className="w-4 h-4" strokeWidth={2} />
+                Back to Analysis
+              </button>
+              <nav aria-label="Breadcrumb" className="secondary-text flex items-center gap-2 min-w-0 ml-auto">
+                <span className="truncate">{data.caseName}</span>
+                <ChevronRight className="w-3.5 h-3.5 text-[#9BA8B4] shrink-0" strokeWidth={1.75} />
+                <button onClick={onBackToAnalysis} className="secondary-text shrink-0 hover:text-ink transition-colors">Analysis</button>
+                <ChevronRight className="w-3.5 h-3.5 text-[#9BA8B4] shrink-0" strokeWidth={1.75} />
+                <span className="text-ink font-medium shrink-0" aria-current="page">{DETAIL_META[detail].title}</span>
+              </nav>
+            </div>
+            {renderDetail(detail)}
+          </div>
+        ) : renderDetail(detail)) : (<>
 
         {documents.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -1003,7 +1024,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
         </h1>
 
         {/* ── Case Intelligence Summary (40) beside Analysis Findings (60) — the timeline now has its own page ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6 items-start lg:items-stretch">
 
           {/* Case Intelligence Summary, compact two-column card grid */}
           <div id="case-intelligence" className="lg-card px-5 py-4 flex flex-col min-w-0 scroll-mt-[150px]">
@@ -1012,7 +1033,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
               <span className="pill pill-complete">92% Complete</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
               {summaryRows.map(({ icon: Icon, label, value, note, onClick, hint }) => {
                 const body = (
                   <>
@@ -1079,7 +1100,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
             {/* Primary CTA pinned full-width at the bottom */}
             <Button
               onClick={onProceedToValuation}
-              className="btn btn-primary gap-2 w-full mt-3"
+              className="btn btn-primary gap-2 w-full mt-auto"
             >
               Proceed To Valuation
               <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
@@ -1087,12 +1108,13 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
           </div>
 
         {/* ── Analysis findings — six deliverable cards, as in Case Ready ── */}
-        <div id="analysis-deliverables" className="lg-card overflow-hidden min-w-0 scroll-mt-[150px]">
+        {/* Same height as the summary beside it: the two rows of cards share the spare height. */}
+        <div id="analysis-deliverables" className="lg-card overflow-hidden min-w-0 scroll-mt-[150px] flex flex-col">
           <div className="flex items-center justify-between px-6 py-4 border-b border-line">
             <h2 className="section-header">Analysis Findings</h2>
             <span className="secondary-text">{analysisCards.length} analyses</span>
           </div>
-          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 flex-1 lg:auto-rows-fr">
             {analysisCards.map((item) => (
               <div
                 key={item.title}

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { FileTypeIcon, FileTypeTag } from "../components/fileType";
 import { StageNavigator } from "../components/StageNavigator";
 import { CaseSnapshot } from "../components/CaseSnapshot";
@@ -13,7 +13,7 @@ import {
   type DocFilter,
 } from "../intake/docProcessing";
 import {
-  useIntakeRequests, createIntakeRequest, updateIntakeRequest, adoptExistingIntakeRequest, formatShortDate,
+  useIntakeRequests, createIntakeRequest, updateIntakeRequest, adoptExistingIntakeRequest, removeIntakeRequestFromDashboard, formatShortDate,
   type IntakeRequest, type UploadedDocument,
 } from "../intake/intakeRequestStore";
 import { RequestLinkRow } from "../intake/RequestLinkRow";
@@ -207,7 +207,10 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
 
   // Intake requests sent for this case — stored, so they are still here after
   // leaving the case, and each carries its own client link and uploads.
-  const storedRequests = useIntakeRequests(data.caseId);
+  // Requests removed from the dashboard are kept in the store but not shown.
+  const allStoredRequests = useIntakeRequests(data.caseId);
+  const storedRequests = useMemo(() => allStoredRequests.filter((r) => !r.removedAt), [allStoredRequests]);
+  const [removingReqId, setRemovingReqId] = useState<string | null>(null);
 
   // Pipeline-derived state (shared)
   const intakeCreated = pipeline.intakeCreated || storedRequests.length > 0;
@@ -1470,9 +1473,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   // Whether a request has actually gone out — a draft has not.
   const sentReq = storedRequests.some((r) => r.status !== "Draft");
   const latestProgress = latestReq ? progressOf(latestReq) : null;
-  // One additional request at a time: another is offered once the last one
-  // the client has not answered yet is answered.
-  const waitingAdditional = storedRequests.find((r, i) => i > 0 && !r.followUpOf && !(r.submissions?.length) && r.status !== "Completed");
   const openCreateRequest = () => { setIntakeModalMode("create"); setActiveModifyId(null); setEmailError(false); setShowIntakeModal(true); };
   const requestOutstanding = (r: IntakeRequest, pr: ReturnType<typeof progressOf>) =>
     openMissingRequestModal(pr.outstanding.filter((x) => x.kind === "document").flatMap((x) => x.missingParts ?? [x.name]).map((title) => ({ title })), r.id);
@@ -1678,12 +1678,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                     <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Intake Request
                   </button>
                 ) : (
-                  <button
-                    onClick={handleOpenAdditionalRequest}
-                    disabled={!!waitingAdditional}
-                    title={waitingAdditional ? `${waitingAdditional.id} is still waiting for the client` : "Additional Request"}
-                    className={btnO}
-                  >
+                  <button onClick={handleOpenAdditionalRequest} title="Additional Request" className={btnO}>
                     <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Additional Request
                   </button>
                 ),
@@ -1837,7 +1832,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
           {/* ── Workspace tab bar ── */}
           <div id="workspace-tabs" className="lg-card p-1.5 flex items-center gap-1.5 scroll-mt-[150px]">
             {([
-              { key: "request" as const, label: "Documents Request" },
+              { key: "request" as const, label: "Intake Request" },
               { key: "documents" as const, label: "Documents" },
             ]).map((tab) => (
               <button
@@ -2091,8 +2086,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
               {sentReq && (
                 <button
                   onClick={handleOpenAdditionalRequest}
-                  disabled={!!waitingAdditional}
-                  title={waitingAdditional ? `${waitingAdditional.id} is still waiting for the client` : "Request more documents from the client"}
+                  title="Request more documents from the client"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Additional Request
@@ -2131,7 +2125,8 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
             const asked = selectedMediaOptions(req.requestedMedia);
             const got = receivedMediaFor(req.id);
             const missingNames = [...cur.outstanding.flatMap((x) => x.missingParts ?? [x.name]), ...notYetRequested.map((m) => m.title)];
-            const answer = answered ? { docs: cur.receivedFiles, missing: missingNames } : null;
+            // The client response panel's status: received in full, in part, or not yet.
+            const responseLabel = !answered ? (cur.status === "In progress" ? "In progress" : currentReq.openedAt ? "Opened · not responded" : "Not responded") : cur.status === "Completed" ? "Received" : cur.status;
             const outstandingDocs = cur.outstanding.filter((x) => x.kind === "document");
             type StepState = "done" | "current" | "attention" | "pending";
             const lastSubmission = currentReq.submissions?.[currentReq.submissions.length - 1];
@@ -2205,366 +2200,293 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                   </div>
                 )}
 
-                          <div key={req.id} className="space-y-3" onClick={() => intakeOverflowOpen && setIntakeOverflowOpen(null)}>
-                            <div className="eyebrow">{answered ? "1 · Request sent" : "1 · Request sent, waiting for the client"}</div>
-
-                            {/* ── SENT REQUEST CARD ── */}
-                            <div className="bg-white border border-line rounded-xl overflow-hidden">
-                              <div className="flex items-center justify-between gap-3 flex-wrap px-5 py-3 bg-white border-b border-line">
-                                <div className="flex items-center gap-2.5">
-                                  <span className="mono-ref font-bold">{req.id}</span>
-                                  {req.version > 1 && <span className="text-xs text-[#5B6B78] bg-white border border-line px-1.5 py-0.5 rounded font-mono">v{req.version}</span>}
-                                  <span className={`inline-flex items-center gap-1 ${statusColors[sentStatus] ?? "pill pill-neutral"}`}>
-                                    <Clock className="w-3 h-3" strokeWidth={1.75} />
-                                    {sentStatus}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-3 flex-wrap">
-                                  <span className="mono-ref">{req.lastSentAt ? sentLabel(req.lastSentAt) : req.lastSent}</span>
-                                  <button onClick={() => handleModifyRequest(req.id)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all">
-                                    <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Modify Request
-                                  </button>
-                                  <button onClick={() => handleOpenResend(req.id)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all">
-                                    <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.4fr)] divide-x divide-line border-b border-line">
-                                <div className="px-5 py-4">
-                                  <div className="eyebrow mb-1">Recipient</div>
-                                  <div className="text-sm font-semibold text-ink truncate">{req.recipient}</div>
-                                </div>
-                                <div className="px-5 py-4">
-                                  <div className="eyebrow mb-1">Delivery</div>
-                                  <div className="text-sm font-semibold text-ink">{req.deliveryMethod === "sms" ? "SMS" : "Email"}</div>
-                                </div>
-                                <div className="px-5 py-4">
-                                  <div className="eyebrow mb-1">Documents Requested</div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-sm font-semibold text-ink">{req.requestedDocs.length}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setRequestedListOpen((o) => !o)}
-                                      aria-expanded={requestedListOpen}
-                                      className="text-xs font-semibold text-deep hover:underline"
-                                    >
-                                      {requestedListOpen ? "Hide" : "View"}
-                                    </button>
-                                  </div>
-                                </div>
-                                <div className="px-5 py-4">
-                                  <div className="eyebrow mb-1">Documents</div>
-                                  <div className="space-y-0.5">
-                                    {req.requestedDocs.slice(0, 3).map((d) => <div key={d} className="text-xs text-[#5B6B78] truncate">• {d}</div>)}
-                                    {req.requestedDocs.length > 3 && <div className="text-xs text-[#5B6B78]">+{req.requestedDocs.length - 3} more</div>}
-                                  </div>
-                                </div>
-                                {/* Always shown, so a request without media reads as one. */}
-                                <div className="px-5 py-4 bg-[#F6FDFF]">
-                                  <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Requested <NewBadge /></div>
-                                  {asked.length > 0 ? (
-                                    <div className="space-y-0.5">
-                                      {asked.map((o) => <div key={o.key} className="text-xs text-[#5B6B78] break-words">• {o.title}</div>)}
-                                    </div>
-                                  ) : (
-                                    <>
-                                      <div className="text-sm font-semibold text-ink">Not requested</div>
-                                      <div className="text-xs text-[#5B6B78] mt-0.5">No video or photo uploads were requested.</div>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                              {req.lastModified && (
-                                <div className="px-5 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
-                                  Last modified {req.lastModified}
-                                </div>
-                              )}
-                              {requestedListOpen && (
-                                <div className="border-b border-line bg-offwhite px-5 py-3">
-                                  <div className="eyebrow mb-2">Requested in {req.id}</div>
-                                  {/* The original request: what was asked for — never the client's response. */}
-                                  <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
-                                    {req.requestedDocs.map((name) => (
-                                      <li key={name} className="bg-white border border-line rounded-lg px-3 py-2">
-                                        <span className="text-sm font-semibold text-ink break-words">{name}</span>
-                                      </li>
-                                    ))}
-                                    {asked.map((o) => (
-                                      <li key={o.key} className="bg-white border border-line rounded-lg px-3 py-2 flex items-center gap-2">
-                                        <span className="text-sm font-semibold text-ink break-words">{o.title}</span>
-                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                              {req.token && <RequestLinkRow token={req.token} uploads={(req.uploads?.length ?? 0) + got.files} />}
+                {/* ── Intake request card — the collection timeline, then the request and the
+                    client's response side by side, then the request link.
+                    The files themselves are listed in Requested documents below. ── */}
+                <div key={req.id} className="lg-card overflow-hidden" onClick={() => intakeOverflowOpen && setIntakeOverflowOpen(null)}>
+                  {/* The request's journey, left to right — read from its records; no
+                      step is marked done that the data does not show. */}
+                  <div className="bg-offwhite px-5 py-3 overflow-x-auto">
+                    <ol className="grid min-w-[620px]" style={{ gridTemplateColumns: `repeat(${collectionSteps.length}, minmax(0, 1fr))` }}>
+                      {collectionSteps.map((st, i) => {
+                        const last = i === collectionSteps.length - 1;
+                        const dot = {
+                          done: "bg-[#E7F6EC] border-[#9FD8B0] text-[#1E7B3C]",
+                          current: "bg-tint border-brand text-deep",
+                          attention: "bg-[#FFF4E5] border-[#F5C27A] text-[#B45309]",
+                          pending: "bg-white border-line text-[#8A98A3]",
+                        }[st.state];
+                        return (
+                          <li key={st.title} className="min-w-0 pr-3">
+                            <div className="flex items-center">
+                              <span className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${dot}`}>
+                                {st.state === "done" ? <Check className="w-3 h-3" strokeWidth={2.25} />
+                                  : st.state === "attention" ? <AlertTriangle className="w-2.5 h-2.5" strokeWidth={2} />
+                                  : st.state === "current" ? <span className="w-1.5 h-1.5 rounded-full bg-brand" />
+                                  : <span className="text-[10px] font-semibold">{i + 1}</span>}
+                              </span>
+                              {!last && <span className={`h-px flex-1 ml-2 ${st.state === "done" ? "bg-[#9FD8B0]" : "bg-line"}`} />}
                             </div>
-
-                            {/* ── COMPLETED SUBMISSION CARD — the client's answer, no link ── */}
-                            {answer && (
-                              <>
-                                <div className="eyebrow pt-2">2 · Client has responded</div>
-                                <div className="bg-white border border-line rounded-xl overflow-hidden">
-                                  <div className="flex items-center justify-between gap-3 px-5 py-3 bg-white border-b border-line">
-                                    <span className="mono-ref font-bold">{req.id}</span>
-                                    <div className="flex items-center gap-3">
-                                      <span className={`inline-flex items-center gap-1 ${REQUEST_STATUS_PILL[cur.status] ?? "pill pill-neutral"}`}>
-                                        {cur.status === "Completed" && <CheckCircle className="w-3 h-3" strokeWidth={1.75} />} {cur.status}
-                                      </span>
-                                      <button
-                                        onClick={() => { setViewingSubmissionId(req.id); setShowViewSubmissionModal(true); }}
-                                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-sm font-semibold transition-all"
-                                      >
-                                        <Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> View Submission
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)] divide-x divide-line">
-                                    <div className="px-5 py-4">
-                                      <div className="eyebrow mb-1">Status</div>
-                                      <div className="text-sm font-semibold text-ink">{cur.status}</div>
-                                    </div>
-                                    <div className="px-5 py-4">
-                                      <div className="eyebrow mb-1">Recipient</div>
-                                      <div className="text-sm font-semibold text-ink truncate">{req.recipient}</div>
-                                    </div>
-                                    <div className="px-5 py-4">
-                                      <div className="eyebrow mb-1">Documents Received</div>
-                                      <div className="flex items-baseline gap-2">
-                                        <span className="kpi-value">{cur.satisfied}</span>
-                                        <button
-                                          type="button"
-                                          onClick={() => setReceivedListOpen((o) => !o)}
-                                          aria-expanded={receivedListOpen}
-                                          className="text-xs font-semibold text-deep hover:underline"
-                                        >
-                                          {receivedListOpen ? "Hide" : "View"}
-                                        </button>
-                                      </div>
-                                      <div className="text-xs text-[#5B6B78]">of {cur.total} requested</div>
-                                    </div>
-                                    <div className="px-5 py-4">
-                                      <div className="eyebrow mb-1">Missing Documents</div>
-                                      <div className={`kpi-value ${answer.missing.length ? "text-amber-600" : "text-ink"}`}>{answer.missing.length}</div>
-                                      {answer.missing.slice(0, 3).map((n) => <div key={n} className="text-sm text-ink leading-snug break-words">{n}</div>)}
-                                      {answer.missing.length > 3 && <div className="text-xs text-[#5B6B78]" title={answer.missing.slice(3).join(", ")}>+{answer.missing.length - 3} more</div>}
-                                    </div>
-                                    {/* Always shown — counted from this request's own media records. */}
-                                    <div className="px-5 py-4 bg-[#F6FDFF]">
-                                      <div className="eyebrow mb-1 flex items-center gap-1.5 flex-wrap">Video &amp; Photos Received <NewBadge /></div>
-                                      {got.files > 0 ? (
-                                        <>
-                                          <div className="flex items-baseline gap-1.5 flex-wrap">
-                                            <span className="kpi-value">{got.files}</span>
-                                            <span className="text-xs text-[#5B6B78]">received media {got.files === 1 ? "file" : "files"}</span>
-                                            {got.processing && (
-                                              <span className="inline-flex items-center gap-1 text-xs text-deep self-center">
-                                                <Loader2 className="w-3.5 h-3.5 text-brand animate-spin" strokeWidth={1.75} /> Processing
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="text-xs text-[#5B6B78] mt-0.5">
-                                            {got.videos} {got.videos === 1 ? "video" : "videos"} · {got.sets} photo {got.sets === 1 ? "set" : "sets"} ({got.photos} {got.photos === 1 ? "photo" : "photos"})
-                                          </div>
-                                          <button type="button" onClick={viewMediaEvidence} className="mt-1 text-xs font-semibold text-deep hover:underline">
-                                            Open Media Evidence →
-                                          </button>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <div className="text-sm font-semibold text-ink">No media received</div>
-                                          <div className="text-xs text-[#5B6B78] mt-0.5">{asked.length > 0 ? "The client sent no video or photos." : "None was requested."}</div>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                  {receivedListOpen && (
-                                    // Every requested item, with where the client's response leaves it.
-                                    <div className="border-t border-line bg-offwhite px-5 py-3">
-                                      <div className="eyebrow mb-2">Response to {req.id}</div>
-                                      <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
-                                        {cur.rows.map((row) => {
-                                          const label = row.state === "Received" ? "Received" : row.state === "Partially received" ? "Partially received" : row.state === "Not matched" ? "Can't be determined" : "Missing";
-                                          const pill = row.state === "Received" ? "pill pill-complete" : row.state === "Partially received" ? "pill pill-progress" : row.state === "Not matched" ? "pill pill-neutral" : "pill pill-risk";
-                                          const received = row.state === "Received" || row.state === "Partially received";
-                                          return (
-                                            <li key={row.name} className="bg-white border border-line rounded-lg px-3 py-2">
-                                              <div className="flex items-center justify-between gap-2">
-                                                <span className="text-sm font-semibold text-ink truncate">{row.name}{row.kind === "media" && <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>}</span>
-                                                <span className={`${pill} shrink-0`}>{label}</span>
-                                              </div>
-                                              {received && row.files.length > 0 && (
-                                                <div className="text-xs text-[#5B6B78] mt-1 break-words">Received: {row.files.map((f) => f.name).join(", ")}</div>
-                                              )}
-                                              {row.missingParts && <div className="text-xs text-[#B45309] mt-0.5">Outstanding: {row.missingParts.join(", ")}</div>}
-                                              {!received && <div className="text-xs text-[#B45309] mt-0.5">{REQ_STATE_NOTE[row.state] ?? "Not received yet."}</div>}
-                                            </li>
-                                          );
-                                        })}
-                                      </ul>
-                                      {cur.outstanding.some((x) => x.kind === "document") && (
-                                        <div className="flex items-center justify-between gap-3 flex-wrap mt-3">
-                                          <span className="text-xs text-[#854F0B]">
-                                            Outstanding: {cur.outstanding.filter((x) => x.kind === "document").map((x) => (x.missingParts ? x.missingParts.join(", ") : x.name)).join(", ")}
-                                          </span>
-                                          <button onClick={() => requestOutstanding(currentReq, cur)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold text-white" style={{ background: "#B45309" }}>
-                                            <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request Missing Documents
-                                          </button>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  {req.clientNotes && (
-                                    <div className="px-5 py-3 border-t border-line">
-                                      <div className="eyebrow mb-1">Client Notes</div>
-                                      <p className="text-sm text-ink whitespace-pre-line">{req.clientNotes}</p>
-                                    </div>
-                                  )}
-                                </div>
-                              </>
-                            )}
-                          </div>
-
-                {/* 3 · Activity and collection progress — beneath the response card */}
-                <div className="lg-card p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="eyebrow">3 · Collection progress</div>
-                    <div className="flex items-center gap-4 text-xs text-[#5B6B78] flex-wrap">
-                      <span><span className="font-semibold text-ink">{cur.total}</span> requested</span>
-                      <span><span className="font-semibold text-ink">{cur.satisfied}</span> received</span>
-                      <span><span className={`font-semibold ${cur.outstanding.length ? "text-[#B45309]" : "text-ink"}`}>{cur.outstanding.length}</span> outstanding</span>
-                      <span className="font-semibold text-ink">{cur.pct}%</span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 min-[1100px]:grid-cols-[minmax(0,250px)_minmax(0,1fr)] gap-3 items-start">
-                    {/* The request's journey, read from its records — no step is
-                        marked done that the data does not show. */}
-                    <div className="rounded-xl border border-line p-3.5">
-                      <ol>
-                        {collectionSteps.map((st, i) => {
-                          const last = i === collectionSteps.length - 1;
-                          const dot = {
-                            done: "bg-[#E7F6EC] border-[#9FD8B0] text-[#1E7B3C]",
-                            current: "bg-tint border-brand text-deep",
-                            attention: "bg-[#FFF4E5] border-[#F5C27A] text-[#B45309]",
-                            pending: "bg-white border-line text-[#8A98A3]",
-                          }[st.state];
-                          return (
-                            <li key={st.title} className="flex gap-3">
-                              <div className="flex flex-col items-center shrink-0">
-                                <span className={`w-6 h-6 rounded-full border flex items-center justify-center ${dot}`}>
-                                  {st.state === "done" ? <Check className="w-3.5 h-3.5" strokeWidth={2.25} />
-                                    : st.state === "attention" ? <AlertTriangle className="w-3 h-3" strokeWidth={2} />
-                                    : st.state === "current" ? <span className="w-2 h-2 rounded-full bg-brand" />
-                                    : <span className="text-[10px] font-semibold">{i + 1}</span>}
-                                </span>
-                                {!last && <span className={`w-px flex-1 min-h-[14px] my-1 ${st.state === "done" ? "bg-[#9FD8B0]" : "bg-line"}`} />}
-                              </div>
-                              <div className={`min-w-0 ${last ? "" : "pb-3"}`}>
-                                <div className={`text-sm font-semibold leading-snug ${st.state === "pending" ? "text-[#8A98A3]" : "text-ink"}`}>{st.title}</div>
-                                {st.when && <div className="text-xs text-[#5B6B78]">{st.when}</div>}
-                                {st.detail && <div className="text-xs text-[#8A98A3] break-words">{st.detail}</div>}
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ol>
-                    </div>
-
-                    {/* 4 · Requested Documents — received or not, per requirement */}
-                    <div className="rounded-xl border border-line overflow-hidden">
-                      <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 border-b border-line">
-                        <span className="eyebrow">4 · Requested documents</span>
-                        {cur.legacy && <span className="text-[11px] text-[#8A98A3]">From the case documents on file</span>}
-                      </div>
-                      <ul className="divide-y divide-line">
-                        {cur.rows.map((row) => (
-                          <li key={row.name} className="px-3.5 py-2.5">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-semibold text-ink">{row.name}</span>
-                              {row.kind === "media" && <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>}
-                              <span className={REQ_STATE_PILL[row.state]}>{REQ_STATE_LABEL[row.state]}</span>
-                            </div>
-                            {row.files.length === 0 || row.state === "Uploaded, not submitted" ? (
-                              <div className="text-xs text-[#8A98A3] mt-0.5">{REQ_STATE_NOTE[row.state]}</div>
-                            ) : (
-                              <ul className="mt-1 space-y-1">
-                                {row.files.map((f) => (
-                                  <li key={f.key} className="flex items-center justify-between gap-2">
-                                    <div className="min-w-0 flex items-center gap-x-2 gap-y-0.5 flex-wrap text-xs text-[#5B6B78]">
-                                      <span className="mono-ref text-ink truncate max-w-[220px]" title={f.name}>{f.name}</span>
-                                      <span>{f.source}</span>
-                                      {f.at && <span>{atLabel(f.at)}</span>}
-                                      {/* Processing is a separate matter — shown only when it needs attention */}
-                                      {f.status && f.status !== "Processed" && f.status !== "Reviewed" && (
-                                        <span className="text-[11px] text-[#8A98A3]">
-                                          File: <span className={`pill ${DOC_STATUS_PILL[f.status]}`}>{f.status === "Attorney Review Required" ? "Needs Review" : f.status}</span>
-                                        </span>
-                                      )}
-                                    </div>
-                                    {f.doc && (
-                                      // The same row actions as the Documents tab: Preview,
-                                      // Insights, and More actions (Edit, Delete, Download).
-                                      <RowActionGroup name={f.doc.name} onEdit={() => openEdit(f.doc!)} onDelete={() => { setDeleteDoc(f.doc!); setDeleteError(null); }}>
-                                        <DocActions
-                                          size="row"
-                                          onPreview={() => handlePreviewDocument(f.doc)}
-                                          onInsights={() => handleOpenInsights(f.doc)}
-                                          onDownload={() => handleDownloadDocument(f.doc)}
-                                          disabled={{
-                                            insights: !processingFinished(f.doc) ? "Available once processing finishes" : undefined,
-                                            download: f.doc.storageKey ? undefined : "The original file is not stored in this browser",
-                                          }}
-                                        />
-                                      </RowActionGroup>
-                                    )}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {row.viaCaseFile && (
-                              <div className="text-xs text-[#5B6B78] mt-1">Fulfilled by a file on the case: this request predates submission tracking, so its files are not linked to it.</div>
-                            )}
-                            {row.state === "On file" && (
-                              <div className="text-xs text-[#B45309] mt-1">{REQ_STATE_NOTE["On file"]}</div>
-                            )}
-                            {row.missingParts && (
-                              <div className="text-xs text-[#B45309] mt-1">Not received: {row.missingParts.join(", ")}</div>
+                            <div className={`mt-1.5 text-xs font-semibold leading-snug ${st.state === "pending" ? "text-[#8A98A3]" : "text-ink"}`}>{st.title}</div>
+                            {(st.when || st.detail) && (
+                              <div className="text-[11px] text-[#8A98A3] leading-snug truncate" title={[st.when, st.detail].filter(Boolean).join(" · ")}>{st.when ?? st.detail}</div>
                             )}
                           </li>
-                        ))}
-                      </ul>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                  {/* Request (left) and client response (right), divided by a rule — no nested cards. */}
+                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] border-t border-line divide-y lg:divide-y-0 lg:divide-x divide-line">
+                    <div className="px-4 xl:px-5 py-4 min-w-0 flex flex-col">
+                      <div className="flex items-center gap-2 mb-3 flex-wrap min-h-[24px]">
+                        <span className="eyebrow">Request</span>
+                        <span className="mono-ref font-bold text-ink">{req.id}</span>
+                        {req.version > 1 && <span className="text-[11px] text-[#5B6B78] border border-line px-1 rounded font-mono">v{req.version}</span>}
+                        <span className={`inline-flex items-center gap-1 ${statusColors[sentStatus] ?? "pill pill-neutral"}`}>
+                          <Clock className="w-3 h-3" strokeWidth={1.75} />
+                          {sentStatus}
+                        </span>
+                      </div>
+                      <dl className="grid grid-cols-[104px_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-snug">
+                        <dt className="text-[#8A98A3]">Recipient</dt>
+                        <dd className="text-ink truncate" title={req.recipient}>{req.recipient}</dd>
+                        <dt className="text-[#8A98A3]">Delivery</dt>
+                        <dd className="text-ink">{req.deliveryMethod === "sms" ? "SMS" : "Email"} · {req.lastSentAt ? sentLabel(req.lastSentAt) : req.lastSent}</dd>
+                        <dt className="text-[#8A98A3]">Requested</dt>
+                        <dd className="text-ink">
+                          {req.requestedDocs.length} {req.requestedDocs.length === 1 ? "document" : "documents"}
+                          <button type="button" onClick={() => setRequestedListOpen((o) => !o)} aria-expanded={requestedListOpen} className="ml-1.5 text-xs font-semibold text-deep hover:underline">
+                            {requestedListOpen ? "Hide" : "View"}
+                          </button>
+                        </dd>
+                        <dt className="text-[#8A98A3] flex items-center gap-1">Video &amp; photos</dt>
+                        <dd className="text-ink break-words">{asked.length > 0 ? asked.map((o) => o.title).join(", ") : "Not requested"}</dd>
+                      </dl>
+                      {req.lastModified && <div className="mt-2 text-[11px] text-amber-700">Last modified {req.lastModified}</div>}
+                      <div className="mt-auto pt-4 flex items-center gap-1.5 flex-wrap">
+                        {/* This request's own response decides it — not any other request's. */}
+                        <span title={answered ? "Client has already responded. You can no longer modify this request." : undefined} className="inline-flex">
+                          <button onClick={() => handleModifyRequest(req.id)} disabled={answered}
+                            aria-describedby={answered ? `modify-locked-${req.id}` : undefined}
+                            className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all bg-white border border-line text-ink hover:bg-wash disabled:opacity-45 disabled:cursor-not-allowed disabled:pointer-events-none">
+                            <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Modify Request
+                          </button>
+                          {answered && <span id={`modify-locked-${req.id}`} className="sr-only">Client has already responded. You can no longer modify this request.</span>}
+                        </span>
+                        <button onClick={() => handleOpenResend(req.id)} className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all bg-white border border-line text-ink hover:bg-wash">
+                          <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
+                        </button>
+                        <button onClick={() => setRemovingReqId(req.id)} className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all bg-white border border-line text-[#B91C1C] hover:bg-[#FEF2F2]">
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} /> Delete
+                        </button>
+                      </div>
+                    </div>
 
-                      {/* 5 · Still outstanding — names, from the comparison above */}
-                      {(outstandingDocs.length > 0 || notYetRequested.length > 0) && (
-                        <div className="px-3.5 py-2.5 border-t border-line bg-[#FFFBF2] space-y-1.5">
-                          <div className="eyebrow" style={{ color: "#854F0B" }}>Still outstanding</div>
-                          {outstandingDocs.length > 0 && (
-                            <div className="flex items-center justify-between gap-3 flex-wrap">
-                              <span className="text-xs text-[#854F0B]">
-                                Requested in {currentReq.id}: {outstandingDocs.map((x) => (x.missingParts ? x.missingParts.map((m) => `${m} (part of ${x.name})`).join(", ") : x.name)).join(", ")}
-                              </span>
-                              {answered && (
-                                <button onClick={() => requestOutstanding(currentReq, cur)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold text-white" style={{ background: "#B45309" }}>
-                                  <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request Missing Documents
-                                </button>
-                              )}
-                            </div>
+                    {/* Only what the client's own submissions fulfil. */}
+                    <div className="px-4 xl:px-5 py-4 min-w-0 flex flex-col">
+                      <div className="flex items-center gap-2 mb-3 flex-wrap min-h-[24px]">
+                        <span className="eyebrow">Client response</span>
+                        <span className={`inline-flex items-center gap-1 ${answered ? REQUEST_STATUS_PILL[cur.status] ?? "pill pill-neutral" : "pill pill-neutral"}`}>
+                          {answered && cur.status === "Completed" && <CheckCircle className="w-3 h-3" strokeWidth={1.75} />} {responseLabel}
+                        </span>
+                      </div>
+                      <dl className="grid grid-cols-[104px_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-snug">
+                        <dt className="text-[#8A98A3]">Received</dt>
+                        <dd className="text-ink">
+                          {cur.satisfied} of {cur.total} requested
+                          {answered && (
+                            <button type="button" onClick={() => setReceivedListOpen((o) => !o)} aria-expanded={receivedListOpen} className="ml-1.5 text-xs font-semibold text-deep hover:underline">
+                              {receivedListOpen ? "Hide" : "View"}
+                            </button>
                           )}
-                          {notYetRequested.length > 0 && (
-                            <div className="flex items-center justify-between gap-3 flex-wrap">
-                              <span className="text-xs text-[#854F0B]">Additional case-file requirement, not in the request: {notYetRequested.map((m) => m.title).join(", ")}</span>
-                              <button onClick={() => openMissingRequestModal(notYetRequested)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[#FAC775] bg-white text-xs font-semibold text-[#854F0B] hover:bg-[#FAEEDA]">
-                                <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request
-                              </button>
-                            </div>
+                        </dd>
+                        <dt className="text-[#8A98A3]">Outstanding</dt>
+                        <dd className="text-ink">
+                          {answered ? (
+                            missingNames.length ? (
+                              <span className="text-[#B45309] break-words" title={missingNames.join(", ")}>
+                                {missingNames.length} · {missingNames.slice(0, 3).join(", ")}{missingNames.length > 3 ? ` +${missingNames.length - 3} more` : ""}
+                              </span>
+                            ) : "None"
+                          ) : <span className="text-[#8A98A3]">Awaiting the client's response</span>}
+                        </dd>
+                        <dt className="text-[#8A98A3]">Video &amp; photos</dt>
+                        <dd className="text-ink">
+                          {got.files > 0 ? (
+                            <>
+                              {got.files} {got.files === 1 ? "file" : "files"} · {got.videos} {got.videos === 1 ? "video" : "videos"}, {got.sets} photo {got.sets === 1 ? "set" : "sets"}
+                              {got.processing && <span className="inline-flex items-center gap-1 text-deep ml-1"><Loader2 className="w-3 h-3 text-brand animate-spin" strokeWidth={1.75} /> Processing</span>}
+                              <button type="button" onClick={viewMediaEvidence} className="ml-1.5 text-xs font-semibold text-deep hover:underline">Open Media Evidence →</button>
+                            </>
+                          ) : asked.length > 0 ? (answered ? "None received" : "Awaiting") : "Not requested"}
+                        </dd>
+                        {req.clientNotes && (
+                          <>
+                            <dt className="text-[#8A98A3]">Client notes</dt>
+                            <dd className="text-ink line-clamp-2 whitespace-pre-line" title={req.clientNotes}>{req.clientNotes}</dd>
+                          </>
+                        )}
+                      </dl>
+                      {answered && (
+                        <div className="mt-auto pt-4 flex items-center gap-1.5 flex-wrap">
+                          <button
+                            onClick={() => { setViewingSubmissionId(req.id); setShowViewSubmissionModal(true); }}
+                            className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all bg-brand hover:bg-deep text-white"
+                          >
+                            <Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> View Submission
+                          </button>
+                          {outstandingDocs.length > 0 && (
+                            <button onClick={() => requestOutstanding(currentReq, cur)} className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all text-white hover:opacity-90" style={{ background: "#B45309" }}>
+                              <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request Missing Documents
+                            </button>
                           )}
                         </div>
                       )}
                     </div>
                   </div>
+
+                  {/* The request link, full width so the whole URL fits. */}
+                  {req.token && <div className="border-t border-line"><RequestLinkRow token={req.token} uploads={(req.uploads?.length ?? 0) + got.files} className="px-5 py-2.5" /></div>}
+
+
+                  {requestedListOpen && (
+                    <div className="border-t border-line bg-offwhite px-5 py-3">
+                      <div className="eyebrow mb-2">Requested in {req.id}</div>
+                      {/* The original request: what was asked for — never the client's response. */}
+                      <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
+                        {req.requestedDocs.map((name) => (
+                          <li key={name} className="bg-white border border-line rounded-lg px-3 py-2">
+                            <span className="text-sm font-semibold text-ink break-words">{name}</span>
+                          </li>
+                        ))}
+                        {asked.map((o) => (
+                          <li key={o.key} className="bg-white border border-line rounded-lg px-3 py-2 flex items-center gap-2">
+                            <span className="text-sm font-semibold text-ink break-words">{o.title}</span>
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {answered && receivedListOpen && (
+                    // Every requested item, with where the client's response leaves it.
+                    <div className="border-t border-line bg-offwhite px-5 py-3">
+                      <div className="eyebrow mb-2">Response to {req.id}</div>
+                      <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
+                        {cur.rows.map((row) => {
+                          const label = row.state === "Received" ? "Received" : row.state === "Partially received" ? "Partially received" : row.state === "Not matched" ? "Can't be determined" : "Missing";
+                          const pill = row.state === "Received" ? "pill pill-complete" : row.state === "Partially received" ? "pill pill-progress" : row.state === "Not matched" ? "pill pill-neutral" : "pill pill-risk";
+                          const received = row.state === "Received" || row.state === "Partially received";
+                          return (
+                            <li key={row.name} className="bg-white border border-line rounded-lg px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm font-semibold text-ink truncate">{row.name}{row.kind === "media" && <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>}</span>
+                                <span className={`${pill} shrink-0`}>{label}</span>
+                              </div>
+                              {received && row.files.length > 0 && (
+                                <div className="text-xs text-[#5B6B78] mt-1 break-words">Received: {row.files.map((f) => f.name).join(", ")}</div>
+                              )}
+                              {row.missingParts && <div className="text-xs text-[#B45309] mt-0.5">Outstanding: {row.missingParts.join(", ")}</div>}
+                              {!received && <div className="text-xs text-[#B45309] mt-0.5">{REQ_STATE_NOTE[row.state] ?? "Not received yet."}</div>}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                {/* Requested documents — the files behind each requested item */}
+                <div className="lg-card overflow-hidden">
+                  <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line">
+                    <h3 className="card-title">Requested documents</h3>
+                    {cur.legacy && <span className="text-[11px] text-[#8A98A3]">From the case documents on file</span>}
+                  </div>
+                  <ul className="divide-y divide-line">
+                    {cur.rows.map((row) => (
+                      <li key={row.name} className="px-3.5 py-2.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-ink">{row.name}</span>
+                          {row.kind === "media" && <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>}
+                          <span className={REQ_STATE_PILL[row.state]}>{REQ_STATE_LABEL[row.state]}</span>
+                        </div>
+                        {row.files.length === 0 || row.state === "Uploaded, not submitted" ? (
+                          <div className="text-xs text-[#8A98A3] mt-0.5">{REQ_STATE_NOTE[row.state]}</div>
+                        ) : (
+                          <ul className="mt-1 space-y-1">
+                            {row.files.map((f) => (
+                              <li key={f.key} className="flex items-center justify-between gap-2">
+                                <div className="min-w-0 flex items-center gap-x-2 gap-y-0.5 flex-wrap text-xs text-[#5B6B78]">
+                                  <span className="mono-ref text-ink truncate max-w-[220px]" title={f.name}>{f.name}</span>
+                                  <span>{f.source}</span>
+                                  {f.at && <span>{atLabel(f.at)}</span>}
+                                  {/* Processing is a separate matter — shown only when it needs attention */}
+                                  {f.status && f.status !== "Processed" && f.status !== "Reviewed" && (
+                                    <span className="text-[11px] text-[#8A98A3]">
+                                      File: <span className={`pill ${DOC_STATUS_PILL[f.status]}`}>{f.status === "Attorney Review Required" ? "Needs Review" : f.status}</span>
+                                    </span>
+                                  )}
+                                </div>
+                                {f.doc && (
+                                  // The same row actions as the Documents tab: Preview,
+                                  // Insights, and More actions (Edit, Delete, Download).
+                                  <RowActionGroup name={f.doc.name} onEdit={() => openEdit(f.doc!)} onDelete={() => { setDeleteDoc(f.doc!); setDeleteError(null); }}>
+                                    <DocActions
+                                      size="row"
+                                      onPreview={() => handlePreviewDocument(f.doc)}
+                                      onInsights={() => handleOpenInsights(f.doc)}
+                                      onDownload={() => handleDownloadDocument(f.doc)}
+                                      disabled={{
+                                        insights: !processingFinished(f.doc) ? "Available once processing finishes" : undefined,
+                                        download: f.doc.storageKey ? undefined : "The original file is not stored in this browser",
+                                      }}
+                                    />
+                                  </RowActionGroup>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {row.viaCaseFile && (
+                          <div className="text-xs text-[#5B6B78] mt-1">Fulfilled by a file on the case: this request predates submission tracking, so its files are not linked to it.</div>
+                        )}
+                        {row.state === "On file" && (
+                          <div className="text-xs text-[#B45309] mt-1">{REQ_STATE_NOTE["On file"]}</div>
+                        )}
+                        {row.missingParts && (
+                          <div className="text-xs text-[#B45309] mt-1">Not received: {row.missingParts.join(", ")}</div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* 5 · Still outstanding — names, from the comparison above */}
+                  {(outstandingDocs.length > 0 || notYetRequested.length > 0) && (
+                    <div className="px-3.5 py-2.5 border-t border-line bg-[#FFFBF2] space-y-1.5">
+                      <div className="eyebrow" style={{ color: "#854F0B" }}>Still outstanding</div>
+                      {outstandingDocs.length > 0 && (
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <span className="text-xs text-[#854F0B]">
+                            Requested in {currentReq.id}: {outstandingDocs.map((x) => (x.missingParts ? x.missingParts.map((m) => `${m} (part of ${x.name})`).join(", ") : x.name)).join(", ")}
+                          </span>
+                          {answered && (
+                            <button onClick={() => requestOutstanding(currentReq, cur)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold text-white" style={{ background: "#B45309" }}>
+                              <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request Missing Documents
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {notYetRequested.length > 0 && (
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <span className="text-xs text-[#854F0B]">Additional case-file requirement, not in the request: {notYetRequested.map((m) => m.title).join(", ")}</span>
+                          <button onClick={() => openMissingRequestModal(notYetRequested)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[#FAC775] bg-white text-xs font-semibold text-[#854F0B] hover:bg-[#FAEEDA]">
+                            <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -3448,9 +3370,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
               </div>
               <div className="flex justify-end gap-2 px-6 py-4 bg-wash border-t border-line shrink-0">
                 <button onClick={() => setShowViewSubmissionModal(false)} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all">Close</button>
-                <button onClick={() => { setShowViewSubmissionModal(false); handleOpenAdditionalRequest(); }} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
-                  <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Additional Request
-                </button>
               </div>
             </div>
           </div>
@@ -3928,6 +3847,36 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
           </div>
         </div>
       )}
+
+      {removingReqId && (() => {
+        const r = storedRequests.find((x) => x.id === removingReqId);
+        if (!r) return null;
+        const sent = r.status !== "Draft";
+        const answered = (r.submissions?.length ?? 0) > 0 || r.status === "Completed";
+        const confirm = () => {
+          removeIntakeRequestFromDashboard(r.token, INTAKE_SENDER.name);
+          // Show the newest remaining request rather than the removed one.
+          if (progressReqId === r.id) setProgressReqId(null);
+          setRemovingReqId(null);
+        };
+        return (
+          <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={() => setRemovingReqId(null)}>
+            <div role="alertdialog" aria-modal="true" aria-label={`Delete ${r.id}`} className="bg-white rounded-xl w-full max-w-md shadow-sm" onClick={(e) => e.stopPropagation()}>
+              <div className="px-6 py-5 space-y-2">
+                <h2 className="card-title flex items-center gap-2"><Trash2 className="w-4 h-4 text-[#B91C1C]" strokeWidth={1.75} /> Delete {r.id}?</h2>
+                {sent && <p className="body-text">This request has already been sent. Removing it from the dashboard will not recall the email or remove the copy the client has already received.</p>}
+                <p className="text-xs text-[#5B6B78]">
+                  Only {r.id} is removed from this dashboard{answered ? "; the documents the client submitted stay on the case" : ""}. Its record is kept, and the client link is not revoked.
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2 px-6 py-4 bg-wash border-t border-line rounded-b-xl">
+                <button onClick={() => setRemovingReqId(null)} className="btn btn-secondary">Cancel</button>
+                <button onClick={confirm} className="btn bg-[#B91C1C] border border-[#B91C1C] text-white hover:bg-[#991B1B]">Delete request</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {retainerDelete && (
         <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={() => setRetainerDelete(null)}>

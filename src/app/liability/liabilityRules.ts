@@ -32,6 +32,8 @@ export interface Authority {
 export interface AllocationRule {
   label: string;
   value: string;
+  /** The value in a few words, for compact lists. */
+  short?: string;
   authorityId?: string;
 }
 
@@ -39,13 +41,17 @@ export interface JurisdictionRules {
   state: string;
   faultRule: FaultRuleId;
   faultRuleLabel: string;
+  /** The fault rule's name alone, for compact summaries. */
+  faultRuleName: string;
   /** What plaintiff fault does to recovery, in a sentence. */
   plaintiffFault: string;
+  /** The same, in one short line for the summary card. */
+  plaintiffFaultShort: string;
   /** The threshold at which plaintiff fault bars recovery, if any. */
   threshold: string;
   jointAndSeveral: string;
-  /** No-fault / PIP treatment for the claim type. */
-  noFault: { title: string; detail: string; applicable: boolean };
+  /** No-fault / PIP treatment for the claim type; `short` is the summary card's line. */
+  noFault: { title: string; detail: string; short: string; applicable: boolean };
   allocation: AllocationRule[];
   authorities: Authority[];
 }
@@ -54,23 +60,26 @@ const ILLINOIS: JurisdictionRules = {
   state: "Illinois",
   faultRule: "mod51",
   faultRuleLabel: "Modified comparative fault · barred above 50%",
+  faultRuleName: "Modified comparative fault",
   plaintiffFault:
     "Plaintiff fault of 50% or less reduces damages in proportion; more than 50% of the proximate cause bars recovery.",
+  plaintiffFaultShort: "Plaintiff fault reduces damages proportionally; above 50% bars recovery.",
   threshold: "Barred only above 50% plaintiff fault",
   jointAndSeveral:
     "Defendants found liable answer jointly for medical expenses. For other damages, a defendant under 25% of total fault is severally liable; 25% or more, jointly. Exceptions in § 2-1118 may change this for this claim — not verified.",
   noFault: {
     title: "Not applicable",
     detail: "No-fault / PIP rules govern motor-vehicle claims. This is a delayed-treatment claim against a care facility, so no threshold applies.",
+    short: "No-fault/PIP rules generally concern motor-vehicle claims; this case concerns delayed treatment.",
     applicable: false,
   },
   allocation: [
-    { label: "Plaintiff fault", value: "Reduces recovery; bars above 50%", authorityId: "il-2-1116" },
-    { label: "Joint and several", value: "Medical expenses: joint · other damages: 25% threshold", authorityId: "il-2-1117" },
-    { label: "Exceptions", value: "May apply — § 2-1118 not verified for this claim", authorityId: "il-2-1118" },
-    { label: "Nonparty allocation", value: "Who counts toward total fault is set by § 2-1117 — not verified", authorityId: "il-2-1117" },
-    { label: "Contribution", value: "Among defendants found liable, under the Contribution Act", authorityId: "il-740-100" },
-    { label: "Settlement credit", value: "Reduces recovery by any good-faith settlement", authorityId: "il-740-100" },
+    { label: "Plaintiff fault", value: "Reduces recovery; bars above 50%", short: "Reduces; bars above 50%", authorityId: "il-2-1116" },
+    { label: "Joint and several", value: "Medical expenses: joint · other damages: 25% threshold", short: "Medical joint · others 25% rule", authorityId: "il-2-1117" },
+    { label: "Exceptions", value: "May apply — § 2-1118 not verified for this claim", short: "May apply · not verified", authorityId: "il-2-1118" },
+    { label: "Nonparty allocation", value: "Who counts toward total fault is set by § 2-1117 — not verified", short: "Set by § 2-1117 · not verified", authorityId: "il-2-1117" },
+    { label: "Contribution", value: "Among defendants found liable, under the Contribution Act", short: "Among liable defendants", authorityId: "il-740-100" },
+    { label: "Settlement credit", value: "Reduces recovery by any good-faith settlement", short: "Good-faith settlements credited", authorityId: "il-740-100" },
   ],
   authorities: [
     {
