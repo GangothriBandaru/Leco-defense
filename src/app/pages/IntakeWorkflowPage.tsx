@@ -2399,9 +2399,18 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
 
                 {/* Requested documents — the files behind each requested item */}
                 <div className="lg-card overflow-hidden">
-                  <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line">
-                    <h3 className="card-title">Requested documents</h3>
-                    {cur.legacy && <span className="text-[11px] text-[#8A98A3]">From the case documents on file</span>}
+                  {/* The selected request's counts — only items the client's own files fulfil count as received. */}
+                  <div className="flex items-center justify-between gap-x-4 gap-y-1 flex-wrap px-4 py-3 border-b border-line">
+                    <h3 className="card-title" title={cur.legacy ? "From the case documents on file" : undefined}>Requested documents</h3>
+                    <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-xs text-[#5B6B78]">
+                      <span><span className="font-semibold text-ink tabular-nums">{cur.total}</span> requested</span>
+                      <span className="text-[#C5CED6]">·</span>
+                      <span><span className="font-semibold text-ink tabular-nums">{cur.satisfied}</span> received</span>
+                      <span className="text-[#C5CED6]">·</span>
+                      <span><span className={`font-semibold tabular-nums ${cur.outstanding.length ? "text-[#B45309]" : "text-ink"}`}>{cur.outstanding.length}</span> outstanding</span>
+                      <span className="text-[#C5CED6]">·</span>
+                      <span className="font-semibold text-ink tabular-nums">{cur.pct}%</span>
+                    </div>
                   </div>
                   <ul className="divide-y divide-line">
                     {cur.rows.map((row) => (
