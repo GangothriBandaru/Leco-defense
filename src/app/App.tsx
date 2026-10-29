@@ -2,6 +2,10 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { DashboardSidebar } from "./components/DashboardSidebar";
 import { DashboardTopbar, DocumentTrackerButton } from "./components/DashboardTopbar";
 import { useCaseDetails } from "./intake/caseDetailsStore";
+import { DocumentTrackerPage } from "./pages/DocumentTrackerPage";
+
+// The Notes stage names, as the stage navigator names them.
+const NAV_STAGE: Record<string, string> = { Collection: "Client Intake", Analysis: "Analysis", Valuation: "Valuation", "Case Ready": "Case Ready" };
 import { Toaster } from "./components/ui/sonner";
 import { GlobalCaseRepoPage } from "./pages/GlobalCaseRepoPage";
 import { ClientsPage } from "./pages/ClientsPage";
@@ -97,12 +101,12 @@ export default function App() {
       ...(caseJurisdiction && { jurisdiction: caseJurisdiction }),
     };
   }, [openedCase, savedCaseDetails]);
-  // Bumped by the Document Tracker button; the Case Discovery page scrolls to
-  // its Documents section and clears it.
-  const [docTrackerRequest, setDocTrackerRequest] = useState(0);
+  // The page the Document Tracker was opened from, which it returns to.
+  const [trackerReturn, setTrackerReturn] = useState("workflow");
   const openDocumentTracker = () => {
-    setDocTrackerRequest((n) => n + 1);
-    setActivePage("workflow");
+    if (activePage !== "tracker") setTrackerReturn(activePage);
+    setActivePage("tracker");
+    document.querySelector("main")?.scrollTo(0, 0);
   };
   const [pipeline, setPipeline] = useState<PipelineState>(INITIAL_PIPELINE);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -271,8 +275,6 @@ export default function App() {
             onContinue={() => setActivePage("analysis")}
             onStageClick={handleStageNavigation}
             onBackToIntake={() => setActivePage("intake")}
-            focusDocumentsRequest={docTrackerRequest}
-            onFocusDocumentsHandled={() => setDocTrackerRequest(0)}
           />
         );
       case "classification":
@@ -434,6 +436,18 @@ export default function App() {
             onNavigateToValuation={() => setActivePage("valuation")}
           />
         );
+      case "tracker":
+        return selectedCase ? (
+          <DocumentTrackerPage
+            key={caseKey}
+            caseData={selectedCase}
+            documents={pipeline.documents}
+            stage={NAV_STAGE[STAGE_BY_PAGE[trackerReturn]] ?? "Client Intake"}
+            backLabel={`Back to ${trackerReturn === "workflow" ? "Case Discovery" : PAGE_LABEL[trackerReturn] ?? "case"}`}
+            onBack={() => setActivePage(trackerReturn)}
+            onStageClick={handleStageNavigation}
+          />
+        ) : <CaseIntakePage onOpenWorkflow={handleOpenWorkflow} />;
       case "intake":
         return <CaseIntakePage onOpenWorkflow={handleOpenWorkflow} />;
       case "cases":
@@ -465,6 +479,7 @@ export default function App() {
     deliverable: "Case Ready",
     workspace: "Case Ready",
   };
+  STAGE_BY_PAGE.tracker = STAGE_BY_PAGE[trackerReturn] ?? "";
   const currentStage = STAGE_BY_PAGE[activePage] ?? "";
   const currentCaseName = selectedCase?.caseName ?? "";
   // Human label for wherever the attorney currently is, for the assistant.
@@ -472,7 +487,7 @@ export default function App() {
     intake: "Case Intake", workflow: "Case Intake", classification: "Classification",
     analysis: "Analysis", jurisdiction: "Attorney Jurisdiction Review", defendants: "Defendant Analysis", valuation: "Valuation", "case-ready": "Case Ready", deliverable: "Case Ready",
     workspace: "Case Workspace", cases: "Case Workspace", clients: "Clients",
-    communication: "Communication", demands: "Demand Letters", templates: "Templates",
+    communication: "Communication", demands: "Demand Letters", templates: "Templates", tracker: "Document Tracker",
   };
 
   return (

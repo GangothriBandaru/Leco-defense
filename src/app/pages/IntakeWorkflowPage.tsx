@@ -62,9 +62,6 @@ interface IntakeWorkflowPageProps {
   onContinue?: () => void;
   onStageClick?: (stageName: string) => void;
   onBackToIntake?: () => void;
-  /** Non-zero when the Document Tracker asks for the Documents section. */
-  focusDocumentsRequest?: number;
-  onFocusDocumentsHandled?: () => void;
 }
 
 const documentCategories = [
@@ -162,7 +159,7 @@ function NextStepBox({ text, ctaLabel, onClick }: { text: string; ctaLabel: stri
   );
 }
 
-export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDocumentsUpdate, onContinue, onStageClick, onBackToIntake, focusDocumentsRequest, onFocusDocumentsHandled }: IntakeWorkflowPageProps) {
+export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDocumentsUpdate, onContinue, onStageClick, onBackToIntake }: IntakeWorkflowPageProps) {
   // Default case data if none provided
   const defaultCaseData = {
     caseName: "Estate of Miller vs Logistics Co.",
@@ -1575,17 +1572,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
       </div>
     </div>
   );
-
-  useEffect(() => {
-    if (!focusDocumentsRequest) return;
-    setDocumentsSubTab("intake");
-    setDocFilter("all");
-    setDocSearch("");
-    window.setTimeout(() => {
-      document.getElementById("documents-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
-    onFocusDocumentsHandled?.();
-  }, [focusDocumentsRequest]);
 
   return (
     <div className="min-h-screen bg-wash">
