@@ -320,6 +320,7 @@ export default function App() {
             onOpenDetail={openAnalysisDetail}
             onDocumentsUpdate={(fn) => setPipeline((prev) => ({ ...prev, documents: fn(prev.documents) }))}
             onOpenChronology={() => openDeliverable("chronology", "analysis")}
+            onOpenTracker={openDocumentTracker}
           />
         );
       case "analysis-detail":
@@ -342,6 +343,7 @@ export default function App() {
             onOpenDetail={openAnalysisDetail}
             onDocumentsUpdate={(fn) => setPipeline((prev) => ({ ...prev, documents: fn(prev.documents) }))}
             onOpenChronology={() => openDeliverable("chronology", "analysis")}
+            onOpenTracker={openDocumentTracker}
           />
         );
       case "jurisdiction":
@@ -500,7 +502,7 @@ export default function App() {
   // Human label for wherever the attorney currently is, for the assistant.
   const PAGE_LABEL: Record<string, string> = {
     intake: "Case Intake", workflow: "Case Intake", classification: "Classification", conflict: "Conflict Check & Case Details",
-    analysis: "Analysis", jurisdiction: "Attorney Jurisdiction Review", defendants: "Defendant Analysis", valuation: "Valuation", "case-ready": "Case Ready", deliverable: "Case Ready",
+    analysis: "Analysis", "analysis-detail": "Analysis", jurisdiction: "Attorney Jurisdiction Review", defendants: "Defendant Analysis", valuation: "Valuation", "case-ready": "Case Ready", deliverable: "Case Ready",
     workspace: "Case Workspace", cases: "Case Workspace", clients: "Clients",
     communication: "Communication", demands: "Demand Letters", templates: "Templates", tracker: "Document Tracker",
   };

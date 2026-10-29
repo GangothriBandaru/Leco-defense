@@ -1,11 +1,20 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { FileTypeIcon, FileTypeTag } from "../components/fileType";
 import { StageNavigator } from "../components/StageNavigator";
 import {
   ChevronLeft, ChevronRight, ChevronDown, CheckCircle, FileText, Eye, Download, X,
   AlertCircle, ArrowRight, User, Building2, Shield, Scale, Stethoscope, Gavel,
-  Users, Bot, Sparkles, ArrowUpRight, Plus, Pencil, Trash2, RotateCcw, ClipboardList, ExternalLink, CalendarDays
+  Users, Bot, Sparkles, ArrowUpRight, Plus, Pencil, Trash2, RotateCcw, ClipboardList, ExternalLink, CalendarDays,
+  GitCompareArrows, FileSearch,
 } from "lucide-react";
+import { buildCaseEvidence } from "../evidence/caseEvidence";
+import { useCaseDecisions, setFocus } from "../evidence/decisionStore";
+import { EvidenceConflictsWorkspace } from "../evidence/EvidenceConflictsWorkspace";
+import { DemandAnalysisWorkspace } from "../evidence/DemandAnalysisWorkspace";
+import { useCaseDetails } from "../intake/caseDetailsStore";
+import { resolveCasePolicy } from "../insurance/casePolicy";
+import { resolveCaseFacts } from "../conflict/caseFacts";
+import { useTracker } from "../tracker/trackerStore";
 import { INSURANCE_ANALYSIS } from "../insurance/insuranceData";
 import { Button } from "../components/ui/button";
 import { DocActions, DocumentWorkspaceModal, RowMenu, RowActionGroup } from "../components/DocumentWorkspace";
@@ -62,9 +71,11 @@ interface AnalysisPageProps {
   onOpenChronology?: () => void;
   /** Changes the case documents (edit, delete) from their latest value. */
   onDocumentsUpdate?: (fn: (docs: CaseDocument[]) => CaseDocument[]) => void;
+  /** Opens the Document Tracker for this case. */
+  onOpenTracker?: () => void;
 }
 
-export type AnalysisDetail = "liability" | "injury" | "violations" | "timeline";
+export type AnalysisDetail = "liability" | "injury" | "violations" | "timeline" | "conflicts" | "demand";
 
 // Case narrative — incident → treatment → injury → damages → case ready
 interface TimelineEvent {
@@ -358,7 +369,7 @@ function EventFormModal({
   );
 }
 
-export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToIntake, onProceedToValuation, onOpenInsurance, onOpenJurisdiction, onOpenDefendants, governingLaw, scrollToSection, detail, onOpenDetail, onBackToAnalysis, onOpenChronology, onDocumentsUpdate }: AnalysisPageProps) {
+export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToIntake, onProceedToValuation, onOpenInsurance, onOpenJurisdiction, onOpenDefendants, governingLaw, scrollToSection, detail, onOpenDetail, onBackToAnalysis, onOpenChronology, onDocumentsUpdate, onOpenTracker }: AnalysisPageProps) {
   // Returning from a sub-page lands back on the section it was opened from.
   useEffect(() => {
     if (!scrollToSection) return;
@@ -660,7 +671,18 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
     }
   };
 
-  // The five analysis cards — counts read from the findings themselves.
+  // Evidence Conflicts and Demand & Complaint Analysis read the case documents themselves.
+  const caseRecord: any = data;
+  const evidence = useMemo(() => buildCaseEvidence(caseRecord, documents), [data.caseId, caseRecord.caseType, data.summary, documents]);
+  const decisions = useCaseDecisions(data.caseId);
+  const savedDetails = useCaseDetails(data.caseId);
+  const facts = useMemo(() => resolveCaseFacts(caseRecord, savedDetails, resolveCasePolicy(caseRecord, documents)), [data.caseId, savedDetails, documents]);
+  const { requests: trackerRequests } = useTracker(data.caseId);
+  const conflictsDecided = evidence.conflicts.filter((c) => decisions.items[`conflict:${c.id}`]).length;
+  const positionsSet = evidence.claims.filter((c) => decisions.items[`claim:${c.id}`]).length;
+  const openConflict = (id: string) => { setFocus(id); onOpenDetail?.("conflicts"); document.querySelector("main")?.scrollTo(0, 0); };
+
+  // The analysis cards — counts read from the findings themselves.
   const analysisCards: { title: string; category: string; icon: any; description: string; count?: number; meta: string; onOpen?: () => void }[] = [
     { title: "Liability Signals", category: "Liability", icon: Scale, count: liabilityCount, meta: `${liabilityCount} ${liabilityCount === 1 ? "finding" : "findings"}`,
       description: "Key findings identifying potential liability and the evidence supporting each finding.", onOpen: () => onOpenDetail?.("liability") },
@@ -674,6 +696,12 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
       description: "Review the treatment timeline, key medical events, and supporting records from the incident through the present.", onOpen: onOpenChronology },
     { title: "Case Timeline Overview", category: "Timeline", icon: CalendarDays, meta: `${events.length} key ${events.length === 1 ? "event" : "events"}`,
       description: "Key events extracted from the case timeline, with supporting evidence for each event.", onOpen: () => onOpenDetail?.("timeline") },
+    { title: "Evidence Conflicts", category: "Evidence", icon: GitCompareArrows, count: evidence.conflicts.length,
+      meta: evidence.conflicts.length ? `${evidence.conflicts.length - conflictsDecided} open · ${conflictsDecided} decided` : "No conflicts found",
+      description: "Review disputed facts across statements, records, and expert evidence.", onOpen: () => onOpenDetail?.("conflicts") },
+    { title: "Demand & Complaint Analysis", category: "Demand", icon: FileSearch, count: evidence.claims.length,
+      meta: evidence.claims.length ? `${positionsSet} of ${evidence.claims.length} positions set` : "No claims found",
+      description: "Compare the plaintiff's demand and complaint against available evidence, identify gaps, and assess exposure.", onOpen: () => onOpenDetail?.("demand") },
   ];
 
   const DETAIL_META: Record<AnalysisDetail, { title: string; category: string; icon: any; count: number; description: string }> = {
@@ -681,10 +709,16 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
     injury: { title: "Injury Signals", category: "Medical", icon: Stethoscope, count: injuryCount, description: "Key injury findings, medical evidence, and documented impacts relevant to the case." },
     violations: { title: "Violation Analysis", category: "Analysis", icon: Gavel, count: violationCount, description: "Identified violations, supporting evidence, and their relevance to potential liability." },
     timeline: { title: "Case Timeline Overview", category: "Timeline", icon: CalendarDays, count: events.length, description: "Key events extracted from the case timeline, with supporting evidence for each event." },
+    conflicts: { title: "Evidence Conflicts", category: "Evidence", icon: GitCompareArrows, count: evidence.conflicts.length, description: "Review disputed facts across statements, records, and expert evidence." },
+    demand: { title: "Demand & Complaint Analysis", category: "Demand", icon: FileSearch, count: evidence.claims.length, description: "Compare the plaintiff's demand and complaint against available evidence, identify gaps, and assess exposure." },
   };
   // One findings set on its own page: the same cards, evidence and Preview /
   // Insights the stage showed in its tabs, every finding at once.
   const renderDetail = (signalTab: AnalysisDetail) => {
+    if (signalTab === "conflicts") return <EvidenceConflictsWorkspace caseId={data.caseId} ev={evidence} />;
+    if (signalTab === "demand") return (
+      <DemandAnalysisWorkspace caseId={data.caseId} ev={evidence} facts={facts} requests={trackerRequests} onOpenConflict={openConflict} onOpenTracker={onOpenTracker} />
+    );
     const meta = DETAIL_META[signalTab];
     // Liability Signals: the full liability analysis workspace, when the case has one.
     if (signalTab === "liability" && liabilityRecord) return (
