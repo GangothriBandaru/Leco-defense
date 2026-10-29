@@ -8,6 +8,7 @@ import { useSyncExternalStore } from "react";
 export interface CaseDetails {
   caseName?: string;
   caseType?: string;
+  caseSubType?: string;
   insuredName?: string;
   insuredEmail?: string;
   insuredPhone?: string;

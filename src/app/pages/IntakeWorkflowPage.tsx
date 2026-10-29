@@ -31,6 +31,10 @@ import { Video as VideoIcon, ScanLine } from "lucide-react";
 const ADDITIONAL_DOCS = ["Wage Loss Records", "Employment Records", "Pharmacy Records"];
 const MEDIA_ICON = { videos: VideoIcon, scenePhotos: Camera, medicalImages: ScanLine } as const;
 
+// How each recorded source reads on the defense side: files the firm uploaded
+// come from defense counsel; plaintiff-produced records stay the plaintiff's.
+const SOURCE_LABEL: Record<CaseDocument["source"], string> = { Plaintiff: "Plaintiff", Attorney: "Defense Counsel" };
+
 function NewBadge() {
   return <span className="pill pill-neutral shrink-0 text-[10px] font-bold tracking-[0.06em]">NEW</span>;
 }
@@ -182,6 +186,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const cardDetails: CaseDetails = {
     caseName: savedDetails?.caseName ?? data.caseName,
     caseType: savedDetails?.caseType ?? data.caseType,
+    caseSubType: savedDetails?.caseSubType ?? (data as { caseSubType?: string }).caseSubType,
     insuredName: savedDetails?.insuredName ?? policy.namedInsured,
     insuredEmail: savedDetails?.insuredEmail,
     insuredPhone: savedDetails?.insuredPhone,
@@ -1214,42 +1219,43 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
     (d.requestId && allStoredRequests.find((r) => r.id === d.requestId)?.plaintiff) || data.plaintiff || "",
   ).filter(Boolean))];
   const receivedSummaryCard = (
-    <div id="received-summary" className="bg-white border border-line rounded-xl overflow-hidden">
-      <div className="flex items-center gap-4 flex-wrap px-5 py-3">
-        <dl className="flex flex-1 flex-wrap items-start gap-y-3 divide-x divide-[#EEF3F6] min-w-0 -ml-5">
-          <div className="px-5">
-            <dt className="eyebrow mb-1">Received</dt>
-            <dd className="text-sm font-semibold text-ink whitespace-nowrap">
-              {receivedDocs.length === 0
-                ? <span className="font-normal text-[#8A98A3]">Not yet received</span>
-                : <>{lastReceived ?? "Received"}{receivedTimes.length > 1 && <span className="font-normal text-[#5B6B78]"> · latest</span>}</>}
-            </dd>
-          </div>
-          <div className="px-5 min-w-0">
-            <dt className="eyebrow mb-1">Received From</dt>
-            <dd className="text-sm font-semibold text-ink truncate">
-              {receivedFrom.length
-                ? <>{receivedFrom.join(", ")} <span className="font-normal text-[#5B6B78]">· Plaintiff</span></>
-                : <span className="font-normal text-[#8A98A3]">{receivedDocs.length ? "Not recorded" : "—"}</span>}
-            </dd>
-          </div>
-          <div className="px-5">
-            <dt className="eyebrow mb-1">Received Documents</dt>
-            <dd className="text-sm font-semibold text-ink">{receivedDocs.length}</dd>
-          </div>
-        </dl>
-        <button
-          onClick={() => setReceivedOpen((o) => !o)}
-          disabled={receivedDocs.length === 0}
-          title={receivedDocs.length === 0 ? "No documents have been received yet" : undefined}
-          aria-expanded={receivedOpen}
-          aria-controls="received-list"
-          className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
-        >
-          {receivedOpen ? "Hide" : "View"}
-          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${receivedOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
-        </button>
-      </div>
+    <div id="received-summary" className="w-fit max-w-full bg-white border border-line rounded-xl overflow-hidden">
+      <dl className="flex flex-wrap items-start gap-y-3 py-3 divide-x divide-[#EEF3F6]">
+        <div className="px-5">
+          <dt className="eyebrow mb-1">Received</dt>
+          <dd className="text-sm font-semibold text-ink leading-5 whitespace-nowrap">
+            {receivedDocs.length === 0
+              ? <span className="font-normal text-[#8A98A3]">Not yet received</span>
+              : <>{lastReceived ?? "Received"}{receivedTimes.length > 1 && <span className="font-normal text-[#5B6B78]"> · latest</span>}</>}
+          </dd>
+        </div>
+        <div className="px-5 min-w-0">
+          <dt className="eyebrow mb-1">Received From</dt>
+          <dd className="text-sm font-semibold text-ink leading-5 truncate">
+            {receivedFrom.length
+              ? <>{receivedFrom.join(", ")} <span className="font-normal text-[#5B6B78]">· Plaintiff</span></>
+              : <span className="font-normal text-[#8A98A3]">{receivedDocs.length ? "Not recorded" : "—"}</span>}
+          </dd>
+        </div>
+        <div className="px-5">
+          <dt className="eyebrow mb-1">Received Documents</dt>
+          <dd className="flex items-baseline gap-3 text-sm font-semibold text-ink leading-5">
+            {receivedDocs.length}
+            {receivedDocs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setReceivedOpen((o) => !o)}
+                aria-expanded={receivedOpen}
+                aria-controls="received-list"
+                className="inline-flex items-center gap-0.5 text-xs font-semibold text-deep hover:text-ink transition-colors"
+              >
+                {receivedOpen ? "Hide" : "View"}
+                <ChevronDown className={`w-3.5 h-3.5 self-center transition-transform ${receivedOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
+              </button>
+            )}
+          </dd>
+        </div>
+      </dl>
       {receivedOpen && receivedDocs.length > 0 && (
         <ul id="received-list" className="border-t border-line divide-y divide-line">
           {receivedDocs.map((doc) => (
@@ -1597,6 +1603,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
           <CaseSnapshot
             caseName={cardDetails.caseName ?? data.caseName}
             caseType={cardDetails.caseType}
+            caseSubType={cardDetails.caseSubType}
             caseId={data.caseId}
             summary={data.summary}
             insuredName={cardDetails.insuredName}
@@ -1772,7 +1779,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                                               )}
                                             </td>
                                             <td className="px-5 py-3 align-middle"><FileTypeTag name={doc.name} /></td>
-                                            <td className="px-5 py-3 align-middle text-sm text-[#5B6B78]">{doc.source}</td>
+                                            <td className="px-5 py-3 align-middle text-sm text-[#5B6B78] whitespace-nowrap">{SOURCE_LABEL[doc.source] ?? doc.source}</td>
                                             <td className="px-5 py-3 align-middle text-sm text-[#5B6B78] whitespace-nowrap">{doc.date}</td>
                                             <td className="px-5 py-3 align-middle">
                                               {/* The status, and the step it calls for — kept here so the
@@ -2650,6 +2657,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
       {editDoc && (
         <EditDocumentDialog
           doc={editDoc}
+          sourceLabels={SOURCE_LABEL}
           otherNames={sharedDocs.filter((d) => d.id !== editDoc.id).map((d) => d.name)}
           onSave={(patch, changed) => {
             // Details only — the stored file and its check stand.

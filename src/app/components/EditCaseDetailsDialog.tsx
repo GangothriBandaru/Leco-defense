@@ -94,6 +94,10 @@ export function EditCaseDetailsDialog({
                 {caseTypes.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>
+            <div className="hidden sm:block" />
+            <Field label="Sub-Type">
+              <input type="text" value={form.caseSubType ?? ""} onChange={set("caseSubType")} placeholder="e.g. Delayed Treatment" className={input} />
+            </Field>
           </div>
 
           <div className="space-y-4 pt-4 border-t border-line">

@@ -15,9 +15,11 @@ export interface DocumentDetailsPatch {
 
 /** Edits a document's details only — never its stored file or its check. */
 export function EditDocumentDialog({
-  doc, otherNames, onSave, onClose,
+  doc, otherNames, onSave, onClose, sourceLabels,
 }: {
   doc: CaseDocument;
+  /** Display names for the recorded sources; the stored values are unchanged. */
+  sourceLabels?: Record<CaseDocument["source"], string>;
   /** The other documents' names on the case, which this one must not repeat. */
   otherNames: string[];
   /** Saves; `changed` names the fields that moved, for the history. */
@@ -64,8 +66,8 @@ export function EditDocumentDialog({
             <label className="block">
               <span className="eyebrow block mb-1">Source</span>
               <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value as CaseDocument["source"] })} className={input}>
-                <option value="Plaintiff">Plaintiff</option>
-                <option value="Attorney">Attorney</option>
+                <option value="Plaintiff">{sourceLabels?.Plaintiff ?? "Plaintiff"}</option>
+                <option value="Attorney">{sourceLabels?.Attorney ?? "Attorney"}</option>
               </select>
             </label>
             <label className="block">

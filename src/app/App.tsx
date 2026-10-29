@@ -87,8 +87,8 @@ export default function App() {
   const savedCaseDetails = useCaseDetails(openedCase?.caseId);
   const selectedCase = useMemo(() => {
     if (!openedCase || !savedCaseDetails) return openedCase;
-    const { caseName, caseType } = savedCaseDetails;
-    return { ...openedCase, ...(caseName && { caseName }), ...(caseType && { caseType }) };
+    const { caseName, caseType, caseSubType } = savedCaseDetails;
+    return { ...openedCase, ...(caseName && { caseName }), ...(caseType && { caseType }), ...(caseSubType && { caseSubType }) };
   }, [openedCase, savedCaseDetails]);
   // Bumped by the Document Tracker button; the Case Discovery page scrolls to
   // its Documents section and clears it.
