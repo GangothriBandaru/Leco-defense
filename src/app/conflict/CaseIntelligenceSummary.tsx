@@ -55,13 +55,14 @@ export function CaseIntelligenceSummary({ d, dirty, blockers, onProceed }: {
   const contact = (...v: (string | undefined)[]) => v.filter(Boolean).join(" · ") || undefined;
 
   return (
-    <div id="case-intelligence" className="lg-card px-5 py-4 flex flex-col min-w-0">
+    <div id="case-intelligence" className="lg-card px-5 py-4 flex flex-col min-w-0 lg:max-h-full lg:min-h-0">
       <div className="flex items-center gap-2.5 mb-3 flex-wrap">
         <h2 className="section-header">Case Intelligence Summary</h2>
         <span className={`pill ${provided === total ? "pill-complete" : "pill-progress"}`} title="Counts each group once its key fact is saved">{provided} of {total} provided</span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-2.5 mb-3">
+      {/* Only the tiles scroll when the card is taller than the space below the stage bar; the action stays in view. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-2 mb-3 lg:min-h-0 lg:overflow-y-auto">
         <Tile icon={Building2} label="Insured" value={d.insuredName}>
           <Line k="Type" v={d.insuredType} />
           <Line k="Contact" v={contact(d.insuredContact, d.insuredEmail, d.insuredPhone)} />

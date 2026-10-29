@@ -9,7 +9,7 @@ import { resolveCaseFacts, join } from "../conflict/caseFacts";
 import { type Party, useConflictRecord, partyState, overallState } from "../conflict/conflictStore";
 import { CaseIntelligenceSummary } from "../conflict/CaseIntelligenceSummary";
 import { ConflictSearch } from "../conflict/ConflictSearch";
-import { CaseDetailsForm, validateCaseDetails, type SectionKey } from "../conflict/CaseDetailsForm";
+import { CaseDetailsForm, validateCaseDetails } from "../conflict/CaseDetailsForm";
 
 type Tab = "conflict" | "details";
 const TABS: { key: Tab; label: string }[] = [
@@ -48,7 +48,6 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
   const [tab, setTab] = useState<Tab>("conflict");
   // The form's working copy lives here, so switching tabs keeps unsaved edits.
   const [draft, setDraft] = useState<CaseDetails>(() => draftCache.get(caseId) ?? facts);
-  const [section, setSection] = useState<SectionKey>("insured");
   const [showErrors, setShowErrors] = useState(false);
   const dirty = !same(draft, facts);
   // Saved values that change elsewhere flow into a form with no edits of its own.
@@ -74,7 +73,11 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
     setShowErrors(true);
     if (Object.keys(errors).length) {
       toast("Fix the highlighted fields before saving.");
-      window.setTimeout(() => document.querySelector<HTMLElement>("[aria-invalid=true]")?.focus(), 30);
+      window.setTimeout(() => {
+        const el = document.querySelector<HTMLElement>("[aria-invalid=true]");
+        el?.focus({ preventScroll: true });
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 30);
       return;
     }
     const stored = saveCaseDetails(caseId, draft);
@@ -110,7 +113,6 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
 
   const goToDetails = () => {
     setTab("details");
-    setSection("plaintiff");
     window.setTimeout(() => {
       const el = document.getElementById(!facts.counselName ? "cd-counselName" : "cd-counselFirm");
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -142,9 +144,10 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
           <span className="text-[#5B6B78]">Stage 2 -</span> <span className="text-ink">Conflict Check &amp; Case Details</span>
         </h1>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6 items-start">
-          {/* The summary stays put; only the right-hand tab content changes. */}
-          <div className="min-w-0">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] gap-6 items-start">
+          {/* The summary stays in view below the stage bar while the right-hand
+              content scrolls; it keeps its own height, capped to the viewport. */}
+          <div className="min-w-0 lg:sticky lg:top-[171px] lg:max-h-[calc(100vh-251px)] lg:flex lg:flex-col">
             <CaseIntelligenceSummary d={facts} dirty={dirty} blockers={blockers} onProceed={onProceedToAnalysis} />
           </div>
 
@@ -187,8 +190,6 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
                 documents={documents}
                 dirty={dirty}
                 saved={facts}
-                section={section}
-                setSection={setSection}
                 onSave={save}
                 onDiscard={discard}
               />

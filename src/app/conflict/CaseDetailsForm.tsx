@@ -68,8 +68,15 @@ function F({ id, label, required, error, full, children }: { id: string; label: 
 }
 const Sub = ({ children }: { children: ReactNode }) => <h3 className="sm:col-span-2 eyebrow pt-1">{children}</h3>;
 const Divider = () => <div className="sm:col-span-2 border-t border-line my-1" />;
+/** A value kept in another section, shown here for reference only. */
+const Ref = ({ label, value, from }: { label: string; value?: string; from: string }) => (
+  <div>
+    <div className="block text-[13px] font-semibold text-[#0F1E2B] mb-1.5">{label}</div>
+    <p className="min-h-10 flex items-center text-sm text-ink rounded-lg bg-offwhite border border-line px-3 py-2">{value || <span className="text-[#8A98A3]">Not provided · set under {from}</span>}</p>
+  </div>
+);
 
-export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, documents, dirty, onSave, onDiscard, section, setSection }: {
+export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, documents, dirty, onSave, onDiscard }: {
   draft: CaseDetails;
   setDraft: (fn: (d: CaseDetails) => CaseDetails) => void;
   errors: Errors;
@@ -80,8 +87,6 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
   dirty: boolean;
   onSave: () => void;
   onDiscard: () => void;
-  section: SectionKey;
-  setSection: (s: SectionKey) => void;
 }) {
   const val = (k: K) => draft[k] ?? "";
   const set = (k: K) => (e: { target: { value: string } }) => setDraft((d) => ({ ...d, [k]: e.target.value }));
@@ -120,47 +125,33 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
   });
   const changed = (s: SectionKey) => SECTION_FIELDS[s].some((k) => (draft[k] ?? "").trim() !== (saved[k] ?? "").trim());
   const errorsIn = (s: SectionKey) => (showErrors ? Object.keys(errors).filter((k) => sectionOf(k) === s).length : 0);
-  const save = () => {
-    // Open the first section with a problem, so the highlighted field is visible.
-    const first = (Object.keys(errors) as K[])[0];
-    if (first) setSection(sectionOf(first));
-    onSave();
-  };
-  const meta = SECTIONS.find((s) => s.key === section)!;
   const totalErrors = showErrors ? Object.keys(errors).length : 0;
+  const head = (key: SectionKey, letter: string) => {
+    const m = SECTIONS.find((s) => s.key === key)!, n = errorsIn(key);
+    return (
+      <div className="flex items-start gap-3">
+        <span className="w-8 h-8 rounded-lg bg-tint text-deep inline-flex items-center justify-center shrink-0"><m.icon className="w-4 h-4" strokeWidth={1.75} /></span>
+        <div className="min-w-0 flex-1">
+          <div className="eyebrow">Section {letter}</div>
+          <h3 id={`cd-sec-${key}`} className="card-title">{m.label}</h3>
+          <p className="secondary-text mt-0.5">{m.sub}</p>
+        </div>
+        {n > 0 ? <span className="pill pill-risk whitespace-nowrap">{n} to fix</span> : changed(key) && <span className="pill pill-progress whitespace-nowrap">Edited</span>}
+      </div>
+    );
+  };
+  const grid = "grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5 mt-4";
 
   return (
-    <div className="space-y-4 min-w-0">
-      <div role="tablist" aria-label="Case Details sections" className="lg-card p-1.5 grid grid-cols-3 gap-1.5"
-        onKeyDown={(e) => {
-          if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-          const i = SECTIONS.findIndex((s) => s.key === section);
-          const next = SECTIONS[(i + (e.key === "ArrowRight" ? 1 : 2)) % 3].key;
-          setSection(next);
-          window.setTimeout(() => document.getElementById(`cd-sec-${next}`)?.focus(), 0);
-        }}>
-        {SECTIONS.map((s) => {
-          const on = section === s.key, n = errorsIn(s.key);
-          return (
-            <button key={s.key} id={`cd-sec-${s.key}`} type="button" role="tab" aria-selected={on} aria-controls="cd-panel" tabIndex={on ? 0 : -1} onClick={() => setSection(s.key)}
-              className={`relative min-w-0 px-2 sm:px-3 py-2.5 rounded-lg text-sm font-semibold transition-all inline-flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${on ? "bg-brand text-white shadow-sm" : "text-[#5B6B78] hover:text-ink hover:bg-wash"}`}>
-              <s.icon className="w-4 h-4 shrink-0 hidden sm:block" strokeWidth={1.75} />
-              <span className="truncate">{s.label}</span>
-              {n > 0 ? <span className={`text-[11px] rounded-full px-1.5 tabular-nums ${on ? "bg-white text-[#B91C1C]" : "bg-[#FEF2F2] text-[#B91C1C]"}`} aria-label={`${n} to fix`}>{n}</span>
-                : changed(s.key) && <span className={`w-1.5 h-1.5 rounded-full ${on ? "bg-white" : "bg-[#B45309]"}`} aria-label="Unsaved changes" />}
-            </button>
-          );
-        })}
+    <section aria-labelledby="cd-title" className="lg-card min-w-0">
+      <div className="px-6 pt-5 pb-4 border-b border-line">
+        <h2 id="cd-title" className="section-header">Case Details</h2>
+        <p className="secondary-text mt-0.5">The initial defense picture. Saved values update the Case Intelligence Summary.</p>
       </div>
 
-      <section id="cd-panel" role="tabpanel" aria-labelledby={`cd-sec-${section}`} className="lg-card">
-        <div className="px-6 pt-5 pb-4 border-b border-line">
-          <h2 className="section-header">{meta.label}</h2>
-          <p className="secondary-text mt-0.5">{meta.sub}</p>
-        </div>
-
-        <div className="px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5">
-          {section === "insured" && <>
+      <section aria-labelledby="cd-sec-insured" className="px-6 py-5 border-b border-line">
+        {head("insured", "A")}
+        <div className={grid}>
             <Sub>Insured</Sub>
             {text("insuredName", org ? "Organization name" : "Insured name", { required: true, placeholder: org ? "e.g. Logistics Co." : "Full legal name" })}
             {select("insuredType", "Insured type", INSURED_TYPES, { required: true })}
@@ -178,27 +169,32 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
             {text("policyName", "Policy type", { placeholder: "e.g. Commercial General Liability" })}
             {text("policyLimits", "Policy limits", { placeholder: "e.g. $1,000,000 / $2,000,000" })}
             {area("coverageNotes", "Additional policy details", "Reservation of rights, exclusions, other insurance")}
-          </>}
+        </div>
+      </section>
 
-          {section === "plaintiff" && <>
-            <Sub>Plaintiff</Sub>
+      <section aria-labelledby="cd-sec-plaintiff" className="px-6 py-5 border-b border-line">
+        {head("plaintiff", "B")}
+        <div className={grid}>
             {text("plaintiffName", "Plaintiff name", { required: true, placeholder: "Full legal name" })}
             {text("plaintiffLocation", "Plaintiff location", { placeholder: "City where the plaintiff lives" })}
+            {text("counselName", "Plaintiff counsel", { placeholder: "Attorney of record" })}
+            {text("counselFirm", "Plaintiff law firm", { placeholder: "Firm name" })}
+            {text("counselEmail", "Counsel email", { type: "email", placeholder: "name@firm.com" })}
+            {text("counselPhone", "Counsel phone", { type: "tel", placeholder: "+1 (555) 000-0000" })}
+            {text("counselAddress", "Counsel address", { placeholder: "Street, city, ZIP", full: true })}
+            <Divider />
+            <Sub>Plaintiff contact and jurisdiction</Sub>
             {text("plaintiffEmail", "Plaintiff email", { type: "email", placeholder: "name@example.com" })}
             {text("plaintiffPhone", "Plaintiff phone", { type: "tel", placeholder: "+1 (555) 000-0000" })}
             {text("plaintiffState", "Plaintiff state", { placeholder: "e.g. Illinois" })}
             {text("plaintiffCounty", "Plaintiff county", { placeholder: "e.g. Cook County" })}
             {text("plaintiffJurisdiction", "Plaintiff jurisdiction", { placeholder: "e.g. Cook County, IL", full: true })}
-            <Divider />
-            <Sub>Plaintiff's counsel</Sub>
-            {text("counselName", "Counsel name", { placeholder: "Attorney of record" })}
-            {text("counselFirm", "Law firm", { placeholder: "Firm name" })}
-            {text("counselEmail", "Counsel email", { type: "email", placeholder: "name@firm.com" })}
-            {text("counselPhone", "Counsel phone", { type: "tel", placeholder: "+1 (555) 000-0000" })}
-            {text("counselAddress", "Counsel address", { placeholder: "Street, city, ZIP", full: true })}
-          </>}
+        </div>
+      </section>
 
-          {section === "legal" && <>
+      <section aria-labelledby="cd-sec-legal" className="px-6 py-5">
+        {head("legal", "C")}
+        <div className={grid}>
             <Sub>Incident</Sub>
             {text("incidentType", "Incident type", { placeholder: "e.g. Fall, vehicle collision" })}
             {select("caseType", "Case type", CASE_TYPES)}
@@ -207,6 +203,8 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
             {text("incidentState", "Incident state", { placeholder: "e.g. Illinois" })}
             {text("incidentCounty", "Incident county", { placeholder: "e.g. Cook County" })}
             {text("jurisdictionalLimits", "Incident jurisdiction or court limits", { placeholder: "e.g. Law Division, over $30,000", full: true })}
+            <Ref label="Plaintiff location" value={[draft.plaintiffLocation, draft.plaintiffState].filter(Boolean).join(", ")} from="Plaintiff & Counsel" />
+            <Ref label="Insured location" value={[draft.insuredState, draft.insuredCountry].filter(Boolean).join(", ")} from="Insured & Insurance" />
             <Divider />
             <Sub>Suit</Sub>
             <fieldset className="min-w-0">
@@ -248,10 +246,7 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
             {text("demandAmount", "Demand amount (USD)", { placeholder: "e.g. 250,000" })}
             {text("demandDate", "Demand date", { type: "date" })}
             {select("demandStatus", "Demand status", DEMAND_STATUSES)}
-            <div>
-              <div className="block text-[13px] font-semibold text-[#0F1E2B] mb-1.5">Policy limits</div>
-              <p className="h-10 flex items-center text-sm text-ink">{draft.policyLimits || <span className="text-[#8A98A3]">Set under Insured &amp; Insurance</span>}</p>
-            </div>
+            <Ref label="Policy limits" value={draft.policyLimits} from="Insured & Insurance" />
             <fieldset className="sm:col-span-2 min-w-0">
               <legend className="block text-[13px] font-semibold text-[#0F1E2B] mb-1.5">Supporting documents</legend>
               {documents.length ? (
@@ -269,20 +264,19 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
               ) : <p className="text-sm text-[#8A98A3]">No documents on this case yet.</p>}
             </fieldset>
             {area("exposureNotes", "Demand history and exposure notes", "Prior demands, offers, and anything that shapes exposure")}
-          </>}
         </div>
+      </section>
 
-        <div className="sticky bottom-0 z-10 bg-white/95 backdrop-blur border-t border-line rounded-b-xl px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
+        <div className="sticky bottom-0 z-10 bg-white/95 backdrop-blur border-t border-line rounded-b-xl pl-6 pr-6 lg:pr-20 py-3 flex items-center justify-between gap-3 flex-wrap">
           <span className={`text-sm ${dirty ? "text-[#B45309] font-semibold" : "text-[#5B6B78]"}`} role="status">
             {dirty ? "Unsaved changes" : "All changes saved"}
             {totalErrors > 0 && <span className="text-[#B91C1C] font-normal"> · {totalErrors} field{totalErrors === 1 ? "" : "s"} to fix</span>}
           </span>
           <div className="flex gap-2">
             <button type="button" onClick={onDiscard} disabled={!dirty} className="px-4 py-2 text-ink hover:bg-tint rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Discard Changes</button>
-            <button type="button" onClick={save} disabled={!dirty} className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed">Save Case Details</button>
+            <button type="button" onClick={onSave} disabled={!dirty} className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed">Save Case Details</button>
           </div>
         </div>
-      </section>
-    </div>
+    </section>
   );
 }
