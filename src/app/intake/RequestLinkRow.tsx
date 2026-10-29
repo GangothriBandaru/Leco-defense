@@ -5,7 +5,7 @@ import { intakeRequestUrl } from "./intakeRequestStore";
 // The request's client link on the sent request card: the path shown compact,
 // the complete URL copied.
 
-async function copyText(text: string) {
+export async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
     return true;

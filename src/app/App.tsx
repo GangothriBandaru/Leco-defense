@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { DashboardSidebar } from "./components/DashboardSidebar";
 import { DashboardTopbar, DocumentTrackerButton } from "./components/DashboardTopbar";
 import { useCaseDetails } from "./intake/caseDetailsStore";
+import { Toaster } from "./components/ui/sonner";
 import { GlobalCaseRepoPage } from "./pages/GlobalCaseRepoPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { CommunicationPage } from "./pages/CommunicationPage";
@@ -83,12 +84,18 @@ function buildPipelineForCase(caseData: any): PipelineState {
 export default function App() {
   const [activePage, setActivePage] = useState("intake");
   const [openedCase, setSelectedCase] = useState<any>(null);
-  // Case name and type edited on the Case Discovery card apply wherever the case shows.
+  // Case name, type and jurisdiction edited on the Case Discovery card apply wherever the case shows.
   const savedCaseDetails = useCaseDetails(openedCase?.caseId);
   const selectedCase = useMemo(() => {
     if (!openedCase || !savedCaseDetails) return openedCase;
-    const { caseName, caseType, caseSubType } = savedCaseDetails;
-    return { ...openedCase, ...(caseName && { caseName }), ...(caseType && { caseType }), ...(caseSubType && { caseSubType }) };
+    const { caseName, caseType, caseSubType, caseJurisdiction } = savedCaseDetails;
+    return {
+      ...openedCase,
+      ...(caseName && { caseName }),
+      ...(caseType && { caseType }),
+      ...(caseSubType && { caseSubType }),
+      ...(caseJurisdiction && { jurisdiction: caseJurisdiction }),
+    };
   }, [openedCase, savedCaseDetails]);
   // Bumped by the Document Tracker button; the Case Discovery page scrolls to
   // its Documents section and clears it.
@@ -506,6 +513,7 @@ export default function App() {
         </div>
       </div>
       <FloatingNotes />
+      <Toaster theme="light" position="bottom-center" duration={2000} />
       </AssistantProvider>
     </NotesProvider>
     </ViolationsProvider>

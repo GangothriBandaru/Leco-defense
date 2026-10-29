@@ -9,6 +9,8 @@ export interface CaseDetails {
   caseName?: string;
   caseType?: string;
   caseSubType?: string;
+  /** Where the case is venued — kept apart from the insurer's jurisdiction. */
+  caseJurisdiction?: string;
   insuredName?: string;
   insuredEmail?: string;
   insuredPhone?: string;

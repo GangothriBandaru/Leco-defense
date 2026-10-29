@@ -94,7 +94,9 @@ export function EditCaseDetailsDialog({
                 {caseTypes.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>
-            <div className="hidden sm:block" />
+            <Field label="Case Jurisdiction">
+              <input type="text" value={form.caseJurisdiction ?? ""} onChange={set("caseJurisdiction")} placeholder="e.g. Cook County, IL" className={input} />
+            </Field>
             <Field label="Sub-Type">
               <input type="text" value={form.caseSubType ?? ""} onChange={set("caseSubType")} placeholder="e.g. Delayed Treatment" className={input} />
             </Field>

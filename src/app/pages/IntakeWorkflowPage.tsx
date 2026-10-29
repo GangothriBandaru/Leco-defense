@@ -187,6 +187,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
     caseName: savedDetails?.caseName ?? data.caseName,
     caseType: savedDetails?.caseType ?? data.caseType,
     caseSubType: savedDetails?.caseSubType ?? (data as { caseSubType?: string }).caseSubType,
+    caseJurisdiction: savedDetails?.caseJurisdiction ?? data.jurisdiction,
     insuredName: savedDetails?.insuredName ?? policy.namedInsured,
     insuredEmail: savedDetails?.insuredEmail,
     insuredPhone: savedDetails?.insuredPhone,
@@ -1218,28 +1219,36 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const receivedFrom = [...new Set(receivedDocs.map((d) =>
     (d.requestId && allStoredRequests.find((r) => r.id === d.requestId)?.plaintiff) || data.plaintiff || "",
   ).filter(Boolean))];
+  // One state for the received set, by the same document statuses the table
+  // shows: a failure first, then work still running, then anything awaiting
+  // review; otherwise everything received has been processed.
+  const receivedState: { label: string; pill: string } | undefined = receivedDocs.length === 0 ? undefined
+    : receivedDocs.some((d) => d.status === "Failed") ? { label: "Failed", pill: DOC_STATUS_PILL.Failed }
+    : receivedDocs.some((d) => !processingFinished(d)) ? { label: "Processing", pill: DOC_STATUS_PILL.Processing }
+    : receivedDocs.some((d) => d.status === "Attorney Review Required") ? { label: "Attorney Review Required", pill: DOC_STATUS_PILL["Attorney Review Required"] }
+    : { label: "Received", pill: "pill-complete" };
   const receivedSummaryCard = (
-    <div id="received-summary" className="w-fit max-w-full bg-white border border-line rounded-xl overflow-hidden">
-      <dl className="flex flex-wrap items-start gap-y-3 py-3 divide-x divide-[#EEF3F6]">
-        <div className="px-5">
-          <dt className="eyebrow mb-1">Received</dt>
-          <dd className="text-sm font-semibold text-ink leading-5 whitespace-nowrap">
+    <div id="received-summary" className="flex items-center bg-white border border-line rounded-xl @6xl:shrink-0 max-w-full">
+      <dl className="flex flex-wrap items-start gap-y-3 py-3 divide-x divide-[#EEF3F6] min-w-0">
+        <div className="px-4">
+          <dt className="eyebrow mb-1 whitespace-nowrap">Received</dt>
+          <dd className="text-sm font-semibold text-ink leading-6 whitespace-nowrap">
             {receivedDocs.length === 0
               ? <span className="font-normal text-[#8A98A3]">Not yet received</span>
               : <>{lastReceived ?? "Received"}{receivedTimes.length > 1 && <span className="font-normal text-[#5B6B78]"> · latest</span>}</>}
           </dd>
         </div>
-        <div className="px-5 min-w-0">
-          <dt className="eyebrow mb-1">Received From</dt>
-          <dd className="text-sm font-semibold text-ink leading-5 truncate">
+        <div className="px-4 min-w-0">
+          <dt className="eyebrow mb-1 whitespace-nowrap">Received From</dt>
+          <dd className="text-sm font-semibold text-ink leading-6 truncate">
             {receivedFrom.length
               ? <>{receivedFrom.join(", ")} <span className="font-normal text-[#5B6B78]">· Plaintiff</span></>
               : <span className="font-normal text-[#8A98A3]">{receivedDocs.length ? "Not recorded" : "—"}</span>}
           </dd>
         </div>
-        <div className="px-5">
-          <dt className="eyebrow mb-1">Received Documents</dt>
-          <dd className="flex items-baseline gap-3 text-sm font-semibold text-ink leading-5">
+        <div className="px-4">
+          <dt className="eyebrow mb-1 whitespace-nowrap">Received Documents</dt>
+          <dd className="flex items-baseline gap-3 text-sm font-semibold text-ink leading-6">
             {receivedDocs.length}
             {receivedDocs.length > 0 && (
               <button
@@ -1255,28 +1264,36 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
             )}
           </dd>
         </div>
+        <div className="px-4">
+          <dt className="eyebrow mb-1 whitespace-nowrap">State</dt>
+          <dd className="leading-6">
+            {receivedState
+              ? <span className={`pill whitespace-nowrap ${receivedState.pill}`}>{receivedState.label}</span>
+              : <span className="text-sm text-[#8A98A3]">—</span>}
+          </dd>
+        </div>
       </dl>
-      {receivedOpen && receivedDocs.length > 0 && (
-        <ul id="received-list" className="border-t border-line divide-y divide-line">
-          {receivedDocs.map((doc) => (
-            <li key={doc.id} className="flex items-center justify-between gap-4 px-5 py-2.5">
-              <span className="flex items-center gap-2 min-w-0 mono-ref text-ink">
-                <FileTypeIcon name={doc.name} />
-                <span className="truncate">{doc.name}</span>
-              </span>
-              <span className="flex items-center gap-3 shrink-0">
-                <span className="text-xs text-[#5B6B78] whitespace-nowrap hidden sm:inline">{doc.receivedAt ? formatShortDate(doc.receivedAt) : doc.date}</span>
-                <span className={`pill whitespace-nowrap ${DOC_STATUS_PILL[doc.status]}`}>
-                  {doc.status === "Processing" && <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />}
-                  {doc.status}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
+  const receivedList = receivedOpen && receivedDocs.length > 0 ? (
+    <ul id="received-list" aria-label="Received documents" className="bg-white border border-line rounded-xl divide-y divide-line overflow-hidden">
+      {receivedDocs.map((doc) => (
+        <li key={doc.id} className="flex items-center justify-between gap-4 px-5 py-2.5">
+          <span className="flex items-center gap-2 min-w-0 mono-ref text-ink">
+            <FileTypeIcon name={doc.name} />
+            <span className="truncate">{doc.name}</span>
+          </span>
+          <span className="flex items-center gap-3 shrink-0">
+            <span className="text-xs text-[#5B6B78] whitespace-nowrap hidden sm:inline">{doc.receivedAt ? formatShortDate(doc.receivedAt) : doc.date}</span>
+            <span className={`pill whitespace-nowrap ${DOC_STATUS_PILL[doc.status]}`}>
+              {doc.status === "Processing" && <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />}
+              {doc.status}
+            </span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  ) : null;
 
   // The status filters and search — shown below the processing summary on case
   // evidence, and above the media list.
@@ -1537,7 +1554,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   };
   const summary = summaryOf();
   const docsSummary = (
-    <div id="docs-summary" className="flex items-center justify-between gap-4 flex-wrap bg-tint border border-[#9BDAEC] rounded-xl px-5 py-3">
+    <div id="docs-summary" className="flex-1 min-w-0 flex items-center justify-between gap-x-6 gap-y-3 flex-wrap bg-tint border border-[#9BDAEC] rounded-xl px-5 py-3">
       <div className="flex items-center gap-2">
         {summary.tone === "done" ? <CheckCircle className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} />
           : summary.tone === "running" ? <Loader2 className="w-4 h-4 text-deep shrink-0 animate-spin" strokeWidth={1.75} />
@@ -1604,6 +1621,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
             caseName={cardDetails.caseName ?? data.caseName}
             caseType={cardDetails.caseType}
             caseSubType={cardDetails.caseSubType}
+            caseJurisdiction={cardDetails.caseJurisdiction}
             caseId={data.caseId}
             summary={data.summary}
             insuredName={cardDetails.insuredName}
@@ -1669,10 +1687,16 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                   </div>
                 )}
 
-                {receivedSummaryCard}
-
-                {/* PROCESSING SUMMARY — counted from the selected tab's own records */}
-                {docsSummary}
+                {/* Received documents and the processing summary — side by side
+                    on a wide section, stacked when there is not room for both. */}
+                <div className="@container space-y-3">
+                  <div className="flex flex-col @6xl:flex-row items-stretch gap-3">
+                    {receivedSummaryCard}
+                    {/* PROCESSING SUMMARY — counted from the selected tab's own records */}
+                    {docsSummary}
+                  </div>
+                  {receivedList}
+                </div>
 
                 {/* Documents Sub-Tabs */}
                 <div>
