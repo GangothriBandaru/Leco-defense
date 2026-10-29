@@ -22,38 +22,36 @@ interface CaseSnapshotProps {
   onEdit: () => void;
 }
 
-const EMPTY = "Not provided";
-
-function Value({ value }: { value?: string }) {
+function Value({ value, empty = "Not provided" }: { value?: string; empty?: string }) {
   return value
-    ? <span className="text-sm font-semibold text-ink whitespace-nowrap">{value}</span>
-    : <span className="text-sm text-[#8A98A3] whitespace-nowrap">{EMPTY}</span>;
+    ? <span className="block text-sm font-semibold text-ink leading-5 truncate" title={value}>{value}</span>
+    : <span className="block text-sm text-[#8A98A3] leading-5 truncate">{empty}</span>;
 }
 
-function Column({ label, children, grow }: { label: string; children: React.ReactNode; grow?: boolean }) {
+// One cell of the information row. The row's 1px gaps over the divider colour
+// draw the dividers, so they stay even however the cells wrap.
+function Cell({ label, className = "", children }: { label: string; className?: string; children: React.ReactNode }) {
   return (
-    <div className={`flex flex-col px-5 py-4 ${grow ? "flex-1" : ""}`}>
-      <span className="eyebrow mb-1.5 whitespace-nowrap">{label}</span>
+    <div className={`bg-white px-5 py-3.5 min-w-0 ${className}`}>
+      <div className="eyebrow mb-1.5 whitespace-nowrap">{label}</div>
       {children}
     </div>
   );
 }
 
-function ContactRow({ icon: Icon, value, label }: { icon: typeof Mail; value?: string; label: string }) {
+function ContactRow({ icon: Icon, value, empty }: { icon: typeof Mail; value?: string; empty: string }) {
   return (
-    <div className="flex items-center gap-2 min-w-0">
-      <Icon className="w-3.5 h-3.5 shrink-0 text-deep" strokeWidth={1.75} aria-label={label} />
-      {value
-        ? <span className="text-sm font-semibold text-ink whitespace-nowrap">{value}</span>
-        : <span className="text-sm text-[#8A98A3] whitespace-nowrap">No {label.toLowerCase()}</span>}
+    <div className="flex items-center gap-2 leading-5 min-w-0">
+      <Icon className="w-3.5 h-3.5 shrink-0 text-deep" strokeWidth={1.75} aria-hidden="true" />
+      <Value value={value} empty={empty} />
     </div>
   );
 }
 
-function InsurerField({ label, value }: { label: string; value?: string }) {
+function SubField({ label, value }: { label: string; value?: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] text-[#8A98A3] leading-tight mb-0.5 whitespace-nowrap">{label}</div>
+      <div className="text-[11px] leading-4 text-[#8A98A3] whitespace-nowrap">{label}</div>
       <Value value={value} />
     </div>
   );
@@ -74,12 +72,10 @@ export function CaseSnapshot({
   onEdit,
 }: CaseSnapshotProps) {
   return (
-    <div className="lg-card overflow-hidden">
-      {/* Title row — summary fills the space between the name and the menu */}
-      <div className="flex items-center gap-8 px-6 pt-6 pb-5 border-b border-line">
-        <div className="shrink-0">
-          <h2 className="section-header">{caseName}</h2>
-        </div>
+    <div className="lg-card overflow-hidden @container">
+      {/* Header — name at the left, the description preview and menu at the right */}
+      <div className="flex items-center gap-6 px-6 py-4 border-b border-line">
+        <h2 className="section-header min-w-0 shrink truncate" title={caseName}>{caseName}</h2>
         <CaseDescription text={summary} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -87,7 +83,7 @@ export function CaseSnapshot({
               type="button"
               title="More actions"
               aria-label="Case details actions"
-              className="w-8 h-8 -mr-2 inline-flex items-center justify-center shrink-0 self-start rounded-lg text-[#5B6B78] hover:bg-tint hover:text-ink transition-colors data-[state=open]:bg-tint data-[state=open]:text-ink"
+              className="w-8 h-8 -mr-2 inline-flex items-center justify-center shrink-0 rounded-lg text-[#5B6B78] hover:bg-tint hover:text-ink transition-colors data-[state=open]:bg-tint data-[state=open]:text-ink"
             >
               <MoreVertical className="w-4 h-4" strokeWidth={1.75} />
             </button>
@@ -100,29 +96,26 @@ export function CaseSnapshot({
         </DropdownMenu>
       </div>
 
-      {/* Metadata strip */}
-      <div className="flex flex-wrap divide-x divide-[#EEF3F6]">
-        <Column label="Case Type"><Value value={caseType} /></Column>
-        <Column label="Insured Name"><Value value={insuredName} /></Column>
-        <Column label="Contact Details">
-          <div className="flex flex-col gap-1.5">
-            <ContactRow icon={Mail} value={insuredEmail} label="Email" />
-            <ContactRow icon={Phone} value={insuredPhone} label="Phone" />
+      {/* Information row — one row on a wide card; on a narrower one the four
+          short fields share a row and Insurer Details takes the next. */}
+      <div className="grid gap-px bg-[#EEF3F6] grid-cols-2 @3xl:grid-cols-4 @6xl:grid-cols-[minmax(max-content,1fr)_minmax(max-content,1fr)_minmax(max-content,1.25fr)_minmax(max-content,2fr)_minmax(max-content,1fr)]">
+        <Cell label="Case Type"><Value value={caseType} /></Cell>
+        <Cell label="Insured Name"><Value value={insuredName} /></Cell>
+        <Cell label="Contact Details">
+          <div className="space-y-1">
+            <ContactRow icon={Mail} value={insuredEmail} empty="No email" />
+            <ContactRow icon={Phone} value={insuredPhone} empty="No phone" />
           </div>
-        </Column>
-        <Column label="Insurer Details" grow>
-          <div className="grid grid-cols-[auto_auto] gap-x-6 gap-y-2 w-max">
-            <InsurerField label="Policy Name" value={policyName} />
-            <InsurerField label="Insurer Jurisdiction" value={insurerJurisdiction} />
-            {(insurerName || policyNumber) && (
-              <>
-                <InsurerField label="Insurer" value={insurerName} />
-                <InsurerField label="Policy No." value={policyNumber} />
-              </>
-            )}
+        </Cell>
+        <Cell label="Insurer Details" className="order-last col-span-2 @3xl:col-span-4 @6xl:order-none @6xl:col-span-1">
+          <div className="grid grid-cols-1 @md:grid-cols-[repeat(2,max-content)] gap-x-8 gap-y-2">
+            <SubField label="Policy Name" value={policyName} />
+            <SubField label="Insurer Jurisdiction" value={insurerJurisdiction} />
+            <SubField label="Insurer" value={insurerName} />
+            <SubField label="Policy No." value={policyNumber} />
           </div>
-        </Column>
-        <Column label="Case ID"><Value value={caseId} /></Column>
+        </Cell>
+        <Cell label="Case ID"><Value value={caseId} /></Cell>
       </div>
     </div>
   );

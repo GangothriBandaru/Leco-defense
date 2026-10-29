@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { FileTypeIcon, FileTypeTag } from "../components/fileType";
+import { FileTypeIcon, FileTypeTag, fileKind } from "../components/fileType";
 import { StageNavigator } from "../components/StageNavigator";
 import { CaseSnapshot } from "../components/CaseSnapshot";
 import { EditCaseDetailsDialog } from "../components/EditCaseDetailsDialog";
@@ -356,7 +356,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const [viewingSubmissionId, setViewingSubmissionId] = useState<string | null>(null);
 
   // plaintiffActivityDetected is derived after sharedDocs — see below
-  const [documentsSubTab, setDocumentsSubTab] = useState<"retainer" | "intake" | "media">("intake");
+  const [documentsSubTab, setDocumentsSubTab] = useState<"intake" | "media">("intake");
   const [documentSearch, setDocumentSearch] = useState("");
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
 
@@ -1197,39 +1197,84 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const runningCount = sharedDocs.filter((d) => !processingFinished(d)).length;
   const failedCount = sharedDocs.filter((d) => d.status === "Failed").length;
 
-  // The missing-documents panel, shown in both Intake Request and Documents.
-  // Both read the same missing-evidence list and open the same request, so the
-  // count, the names and any request stay in step wherever it is used.
-  const missingDocsPanel = (id: string) =>
-    documentsReceived && missingDocCount > 0 ? (
-      <div id={id} className="rounded-xl p-5 scroll-mt-[150px]" style={{ background: "#FAEEDA", border: "1px solid #FAC775" }}>
-        <div className="flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "#854F0B" }} strokeWidth={1.75} />
-          <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold mb-1" style={{ color: "#854F0B" }}>
-              {missingDocCount} Document{missingDocCount === 1 ? "" : "s"} Still Missing
-            </h3>
-            <ul className="space-y-0.5 mb-4">
-              {missingDocNames.map((name) => (
-                <li key={name} className="text-sm" style={{ color: "#854F0B" }}>• {name}</li>
-              ))}
-            </ul>
-            <button
-              onClick={() => openMissingRequestModal()}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
-              style={{ background: "#B45309" }}
-            >
-              <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request All Missing
-            </button>
+  // ── Received documents: what the plaintiff side sent in ──
+  // Plaintiff-sourced case documents only — attorney uploads and media files
+  // are not received documents. Senders come from the intake request each
+  // submission arrived with, otherwise from the case record.
+  const [receivedOpen, setReceivedOpen] = useState(false);
+  const receivedDocs = sharedDocs.filter((d) => {
+    const kind = fileKind(d.name);
+    return d.source === "Plaintiff" && kind !== "image" && kind !== "video";
+  });
+  const receivedTimes = receivedDocs.map((d) => Date.parse(d.receivedAt ?? d.date)).filter(Number.isFinite);
+  const lastReceived = receivedTimes.length
+    ? new Date(Math.max(...receivedTimes)).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : undefined;
+  const receivedFrom = [...new Set(receivedDocs.map((d) =>
+    (d.requestId && allStoredRequests.find((r) => r.id === d.requestId)?.plaintiff) || data.plaintiff || "",
+  ).filter(Boolean))];
+  const receivedSummaryCard = (
+    <div id="received-summary" className="bg-white border border-line rounded-xl overflow-hidden">
+      <div className="flex items-center gap-4 flex-wrap px-5 py-3">
+        <dl className="flex flex-1 flex-wrap items-start gap-y-3 divide-x divide-[#EEF3F6] min-w-0 -ml-5">
+          <div className="px-5">
+            <dt className="eyebrow mb-1">Received</dt>
+            <dd className="text-sm font-semibold text-ink whitespace-nowrap">
+              {receivedDocs.length === 0
+                ? <span className="font-normal text-[#8A98A3]">Not yet received</span>
+                : <>{lastReceived ?? "Received"}{receivedTimes.length > 1 && <span className="font-normal text-[#5B6B78]"> · latest</span>}</>}
+            </dd>
           </div>
-        </div>
+          <div className="px-5 min-w-0">
+            <dt className="eyebrow mb-1">Received From</dt>
+            <dd className="text-sm font-semibold text-ink truncate">
+              {receivedFrom.length
+                ? <>{receivedFrom.join(", ")} <span className="font-normal text-[#5B6B78]">· Plaintiff</span></>
+                : <span className="font-normal text-[#8A98A3]">{receivedDocs.length ? "Not recorded" : "—"}</span>}
+            </dd>
+          </div>
+          <div className="px-5">
+            <dt className="eyebrow mb-1">Received Documents</dt>
+            <dd className="text-sm font-semibold text-ink">{receivedDocs.length}</dd>
+          </div>
+        </dl>
+        <button
+          onClick={() => setReceivedOpen((o) => !o)}
+          disabled={receivedDocs.length === 0}
+          title={receivedDocs.length === 0 ? "No documents have been received yet" : undefined}
+          aria-expanded={receivedOpen}
+          aria-controls="received-list"
+          className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+        >
+          {receivedOpen ? "Hide" : "View"}
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${receivedOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
+        </button>
       </div>
-    ) : null;
+      {receivedOpen && receivedDocs.length > 0 && (
+        <ul id="received-list" className="border-t border-line divide-y divide-line">
+          {receivedDocs.map((doc) => (
+            <li key={doc.id} className="flex items-center justify-between gap-4 px-5 py-2.5">
+              <span className="flex items-center gap-2 min-w-0 mono-ref text-ink">
+                <FileTypeIcon name={doc.name} />
+                <span className="truncate">{doc.name}</span>
+              </span>
+              <span className="flex items-center gap-3 shrink-0">
+                <span className="text-xs text-[#5B6B78] whitespace-nowrap hidden sm:inline">{doc.receivedAt ? formatShortDate(doc.receivedAt) : doc.date}</span>
+                <span className={`pill whitespace-nowrap ${DOC_STATUS_PILL[doc.status]}`}>
+                  {doc.status === "Processing" && <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />}
+                  {doc.status}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 
   // The status filters and search — shown below the processing summary on case
-  // evidence, and above the media list; retainer agreements have a signing
-  // status instead.
-  const statusFilterBar = documentsSubTab !== "retainer" && (sharedDocs.length > 0 || documentsSubTab === "media") ? (
+  // evidence, and above the media list.
+  const statusFilterBar = sharedDocs.length > 0 || documentsSubTab === "media" ? (
                     <div className="mb-4 space-y-2">
                       <div className="flex items-center gap-3 flex-wrap">
                         <div role="tablist" aria-label="Filter by status" className="flex-1 min-w-0 rounded-xl border border-line bg-white p-1 flex items-center gap-1 overflow-x-auto">
@@ -1439,26 +1484,10 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
     !storedRequests.some((r) => [m.title, ...(SAME_REQUIREMENT[m.title] ?? [])].some((t) => r.requestedDocs.includes(t))));
 
   // ── The Documents processing summary, per sub-tab ──
-  // Case evidence: the case documents and their file checks. Retainer
-  // documents: the agreements shown in that tab — they are signed, not
-  // processed, so their signing status is what is counted. Media evidence: the
-  // media file checks, which have no categories to organise into.
+  // Case evidence: the case documents and their file checks. Media evidence:
+  // the media file checks, which have no categories to organise into.
   type SummaryTone = "done" | "running" | "problem" | "idle";
   const summaryOf = (): { tone: SummaryTone; title: string; stats: { label: string; value: number }[]; ready: string; readyOk: boolean } => {
-    if (documentsSubTab === "retainer") {
-      const shown = retainerStatus === "signed" ? retainerDocs : [];
-      const signedN = shown.filter((d) => d.status === "Signed").length;
-      return {
-        tone: shown.length === 0 ? "idle" : retainerSigned ? "done" : "running",
-        title: shown.length === 0 ? "No retainer documents yet" : `${shown.length} retainer ${shown.length === 1 ? "document" : "documents"}`,
-        stats: [
-          { label: "Signed", value: signedN },
-          { label: "Sent", value: shown.length - signedN },
-        ],
-        ready: retainerSigned ? "Agreement signed" : retainerStatus === "not-sent" ? "Not sent" : "Awaiting signature",
-        readyOk: retainerSigned,
-      };
-    }
     if (documentsSubTab === "media") {
       const n = mediaStatuses.length;
       // The same rules as the media status filters.
@@ -1598,7 +1627,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
           <div id="documents-section" className="lg-card overflow-hidden scroll-mt-[150px]">
             <div className="w-full flex items-center justify-between gap-4 px-6 py-5">
               <div className="flex items-center gap-3">
-                <span className="card-title">Documents</span>
+                <span className="card-title">Received Documents</span>
               </div>
               <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0">
                 <Upload className="w-3.5 h-3.5" strokeWidth={1.75} />
@@ -1633,8 +1662,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                   </div>
                 )}
 
-                {/* MISSING DOCUMENTS BLOCK */}
-                {missingDocsPanel("missing-docs-documents")}
+                {receivedSummaryCard}
 
                 {/* PROCESSING SUMMARY — counted from the selected tab's own records */}
                 {docsSummary}
@@ -1642,7 +1670,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                 {/* Documents Sub-Tabs */}
                 <div>
                   <div className="flex items-center gap-1 mb-4">
-                    {([["intake", "Case evidence"], ["retainer", "Retainer documents"], ["media", "Media evidence"]] as const).map(([val, label]) => (
+                    {([["intake", "Case evidence"], ["media", "Media evidence"]] as const).map(([val, label]) => (
                       <button
                         key={val}
                         onClick={() => setDocumentsSubTab(val)}
@@ -1664,87 +1692,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                         {statusFilterBar}
                         <MediaEvidencePanel caseId={data.caseId} documents={sharedDocs} onUpload={openMediaUpload} statusFilter={docFilter} />
                       </>
-                    ) : documentsSubTab === "retainer" ? (
-                      retainerStatus !== "signed" ? (
-                        <div className="flex flex-col items-center justify-center py-12 text-center">
-                          <FileText className="w-8 h-8 text-[#9BDAEC] mb-3" strokeWidth={1.75} />
-                          <p className="text-sm text-[#5B6B78]">No retainer documents yet.</p>
-                          <p className="text-xs text-[#5B6B78] mt-1">Send and sign a retainer agreement to see documents here.</p>
-                        </div>
-                      ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full min-w-[700px] table-fixed">
-                          <colgroup>
-                            <col />
-                            <col className="w-[160px]" />
-                            <col className="w-[140px]" />
-                            <col className="w-[152px]" />
-                          </colgroup>
-                          <thead className="bg-wash">
-                            <tr className="border-b border-line">
-                              <th className="text-left py-3 px-4 eyebrow">
-                                Document Name
-                              </th>
-                              <th className="text-left py-3 px-4 eyebrow">
-                                Status
-                              </th>
-                              <th className="text-left py-3 px-4 eyebrow">
-                                Date
-                              </th>
-                              <th className="text-right py-3 px-4 eyebrow">
-                                Actions
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-line bg-white">
-                            {retainerDocs.length === 0 && (
-                              <tr><td colSpan={4} className="py-6 px-4 text-sm text-[#8A98A3] text-center">No retainer documents on this case.</td></tr>
-                            )}
-                            {retainerDocs.map((doc) => {
-                              return (
-                              <React.Fragment key={doc.id}>
-                              <tr
-                                onClick={() => handlePreviewDocument(doc)}
-                                className="cursor-pointer hover:bg-wash"
-                              >
-                                <td className="py-3 px-4 align-middle mono-ref text-ink">
-                                  <span className="inline-flex items-center gap-2">
-                                    <FileTypeIcon name={doc.name} />
-                                    {doc.name}
-                                    <FileTypeTag name={doc.name} />
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4 align-middle">
-                                  <span
-                                    className={`pill ${
-                                      doc.status === "Signed"
-                                        ? "pill-complete"
-                                        : "pill-progress"
-                                    }`}
-                                  >
-                                    {doc.status}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4 align-middle text-sm text-[#5B6B78]">{doc.date}</td>
-                                <td className="py-3 px-4 align-middle">
-                                  <RowActionGroup name={doc.name} onEdit={() => { setRetainerEdit({ ...doc }); setRetainerEditError(null); }} onDelete={() => setRetainerDelete(doc)}>
-                                    <DocActions
-                                      size="row"
-                                      onPreview={() => handlePreviewDocument(doc)}
-                                      onInsights={() => handleOpenInsights(doc)}
-                                      onDownload={() => handleDownloadDocument(doc)}
-                                      disabled={{ download: "The original file is not stored in this prototype" }}
-                                    />
-                                  </RowActionGroup>
-                                </td>
-                              </tr>
-                              </React.Fragment>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                      )
                     ) : (
                       <div className="space-y-4">
                         {sharedDocs.length === 0 ? (
