@@ -4,6 +4,7 @@ import { DashboardTopbar, DocumentTrackerButton } from "./components/DashboardTo
 import { useCaseDetails } from "./intake/caseDetailsStore";
 import { DocumentTrackerPage } from "./pages/DocumentTrackerPage";
 import { ConflictCheckPage } from "./pages/ConflictCheckPage";
+import { isReferenceCase, REFERENCE_DOCUMENTS } from "./evidence/referenceCase";
 
 // The Notes stage names, as the stage navigator names them.
 const NAV_STAGE: Record<string, string> = { Collection: "Client Intake", "Conflict Check": "Conflict Check", Analysis: "Analysis", Valuation: "Valuation", "Case Ready": "Case Ready" };
@@ -68,6 +69,8 @@ function buildPipelineForCase(caseData: any): PipelineState {
   const isNew = !stage || stage === "New" || stage === "Client Intake";
 
   if (isNew) return INITIAL_PIPELINE;
+  // The reference case carries its own documents.
+  const caseDocs = isReferenceCase(caseData?.caseId) ? REFERENCE_DOCUMENTS : EXISTING_CASE_DOCUMENTS;
 
   // Any case that has progressed past the initial stage already has retainer + intake sent
   const hasDocs = ["Classification", "Analysis", "Valuation", "Ready For Review"].includes(stage);
@@ -79,7 +82,7 @@ function buildPipelineForCase(caseData: any): PipelineState {
     intakeCreated: true,
     intakeSent: true,
     intakeLink: "https://leco.ai/intake/ABX29...",
-    documents: hasDocs ? EXISTING_CASE_DOCUMENTS : [],
+    documents: hasDocs ? caseDocs : [],
     analysisDone,
     valuationDone,
     notes: [],

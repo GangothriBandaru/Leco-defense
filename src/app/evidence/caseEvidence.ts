@@ -1,5 +1,6 @@
 import type { CaseDocument } from "../types/case";
 import { getDocumentContent, type DocBlock } from "../components/documentText";
+import { isReferenceCase, referenceEvidence } from "./referenceCase";
 
 // ── Case evidence for the Evidence Conflicts and Demand & Complaint workspaces ──
 // Everything here is read from the case's own documents and case record. Each
@@ -32,6 +33,8 @@ export interface Source {
   traits: string[];
   author?: string;
   doc?: CaseDocument;
+  /** Statements extracted from the source, where the file records it. */
+  statementCount?: number;
 }
 
 export interface Statement {
@@ -43,6 +46,11 @@ export interface Statement {
   /** Section heading or field the text sits under. */
   where: string;
   stance: Stance;
+  /** Per-statement detail where the file records it: sworn or not, date, who said it, kind of record. */
+  weight?: string;
+  date?: string;
+  who?: string;
+  type?: string;
 }
 
 export type Topic = "Liability" | "Injury" | "Medical history" | "Causation" | "Damages";
@@ -77,7 +85,11 @@ export interface Conflict {
   steps: { id: string; text: string }[];
   /** Plaintiff contradicts their own account. */
   selfContradiction?: boolean;
+  /** Effect on value, e.g. "Lowers damages". */
+  value?: string;
 }
+
+export interface MatrixRow { fact: string; conflictId: string; cells: { col: MatrixCol; text: string; stance: Stance | "none" }[] }
 
 export type ClaimArea = "liability" | "injury" | "damages";
 export type ClaimStatus = "Supported" | "Partially supported" | "Contradicted" | "Unsupported";
@@ -122,6 +134,8 @@ export interface CaseEvidence {
   policyLimit?: { text: string; amount?: number; source: Source };
   /** A commercial vehicle loss alongside a general liability policy's auto wording. */
   coverage?: { policy: Statement; vehicle: Statement };
+  /** Cell text for the fact × source matrix, where the file states it. */
+  matrix?: MatrixRow[];
 }
 
 // ── Reading documents ──
@@ -166,6 +180,7 @@ function sourceFor(doc: CaseDocument, hits: Hit[]): Source {
 
 /** Builds the case's evidence picture from its documents and case record. */
 export function buildCaseEvidence(caseData: any, documents: CaseDocument[]): CaseEvidence {
+  if (isReferenceCase(caseData?.caseId)) return referenceEvidence();
   const textDocs = documents.filter((d) => getDocumentContent(d).kind === "text");
   const read = textDocs.map((doc) => { const hits = walk(getDocumentContent(doc).blocks); return { doc, hits, src: sourceFor(doc, hits) }; });
   const caseRecord: Source = { id: "case-record", title: "Case record", type: "Case intake record", col: "records", traits: ["Firm's own record"] };

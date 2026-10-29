@@ -37,15 +37,16 @@ export function StatementCard({ s, src }: { s: Statement; src?: Source }) {
     <div className="rounded-lg border border-line bg-white px-3.5 py-3 min-w-0">
       <div className="flex items-center gap-1.5 text-xs text-[#5B6B78] mb-1.5 flex-wrap">
         <FileText className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
-        <span className="font-semibold text-ink">{src?.type ?? "Source"}</span>
+        <span className="font-semibold text-ink">{s.type ?? src?.type ?? "Source"}</span>
         <span className="mono-ref break-all">{src?.title}</span>
+        {s.weight && <span className="pill pill-neutral ml-auto">{s.weight}</span>}
       </div>
       <blockquote className="text-sm text-ink leading-relaxed border-l-2 border-[#9BDAEC] pl-3 break-words">“{s.text}”</blockquote>
       <div className="text-xs text-[#5B6B78] mt-1.5 break-words">
-        {s.where}{src?.date ? ` · ${src.date}` : ""}{src?.author ? ` · ${src.author}` : ""}
+        {s.where}{(s.date ?? src?.date) ? ` · ${s.date ?? src?.date}` : ""}{(s.who ?? src?.author) ? ` · ${s.who ?? src?.author}` : ""}
         {src?.doc?.source && ` · submitted by ${src.doc.source === "Attorney" ? "Defense Counsel" : src.doc.source}`}
       </div>
-      {src && src.traits.length > 0 && (
+      {!s.weight && src && src.traits.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1.5">{src.traits.map((t) => <span key={t} className="pill pill-neutral">{t}</span>)}</div>
       )}
     </div>

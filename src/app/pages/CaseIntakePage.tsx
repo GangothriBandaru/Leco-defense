@@ -4,6 +4,7 @@ import { addIntakeCase, nextCaseId, updatedLabel, useCreatedIntakeCases } from "
 import { IntakeCard } from "../components/IntakeCard";
 import { Plus, X, ArrowRight } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { REFERENCE_CASE } from "../evidence/referenceCase";
 
 interface CaseIntakePageProps {
   onOpenWorkflow?: (caseData: any) => void;
@@ -114,6 +115,7 @@ export function CaseIntakePage({ onOpenWorkflow }: CaseIntakePageProps) {
   const createdCases = useCreatedIntakeCases();
   const intakeCases: any[] = [
     ...initialIntakeCases,
+    REFERENCE_CASE,
     ...createdCases.map((c) => ({ ...c, lastUpdated: updatedLabel(c.createdAt) })),
   ];
   const [search, setSearch] = useState("");

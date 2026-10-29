@@ -1,436 +1,367 @@
 import { Fragment, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowRight, ChevronDown, FileWarning, Scale, Stethoscope, DollarSign, Info, ExternalLink, ClipboardList } from "lucide-react";
-import type { CaseDetails } from "../intake/caseDetailsStore";
-import type { DocRequest } from "../tracker/trackerData";
-import { statusLabel, TONE_PILL } from "../tracker/trackerData";
-import { getDocumentContent } from "../components/documentText";
-import { fmtDay, daysUntil } from "../conflict/caseFacts";
-import { type CaseEvidence, type Claim, type ClaimArea, type Note, fmtMoney } from "./caseEvidence";
+import { ArrowRight, ChevronDown, ExternalLink, Info, FileWarning, Square } from "lucide-react";
+import type { ClaimArea, Conflict } from "./caseEvidence";
+import { fmtMoney } from "./caseEvidence";
+import { type DemandModel, type DClaim, type Level, type Tone, POSITIONS, conflicted, AREA_LABEL } from "./demandModel";
 import { useCaseDecisions } from "./decisionStore";
-import { Badge, STATUS_PILL, Tabs, StatementCard, Notes, NotesLegend, DecisionPanel, Empty } from "./EvidenceShared";
+import { Badge, STATUS_PILL, Tabs, Notes, NotesLegend, DecisionPanel, Empty } from "./EvidenceShared";
 
 type Tab = "overview" | ClaimArea | "exhibits" | "terms";
-const POSITIONS = ["Accept", "Dispute", "Partially dispute", "Investigate further", "Need more information"];
-const AREA: Record<ClaimArea, { label: string; icon: typeof Scale }> = {
-  liability: { label: "Liability", icon: Scale },
-  injury: { label: "Injury & Medical", icon: Stethoscope },
-  damages: { label: "Damages", icon: DollarSign },
-};
+const LV: Record<Level, number> = { None: 0, Weak: 1, Moderate: 2, Strong: 3 };
+const LEVEL_PILL: Record<Level, string> = { Strong: "pill-complete", Moderate: "pill-progress", Weak: "pill-risk", None: "pill-neutral" };
+const TONE_CLS: Record<Tone, string> = { ok: "pill-complete", warn: "pill-progress", crit: "pill-risk", "": "pill-neutral" };
 const NA = (t = "Not recorded") => <span className="text-[#8A98A3]">{t}</span>;
-const num = (s?: string) => { const m = s && /[\d,]+(\.\d+)?/.exec(s); return m ? +m[0].replace(/,/g, "") : undefined; };
 
-interface Finding { text: string; ref: string; basis: Note["basis"]; go: () => void; goLabel: string }
+/** Three-step strength meter, as the reference draws it. */
+function Meter({ label, level, tone }: { label: string; level: Level; tone: "their" | "ours" }) {
+  const fill = tone === "their" ? "bg-[#E7A54B]" : "bg-[#3FB37A]";
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-[#5B6B78]" title={`${label}: ${level}`}>
+      {label}
+      <span className="inline-flex gap-0.5" aria-hidden="true">{[1, 2, 3].map((i) => <i key={i} className={`block w-3.5 h-1.5 rounded-sm ${i <= LV[level] ? fill : "bg-track"}`} />)}</span>
+      <b className="font-semibold text-ink">{level}</b>
+    </span>
+  );
+}
 
-export function DemandAnalysisWorkspace({ caseId, ev, facts, requests, onOpenConflict, onOpenTracker }: {
-  caseId: string; ev: CaseEvidence; facts: CaseDetails; requests: DocRequest[];
-  onOpenConflict: (id: string) => void; onOpenTracker?: () => void;
+function Card({ title, sub, right, children, className = "" }: { title: string; sub?: string; right?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <section className={`lg-card overflow-hidden min-w-0 ${className}`}>
+      <div className="px-5 py-4 border-b border-line flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0"><h2 className="section-header">{title}</h2>{sub && <p className="secondary-text mt-0.5">{sub}</p>}</div>
+        {right}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Table({ head, rows, numeric = [] }: { head: string[]; rows: ReactNode[][]; numeric?: number[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] text-sm">
+        <thead className="bg-offwhite border-b border-line"><tr>{head.map((h, i) => <th key={h} scope="col" className={`eyebrow px-4 py-2.5 ${numeric.includes(i) ? "text-right" : "text-left"}`}>{h}</th>)}</tr></thead>
+        <tbody className="divide-y divide-line">{rows.map((r, i) => <tr key={i} className="align-top">{r.map((c, j) => <td key={j} className={`px-4 py-2.5 ${numeric.includes(j) ? "text-right tabular-nums" : ""}`}>{c}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
+export function DemandAnalysisWorkspace({ caseId, model, conflicts, onOpenConflict, onOpenTracker }: {
+  caseId: string; model: DemandModel; conflicts: Conflict[]; onOpenConflict: (id: string) => void; onOpenTracker?: () => void;
 }) {
   const dec = useCaseDecisions(caseId);
   const [tab, setTab] = useState<Tab>("overview");
-  const [openClaim, setOpenClaim] = useState<string | null>(null);
-  const positioned = ev.claims.filter((c) => dec.items[`claim:${c.id}`]).length;
-  const byArea = (a: ClaimArea) => ev.claims.filter((c) => c.area === a);
-  const goClaim = (c: Claim) => { setTab(c.area); setOpenClaim(c.id); window.setTimeout(() => document.getElementById(`claim-${c.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
-  const conflictOf = (id: string) => ev.conflicts.find((c) => c.id === id);
-
-  // Tracker status for a missing record, without creating anything.
-  const gapStatus = (re: RegExp): { label: string; tone: string } => {
-    const r = requests.find((x) => re.test(`${x.to} ${x.type} ${x.cat} ${x.docs.join(" ")}`));
-    if (!r) return { label: "Not requested", tone: "" };
-    const [l, t] = statusLabel(r);
-    return { label: l, tone: t };
+  const [open, setOpen] = useState<string | null>(null);
+  const positioned = model.claims.filter((c) => dec.items[`claim:${c.id}`]).length;
+  const inArea = (a: ClaimArea) => model.claims.filter((c) => c.area === a);
+  const go = (ref?: string) => {
+    if (!ref) return;
+    if (/^C\d+$/.test(ref)) return onOpenConflict(ref);
+    const c = model.claims.find((x) => x.id === ref);
+    if (c) { setTab(c.area); setOpen(c.id); window.setTimeout(() => document.getElementById(`claim-${c.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); return; }
+    setTab("exhibits");
   };
-
-  const findings: Finding[] = [
-    ...ev.conflicts.filter((c) => c.severity === "Critical").map((c): Finding => ({ text: c.summary, ref: c.id, basis: "source", go: () => onOpenConflict(c.id), goLabel: "Open in Evidence Conflicts" })),
-    ...ev.claims.filter((c) => c.conflicts.length && c.area === "damages").map((c): Finding => ({ text: `${c.title}: ${c.lookAt}`, ref: c.id, basis: "analysis", go: () => goClaim(c), goLabel: "Open claim" })),
-    ...ev.exhibits.filter((x) => x.issue?.startsWith("Named as bills")).map((x): Finding => ({ text: `${x.doc.name}: ${x.issue}`, ref: x.id, basis: "source", go: () => setTab("exhibits"), goLabel: "Open exhibits" })),
-    ...ev.claims.filter((c) => c.status === "Unsupported").map((c): Finding => ({ text: `${c.title}: ${c.lookAt}`, ref: c.id, basis: "analysis", go: () => goClaim(c), goLabel: "Open claim" })),
-    ...(ev.noDemand || ev.noComplaint ? [{ text: `${[ev.noDemand && "No demand letter", ev.noComplaint && "no complaint"].filter(Boolean).join(" and ")} is on file. Claims below are as the plaintiff's records present them, and terms can't be checked.`, ref: "Terms", basis: "source" as const, go: () => setTab("terms"), goLabel: "Open terms & deadlines" }] : []),
-  ];
+  const refLabel = (ref: string) => /^C\d+$/.test(ref) ? `Open ${ref}` : model.claims.some((c) => c.id === ref) ? `Review ${ref}` : `Open ${ref}`;
+  const Attn = ({ items }: { items: [string, string?][] }) => (
+    <ol className="divide-y divide-line">
+      {items.map(([text, ref], i) => (
+        <li key={i} className="py-2.5 flex items-start gap-3">
+          <span className="w-5 h-5 rounded-full bg-tint text-deep text-[11px] font-semibold inline-flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+          <p className="flex-1 text-sm text-ink">{text}</p>
+          {ref && <button type="button" onClick={() => go(ref)} className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink">{refLabel(ref)} <ArrowRight className="w-3.5 h-3.5" /></button>}
+        </li>
+      ))}
+    </ol>
+  );
 
   const tabs: [Tab, string, number?][] = [
-    ["overview", "Overview"], ["liability", "Liability", byArea("liability").length], ["injury", "Injury & Medical", byArea("injury").length],
-    ["damages", "Damages", byArea("damages").length], ["exhibits", "Exhibits & Gaps", ev.gaps.length], ["terms", "Terms & Deadlines"],
+    ["overview", "Overview"],
+    ...(["liability", "injury", "damages"] as ClaimArea[]).map((a): [Tab, string, number?] => { const n = inArea(a).filter(conflicted).length; return [a, AREA_LABEL[a], n || undefined]; }),
+    ["exhibits", "Exhibits & Gaps"], ["terms", "Terms & Deadlines"],
   ];
 
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
-          <h1 className="text-[24px] font-semibold text-ink leading-tight">Demand and Complaint Analysis</h1>
+          <div className="eyebrow">Case tool{model.asOf ? ` · as of ${model.asOf}` : ""} · {model.basis === "reference" ? "from the case file" : "derived from the case records"}</div>
+          <h1 className="text-[24px] font-semibold text-ink leading-tight mt-0.5">Demand and Complaint Analysis</h1>
           <p className="secondary-text mt-1 max-w-3xl">What the plaintiff claims, how well each claim is supported by the records on file, where it conflicts with them, and what to look at next.</p>
         </div>
-        {ev.claims.length > 0 && <Badge cls={positioned === ev.claims.length ? "pill-complete" : "pill-progress"}>{positioned} of {ev.claims.length} positions set</Badge>}
+        {model.claims.length > 0 && <Badge cls={positioned === model.claims.length ? "pill-complete" : "pill-progress"}>{positioned} of {model.claims.length} positions set</Badge>}
       </div>
-      {(ev.noDemand || ev.noComplaint) && (
-        <p className="flex items-start gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm text-ink">
-          <Info className="w-4 h-4 text-deep mt-0.5 shrink-0" />
-          <span>{[ev.noDemand && "No demand letter", ev.noComplaint && "no complaint"].filter(Boolean).join(" and ")} is in the case documents. The claims below are taken from the plaintiff's own records; they'll be compared against the demand and complaint once those are filed.</span>
-        </p>
-      )}
 
-      <Tabs label="demand" value={tab} onChange={(t) => { setTab(t); setOpenClaim(null); }} tabs={tabs} />
+      <Tabs label="demand" value={tab} onChange={(t) => setTab(t)} tabs={tabs} />
 
       {tab === "overview" && (
         <div className="space-y-5">
-          <section className="lg-card p-5">
-            <h2 className="section-header mb-1">Read this first</h2>
-            <NotesLegend />
-            {findings.length ? (
-              <ol className="mt-3 divide-y divide-line">
-                {findings.map((f, i) => (
-                  <li key={i} className="py-3 flex items-start gap-3 flex-wrap sm:flex-nowrap">
-                    <span className="mono-ref text-deep w-12 shrink-0 pt-0.5">{f.ref}</span>
-                    <div className="flex-1 min-w-0"><Notes notes={[{ text: f.text, basis: f.basis }]} /></div>
-                    <button type="button" onClick={f.go} className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink">{f.goLabel} <ArrowRight className="w-3.5 h-3.5" /></button>
-                  </li>
-                ))}
-              </ol>
-            ) : <Empty icon={ClipboardList} title="Nothing needs attention yet">Findings appear here once claims or conflicts are found in the case documents.</Empty>}
-          </section>
+          {model.notice && (
+            <p className="flex items-start gap-2 rounded-xl border border-line bg-white px-4 py-3 text-sm text-ink"><Info className="w-4 h-4 text-deep mt-0.5 shrink-0" />{model.notice}</p>
+          )}
+          <Card title="Read this first" sub={model.readFirst.length ? `The ${model.readFirst.length} things that matter most in this demand and complaint` : undefined} className="border-t-4 border-t-brand">
+            <div className="px-5 py-2">
+              <NotesLegend />
+              {model.readFirst.length ? (
+                <ol className="divide-y divide-line mt-1">
+                  {model.readFirst.map((f, i) => (
+                    <li key={i} className="py-3 flex items-start gap-3">
+                      <span className="w-5 h-5 rounded-full bg-tint text-deep text-[11px] font-semibold inline-flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                      <div className="flex-1 min-w-0"><Notes notes={[{ text: f.text, basis: f.basis }]} /></div>
+                      {f.ref && <button type="button" onClick={() => go(f.ref)} className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink">{refLabel(f.ref)} <ArrowRight className="w-3.5 h-3.5" /></button>}
+                    </li>
+                  ))}
+                </ol>
+              ) : <Empty icon={FileWarning} title="Nothing flagged yet">Findings appear here once claims or conflicts are found.</Empty>}
+            </div>
+          </Card>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {(Object.keys(AREA) as ClaimArea[]).map((a) => {
-              const L = byArea(a), I = AREA[a].icon;
-              const conf = new Set(L.flatMap((c) => c.conflicts)).size;
-              const gaps = ev.gaps.filter((g) => g.claims.some((id) => L.some((c) => c.id === id))).length;
-              const amounts = L.filter((c) => c.amount !== undefined);
+            {model.sections.map((s) => {
+              const L = inArea(s.area);
+              const gaps = L.reduce((a, c) => a + c.gaps.length, 0);
               return (
-                <section key={a} className="lg-card p-5 flex flex-col">
-                  <div className="flex items-center gap-2 mb-3"><span className="w-8 h-8 rounded-lg bg-tint text-deep inline-flex items-center justify-center"><I className="w-4 h-4" strokeWidth={1.75} /></span><h3 className="card-title">{AREA[a].label}</h3></div>
-                  {L.length ? (
-                    <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm mb-4">
-                      <dt className="text-[#5B6B78]">Claims</dt><dd className="text-ink font-semibold tabular-nums">{L.length}</dd>
-                      <dt className="text-[#5B6B78]">Supported</dt><dd className="text-ink tabular-nums">{L.filter((c) => c.status === "Supported").length}</dd>
-                      <dt className="text-[#5B6B78]">Partially / un-supported</dt><dd className="text-ink tabular-nums">{L.filter((c) => c.status !== "Supported").length}</dd>
-                      <dt className="text-[#5B6B78]">Conflicts</dt><dd className="text-ink tabular-nums">{conf}</dd>
-                      <dt className="text-[#5B6B78]">Evidence gaps</dt><dd className="text-ink tabular-nums">{gaps}</dd>
-                      {amounts.length > 0 && <><dt className="text-[#5B6B78]">Claimed in records</dt><dd className="text-ink tabular-nums">{fmtMoney(amounts.reduce((s, c) => s + (c.amount ?? 0), 0))}</dd></>}
-                    </dl>
-                  ) : <p className="text-sm text-[#5B6B78] mb-4">No {AREA[a].label.toLowerCase()} claims found in the case documents.</p>}
-                  <button type="button" onClick={() => setTab(a)} className="mt-auto btn btn-secondary gap-1.5">Review {AREA[a].label.toLowerCase()} <ArrowRight className="w-4 h-4" /></button>
+                <section key={s.area} className="lg-card p-5 flex flex-col gap-3 min-w-0">
+                  <div><div className="eyebrow">{s.question}</div><h3 className="card-title mt-0.5">{s.title}</h3></div>
+                  <Meter label="Plaintiff's case" level={s.their} tone="their" />
+                  <p className="text-sm text-[#5B6B78] leading-relaxed">{s.verdict}</p>
+                  <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+                    <dt className="text-[#5B6B78]">Claims</dt><dd className="text-ink font-semibold tabular-nums">{L.length}</dd>
+                    <dt className="text-[#5B6B78]">Conflict with our records</dt><dd className="text-ink font-semibold tabular-nums">{L.filter(conflicted).length}</dd>
+                    <dt className="text-[#5B6B78]">Unsupported</dt><dd className="text-ink font-semibold tabular-nums">{L.filter((c) => c.status === "Unsupported").length}</dd>
+                    <dt className="text-[#5B6B78]">Evidence gaps</dt><dd className="text-ink font-semibold tabular-nums">{gaps}</dd>
+                  </dl>
+                  <button type="button" onClick={() => setTab(s.area)} className="mt-auto btn btn-primary gap-1.5">Review {s.title.toLowerCase()} <ArrowRight className="w-4 h-4" /></button>
                 </section>
               );
             })}
           </div>
 
-          <section className="lg-card p-5">
-            <h2 className="section-header mb-3">Demand at a glance</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-              {([
-                ["Demand amount", facts.demandAmount ? `$${facts.demandAmount.replace(/^\$/, "")}` : null, facts.demandAmount ? "Recorded in Case Details" : undefined],
-                ["Complaint ad damnum", null, ev.noComplaint ? "No complaint on file" : undefined],
-                ["Policy limit", facts.policyLimits ?? ev.policyLimit?.text ?? null, facts.policyLimits ? "Case Details" : ev.policyLimit ? `${ev.policyLimit.source.title} · each occurrence` : undefined],
-                ["Carrier offer", null, undefined],
-                ["Demand date", fmtDay(facts.demandDate) ?? null, undefined],
-                ["Status", facts.demandStatus ?? null, "Deadline not recorded"],
-              ] as [string, string | null, string | undefined][]).map(([k, v, sub]) => (
-                <div key={k} className="lg-zone lg-zone-grey px-3.5 py-2.5 min-w-0">
-                  <div className="eyebrow mb-1">{k}</div>
-                  <div className="text-sm font-semibold text-ink break-words">{v ?? NA()}</div>
-                  {sub && <div className="text-xs text-[#5B6B78] mt-0.5 break-words">{sub}</div>}
+          <Card title="Demand at a glance" sub={model.glanceSub}>
+            <div className="p-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {model.glance.map((g) => (
+                <div key={g.label} className="lg-zone lg-zone-grey px-4 py-3 min-w-0">
+                  <div className="eyebrow">{g.label}</div>
+                  <div className="text-[22px] font-semibold text-ink tabular-nums leading-8 break-words">{g.value ?? <span className="text-base font-normal text-[#8A98A3]">Not recorded</span>}</div>
+                  {g.note && <div className="text-xs text-[#5B6B78] break-words">{g.note}</div>}
                 </div>
               ))}
             </div>
-          </section>
+          </Card>
 
-          <section className="lg-card overflow-hidden">
-            <div className="px-5 py-4 border-b border-line">
-              <h2 className="section-header">What changed from demand to complaint</h2>
-              <p className="secondary-text mt-0.5">{ev.noDemand && ev.noComplaint ? "Neither document is on file, so nothing can be compared yet." : "Only what the documents state is compared."}</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[560px] text-sm">
-                <thead className="bg-offwhite border-b border-line"><tr><th className="eyebrow text-left px-5 py-2.5">Item</th><th className="eyebrow text-left px-5 py-2.5">Demand</th><th className="eyebrow text-left px-5 py-2.5">Complaint</th></tr></thead>
-                <tbody className="divide-y divide-line">
-                  {["Amount claimed", "Liability theory", "Injury allegations", "Earning capacity / wage loss", "Prior medical history"].map((item) => (
-                    <tr key={item}>
-                      <td className="px-5 py-2.5 text-ink font-medium">{item}</td>
-                      <td className="px-5 py-2.5">{item === "Amount claimed" && facts.demandAmount ? <>${facts.demandAmount.replace(/^\$/, "")} <span className="text-xs text-[#5B6B78]">· Case Details</span></> : NA(ev.noDemand ? "No demand letter on file" : "Not stated")}</td>
-                      <td className="px-5 py-2.5">{NA(ev.noComplaint ? "No complaint on file" : "Not stated")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <Card title="What changed from demand to complaint" sub={model.changes.sub}>
+            <Table head={model.changes.head} rows={model.changes.rows.map((r) => [
+              <span className="font-semibold text-ink">{r.item}</span>,
+              r.demand === "Not on file" ? NA(r.demand) : r.demand,
+              <span className="flex flex-wrap items-center gap-2">{r.complaint === "Not on file" ? NA(r.complaint) : r.complaint}{r.changed && <Badge cls="pill-progress">Changed</Badge>}{r.ref && <button type="button" onClick={() => go(r.ref)} className="text-xs font-semibold text-deep hover:text-ink">{r.ref}</button>}</span>,
+            ])} />
+          </Card>
         </div>
       )}
 
-      {(tab === "liability" || tab === "injury" || tab === "damages") && (
-        <AreaTab area={tab} ev={ev} caseId={caseId} dec={dec.items} openClaim={openClaim} setOpenClaim={setOpenClaim} onOpenConflict={onOpenConflict} gapStatus={gapStatus} conflictOf={conflictOf} />
-      )}
+      {(tab === "liability" || tab === "injury" || tab === "damages") && (() => {
+        const s = model.sections.find((x) => x.area === tab)!;
+        const L = inArea(tab);
+        const gaps = L.reduce((a, c) => a + c.gaps.length, 0);
+        const posN = L.filter((c) => dec.items[`claim:${c.id}`]).length;
+        return (
+          <div className="space-y-5">
+            <section className="lg-card p-5 space-y-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div><div className="eyebrow">{s.question}</div><h2 className="section-header mt-0.5">{s.title}</h2></div>
+                <Meter label="Plaintiff's case" level={s.their} tone="their" />
+              </div>
+              <p className="text-sm text-ink leading-relaxed max-w-[80ch]">{s.verdict}</p>
+              <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+                <span><b className="tabular-nums">{L.length}</b> claims</span>
+                <span className="text-[#7C4DBA]"><b className="tabular-nums">{L.filter(conflicted).length}</b> conflict with our records</span>
+                <span className="text-[#B42318]"><b className="tabular-nums">{L.filter((c) => c.status === "Unsupported").length}</b> unsupported</span>
+                <span><b className="tabular-nums">{gaps}</b> gaps</span>
+                <span className="text-[#15803D]"><b className="tabular-nums">{posN}</b> of {L.length} positions set</span>
+              </div>
+              {s.attention.length > 0 && <div className="border-t border-line pt-3"><div className="eyebrow mb-1">Needs your attention</div><Attn items={s.attention} /></div>}
+            </section>
+
+            <div className="space-y-2.5">
+              <div className="eyebrow">Claims in this section · select to open</div>
+              {L.length ? L.map((c) => <ClaimCard key={c.id} c={c} open={open === c.id} onToggle={() => setOpen(open === c.id ? null : c.id)} caseId={caseId} decision={dec.items[`claim:${c.id}`]} conflicts={conflicts} onOpenConflict={onOpenConflict} />)
+                : <div className="lg-card"><Empty icon={FileWarning} title={`No ${s.title.toLowerCase()} claims found`} /></div>}
+            </div>
+
+            {tab === "injury" && model.providers && (
+              <Card title="Treatment, provider by provider" sub={model.providers.sub}>
+                <Table head={["Provider", "Dates", "Visits", "Billed", "In the demand", "What our records show", "Flag"]} numeric={[3]} rows={model.providers.rows.map((r) => [
+                  <span className="font-semibold text-ink">{r.provider}</span>, <span className="whitespace-nowrap">{r.dates}</span>, r.visits, r.billed, r.inDemand, r.ours, <Badge cls={TONE_CLS[r.tone]}>{r.flag}</Badge>,
+                ])} />
+              </Card>
+            )}
+            {tab === "injury" && model.history && (
+              <Card title="Medical history the demand leaves out" sub={model.history.sub} right={model.history.rows.length ? <Badge cls="pill-risk">{model.history.rows.length} omission{model.history.rows.length === 1 ? "" : "s"}</Badge> : undefined}>
+                {model.history.rows.length ? (
+                  <Table head={["Source", "Date", "Finding", "Effect"]} rows={model.history.rows.map((r) => [
+                    <span className="font-semibold text-ink">{r.source}</span>, <span className="whitespace-nowrap">{r.date}</span>, r.finding,
+                    r.ref ? <button type="button" onClick={() => go(r.ref)} className="pill pill-progress hover:brightness-95">{r.effect}</button> : <Badge cls="pill-progress">{r.effect}</Badge>,
+                  ])} />
+                ) : <p className="px-5 py-4 text-sm text-[#5B6B78]">{model.history.empty}</p>}
+              </Card>
+            )}
+            {tab === "damages" && model.reconcile && (() => {
+              const r = model.reconcile;
+              const max = Math.max(...r.rows.map((x) => x.demanded), 1);
+              return (
+                <Card title={r.title} sub={r.sub} right={<Badge cls="pill-complete">{r.verifiedLabel}</Badge>}>
+                  <div className="p-5 space-y-4">
+                    {r.rows.map((x) => (
+                      <div key={x.label} className="space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap text-sm">
+                          <b className="font-semibold text-ink">{x.label}</b>
+                          {x.str && <Badge cls={LEVEL_PILL[x.str]}>Their support: {x.str}</Badge>}
+                          <span className="ml-auto text-[#5B6B78] tabular-nums">{fmtMoney(x.demanded)} claimed · {x.verified ? `${fmtMoney(x.verified)} supported` : x.verified === 0 ? "none supported" : "unverified"}</span>
+                        </div>
+                        <div className="relative h-3 rounded-full" role="img" aria-label={`${x.label}: ${fmtMoney(x.demanded)} claimed, ${x.verified ? fmtMoney(x.verified) : "none"} supported`}>
+                          <div className="absolute inset-y-0 left-0 rounded-full border-2 border-[#9BDAEC] bg-white" style={{ width: `${(x.demanded / max) * 100}%` }} />
+                          {!!x.verified && <div className="absolute inset-y-0 left-0 rounded-full bg-brand" style={{ width: `${(x.verified / max) * 100}%` }} />}
+                        </div>
+                        <p className="text-xs text-[#5B6B78]">{x.note}</p>
+                      </div>
+                    ))}
+                    <p className="text-xs text-[#5B6B78] border-t border-line pt-3">{r.note}</p>
+                  </div>
+                </Card>
+              );
+            })()}
+          </div>
+        );
+      })()}
 
       {tab === "exhibits" && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
-          <section className="lg-card overflow-hidden min-w-0">
-            <div className="px-5 py-4 border-b border-line"><h2 className="section-header">Exhibits they attached</h2><p className="secondary-text mt-0.5">Documents received from the plaintiff ({ev.exhibits.length}).</p></div>
-            {ev.exhibits.length ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-sm">
-                  <thead className="bg-offwhite border-b border-line"><tr>{["#", "Document", "Pages", "Claims", "Review", "Key issue"].map((h) => <th key={h} className="eyebrow text-left px-4 py-2.5">{h}</th>)}</tr></thead>
-                  <tbody className="divide-y divide-line">
-                    {ev.exhibits.map((x) => (
-                      <tr key={x.id} className="align-top">
-                        <td className="px-4 py-2.5 mono-ref text-deep">{x.id}</td>
-                        <td className="px-4 py-2.5 mono-ref text-ink break-all">{x.doc.name}</td>
-                        <td className="px-4 py-2.5">{NA()}</td>
-                        <td className="px-4 py-2.5">{x.claims.length ? <span className="flex flex-wrap gap-1">{x.claims.map((id) => <button key={id} type="button" onClick={() => { const c = ev.claims.find((k) => k.id === id); if (c) goClaim(c); }} className="pill pill-neutral hover:brightness-95">{id}</button>)}</span> : NA("None")}</td>
-                        <td className="px-4 py-2.5"><Badge cls={x.doc.status === "Processed" ? "pill-complete" : "pill-progress"}>{x.doc.status}</Badge></td>
-                        <td className="px-4 py-2.5 text-ink">{x.issue ?? NA("—")}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : <Empty icon={FileWarning} title="No plaintiff documents on file" />}
+        <div className="space-y-5">
+          <section className="lg-card p-5 space-y-3">
+            <div><div className="eyebrow">What they sent and what's missing</div><h2 className="section-header mt-0.5">Exhibits &amp; gaps</h2></div>
+            {model.exhibitsAttention.length > 0 && <div className="border-t border-line pt-3"><div className="eyebrow mb-1">Needs your attention</div><Attn items={model.exhibitsAttention} /></div>}
           </section>
-          <section className="lg-card overflow-hidden min-w-0">
-            <div className="px-5 py-4 border-b border-line flex items-start justify-between gap-3 flex-wrap">
-              <div><h2 className="section-header">Missing from the file</h2><p className="secondary-text mt-0.5">{ev.gaps.length} record{ev.gaps.length === 1 ? "" : "s"} not among the case documents. Status comes from the Document Tracker.</p></div>
-              {onOpenTracker && <button type="button" onClick={onOpenTracker} className="btn btn-secondary gap-1.5">Document Tracker <ExternalLink className="w-3.5 h-3.5" /></button>}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[520px] text-sm">
-                <thead className="bg-offwhite border-b border-line"><tr>{["Record", "Why it's needed", "Status"].map((h) => <th key={h} className="eyebrow text-left px-4 py-2.5">{h}</th>)}</tr></thead>
-                <tbody className="divide-y divide-line">
-                  {ev.gaps.map((g) => {
-                    const s = gapStatus(g.match);
-                    return (
-                      <tr key={g.id} className="align-top">
-                        <td className="px-4 py-2.5"><span className="mono-ref text-deep mr-1.5">{g.id}</span><span className="text-ink font-medium">{g.item}</span>{g.claims.length > 0 && <span className="block text-xs text-[#5B6B78] mt-0.5">For {g.claims.join(", ")}</span>}</td>
-                        <td className="px-4 py-2.5 text-ink">{g.why}</td>
-                        <td className="px-4 py-2.5"><span className={`${TONE_PILL[s.tone] ?? TONE_PILL[""]} whitespace-nowrap`}>{s.label}</span></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+            <Card title="Exhibits they attached" sub={model.exhibits.sub}>
+              {model.exhibits.rows.length ? (
+                <Table head={["Exhibit", "Document", "Supports", "Strength", "Look at"]} rows={model.exhibits.rows.map((x) => [
+                  <span className="mono-ref text-deep whitespace-nowrap">{x.id}</span>,
+                  <span><span className="font-semibold text-ink break-words">{x.doc}</span>{x.pages && <span className="block text-xs text-[#5B6B78]">{x.pages} pp.</span>}</span>,
+                  x.supports.length ? <span className="flex flex-wrap gap-1">{x.supports.map((id) => <button key={id} type="button" onClick={() => go(id)} className="mono-ref text-deep hover:text-ink">{id}</button>)}</span> : NA("None"),
+                  x.strength ? <Badge cls={LEVEL_PILL[x.strength]}>{x.strength}</Badge> : NA("Not rated"),
+                  <span className="text-[#5B6B78]">{x.look}</span>,
+                ])} />
+              ) : <Empty icon={FileWarning} title="No exhibits on file" />}
+            </Card>
+            <Card title="Missing from the demand" sub={`${model.gaps.filter((g) => g.tone !== "ok").length} still open`} right={onOpenTracker && <button type="button" onClick={onOpenTracker} className="btn btn-secondary gap-1.5">Document Tracker <ExternalLink className="w-3.5 h-3.5" /></button>}>
+              <Table head={["Item", "Needed for", "Status"]} rows={model.gaps.map((g) => [
+                <span><span className="font-semibold text-ink">{g.item}</span>{g.claims && g.claims.length > 0 && <span className="block text-xs text-[#5B6B78]">For {g.claims.join(", ")}</span>}</span>,
+                g.neededFor,
+                <span className="flex items-center gap-2 flex-wrap"><Badge cls={TONE_CLS[g.tone]}>{g.status}</Badge>{g.requestId && onOpenTracker && <button type="button" onClick={onOpenTracker} className="text-xs font-semibold text-deep hover:text-ink">Request {g.requestId}</button>}</span>,
+              ])} />
+            </Card>
+          </div>
         </div>
       )}
 
-      {tab === "terms" && <TermsTab ev={ev} facts={facts} onOpenConflict={onOpenConflict} />}
+      {tab === "terms" && (
+        <div className="space-y-5">
+          <section className="lg-card p-5 space-y-3">
+            <div><div className="eyebrow">Settlement exposure</div><h2 className="section-header mt-0.5">Terms &amp; deadlines</h2></div>
+            {model.termsAttention.length > 0 && <div className="border-t border-line pt-3"><div className="eyebrow mb-1">Needs your attention</div><Attn items={model.termsAttention} /></div>}
+          </section>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+            <Card title="Demand terms">
+              <dl className="p-5 grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-sm">
+                {model.terms.map(([k, v]) => <Fragment key={k}><dt className="text-[#5B6B78]">{k}</dt><dd className="text-ink break-words">{v ?? NA()}</dd></Fragment>)}
+              </dl>
+            </Card>
+            <Card title="Risk flags">
+              <ul className="p-5 space-y-2.5">
+                {model.flags.map((f, i) => (
+                  <li key={i} className={`rounded-xl border px-4 py-3 ${f.tone === "crit" ? "bg-[#FEF2F2] border-[#FBD5D5]" : f.tone === "warn" ? "bg-[#FFF7ED] border-[#FDE6C8]" : f.tone === "ok" ? "bg-[#ECFDF3] border-[#D1FADF]" : "bg-white border-line"}`}>
+                    <p className="text-sm font-semibold text-ink">{f.title}</p>
+                    <p className="text-sm text-ink mt-1 leading-relaxed">{f.body}</p>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function AreaTab({ area, ev, caseId, dec, openClaim, setOpenClaim, onOpenConflict, gapStatus, conflictOf }: {
-  area: ClaimArea; ev: CaseEvidence; caseId: string; dec: Record<string, import("./decisionStore").Decision>;
-  openClaim: string | null; setOpenClaim: (id: string | null) => void; onOpenConflict: (id: string) => void;
-  gapStatus: (re: RegExp) => { label: string; tone: string }; conflictOf: (id: string) => import("./caseEvidence").Conflict | undefined;
+function ClaimCard({ c, open, onToggle, caseId, decision, conflicts, onOpenConflict }: {
+  c: DClaim; open: boolean; onToggle: () => void; caseId: string; decision?: import("./decisionStore").Decision; conflicts: Conflict[]; onOpenConflict: (id: string) => void;
 }) {
-  const L = ev.claims.filter((c) => c.area === area);
-  const srcOf = (id: string) => ev.sources.find((s) => s.id === id);
-  const gapsFor = (c: Claim) => ev.gaps.filter((g) => g.claims.includes(c.id));
-  const attention = L.filter((c) => c.status !== "Supported" || c.conflicts.length);
-  const conf = new Set(L.flatMap((c) => c.conflicts));
-  if (!L.length) return <div className="lg-card"><Empty icon={AREA[area].icon} title={`No ${AREA[area].label.toLowerCase()} claims found`}>None of the case documents make a {AREA[area].label.toLowerCase()} claim yet.</Empty></div>;
-
+  const cf = conflicted(c);
   return (
-    <div className="space-y-5">
-      <section className="lg-card p-5">
-        <h2 className="section-header">{AREA[area].label} summary</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-3">
-          {([["Claims", L.length], ["Supported", L.filter((c) => c.status === "Supported").length], ["Partially supported", L.filter((c) => c.status === "Partially supported").length], ["Unsupported", L.filter((c) => c.status === "Unsupported" || c.status === "Contradicted").length], ["Conflicts", conf.size], ["Positions set", L.filter((c) => dec[`claim:${c.id}`]).length]] as [string, number][]).map(([k, v]) => (
-            <div key={k} className="lg-zone lg-zone-grey px-3.5 py-2.5"><div className="eyebrow">{k}</div><div className="text-[20px] font-semibold text-ink tabular-nums">{v}</div></div>
-          ))}
-        </div>
-      </section>
-
-      {attention.length > 0 && (
-        <section className="lg-card p-5">
-          <h2 className="section-header mb-2">Needs your attention</h2>
-          <ul className="divide-y divide-line">
-            {attention.map((c) => (
-              <li key={c.id} className="py-2.5 flex items-start gap-3">
-                <AlertTriangle className="w-4 h-4 text-[#B45309] mt-0.5 shrink-0" />
-                <p className="flex-1 text-sm text-ink"><b className="font-semibold">{c.title}.</b> {c.lookAt}</p>
-                <button type="button" onClick={() => { setOpenClaim(c.id); window.setTimeout(() => document.getElementById(`claim-${c.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 30); }} className="mono-ref text-deep hover:text-ink shrink-0">{c.id}</button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {area === "injury" && <ProviderTable ev={ev} />}
-      {area === "damages" && <AmountTable claims={L} />}
-
-      <div className="space-y-3">
-        {L.map((c) => {
-          const open = openClaim === c.id;
-          return (
-            <article key={c.id} id={`claim-${c.id}`} className="lg-card overflow-hidden scroll-mt-[150px]">
-              <button type="button" aria-expanded={open} onClick={() => setOpenClaim(open ? null : c.id)} className="w-full text-left px-5 py-4 flex items-start gap-3 hover:bg-wash">
-                <span className="mono-ref text-deep pt-0.5 w-8 shrink-0">{c.id}</span>
-                <span className="flex-1 min-w-0">
-                  <span className="flex flex-wrap items-center gap-1.5">
-                    <Badge cls={STATUS_PILL[c.status]}>{c.status}</Badge>
-                    {c.conflicts.map((id) => <Badge key={id} cls="pill-progress">Conflict {id}</Badge>)}
-                    {dec[`claim:${c.id}`] && <Badge cls="pill-complete">Position: {dec[`claim:${c.id}`].choice}</Badge>}
-                    {c.amount !== undefined && <span className="text-sm font-semibold text-ink tabular-nums ml-1">{fmtMoney(c.amount)}</span>}
-                  </span>
-                  <span className="block text-sm font-semibold text-ink mt-1.5">{c.title}</span>
-                  <span className="block text-sm text-[#5B6B78] mt-0.5"><b className="font-semibold text-ink">Look at:</b> {c.lookAt}</span>
-                </span>
-                <ChevronDown className={`w-4 h-4 text-deep mt-1 transition-transform ${open ? "rotate-180" : ""}`} />
-              </button>
-              {open && (
-                <div className="px-5 pb-5 space-y-4 border-t border-line pt-4">
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    <section className="rounded-xl border border-line border-t-4 border-t-[#F2B46B] bg-offwhite p-4 space-y-2.5 min-w-0">
-                      <h3 className="eyebrow">Plaintiff's support</h3>
-                      {c.support.map((s) => <StatementCard key={s.id} s={s} src={srcOf(s.sourceId)} />)}
-                    </section>
-                    <section className="rounded-xl border border-line border-t-4 border-t-[#4FB97A] bg-offwhite p-4 space-y-2.5 min-w-0">
-                      <h3 className="eyebrow">Defense rebuttal on file</h3>
-                      {c.rebuttal.length ? c.rebuttal.map((s) => <StatementCard key={s.id} s={s} src={srcOf(s.sourceId)} />) : <p className="text-sm text-[#5B6B78]">Nothing in the case documents rebuts this yet.</p>}
-                    </section>
-                  </div>
-                  {c.analysis && <Notes notes={c.analysis} />}
-                  {c.conflicts.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {c.conflicts.map((id) => <button key={id} type="button" onClick={() => onOpenConflict(id)} className="inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink">{id} · {conflictOf(id)?.title} <ArrowRight className="w-3.5 h-3.5" /></button>)}
-                    </div>
-                  )}
-                  <div>
-                    <h3 className="eyebrow mb-1.5">Evidence gaps</h3>
-                    <ul className="space-y-1">
-                      {c.gaps.map((g) => <li key={g} className="text-sm text-ink flex items-start gap-2"><FileWarning className="w-4 h-4 text-[#B45309] mt-0.5 shrink-0" />{g}</li>)}
-                      {gapsFor(c).map((g) => { const s = gapStatus(g.match); return <li key={g.id} className="text-xs text-[#5B6B78] pl-6">{g.id} {g.item}: <span className={`${TONE_PILL[s.tone] ?? TONE_PILL[""]}`}>{s.label}</span></li>; })}
-                    </ul>
-                  </div>
-                  <DecisionPanel caseId={caseId} itemKey={`claim:${c.id}`} title="Attorney position" options={POSITIONS} needsOwner={["Investigate further", "Need more information"]} current={dec[`claim:${c.id}`]} />
+    <article id={`claim-${c.id}`} className="lg-card overflow-hidden scroll-mt-[150px]">
+      <button type="button" aria-expanded={open} onClick={onToggle} className="w-full text-left px-5 py-4 hover:bg-wash">
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="mono-ref text-deep mr-1">{c.id}</span>
+          <Badge cls={STATUS_PILL[c.status]}>{c.status}</Badge>
+          {cf && <Badge cls="pill-progress">Conflict with our records</Badge>}
+          {c.tag && <Badge cls="pill-neutral">{c.tag}</Badge>}
+          {decision && <Badge cls="pill-complete">Position: {decision.choice}</Badge>}
+          <ChevronDown className={`w-4 h-4 text-deep ml-auto transition-transform ${open ? "rotate-180" : ""}`} />
+        </span>
+        <span className="block text-sm font-semibold text-ink mt-2">{c.title}{c.amount ? <span className="font-normal text-[#5B6B78] tabular-nums"> · {fmtMoney(c.amount)}</span> : null}</span>
+        <span className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-2">
+          <Meter label="Their support" level={c.their} tone="their" />
+          <Meter label="Our rebuttal" level={c.ours} tone="ours" />
+          <span className="pill pill-neutral">{c.exhibits.length ? `${c.exhibits.length} exhibit${c.exhibits.length > 1 ? "s" : ""}` : "No exhibits"}</span>
+          <span className="pill pill-neutral">{c.gaps.length} gap{c.gaps.length === 1 ? "" : "s"}</span>
+        </span>
+        <span className="block text-sm text-[#5B6B78] mt-2"><b className="font-semibold text-ink">Look at:</b> {c.look}</span>
+      </button>
+      {open && (
+        <div className="px-5 pb-5 pt-4 border-t border-line space-y-4">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <section className="rounded-xl border border-line border-t-4 border-t-[#F2B46B] bg-offwhite p-4 space-y-2.5 min-w-0">
+              <h3 className="eyebrow">They claim</h3>
+              {c.quotes.map((q, i) => (
+                <div key={i} className="rounded-lg border border-line bg-white px-3.5 py-3">
+                  <div className="flex items-center gap-2 text-xs mb-1 flex-wrap"><Badge cls="pill-neutral">{q.doc}</Badge><span className="mono-ref text-[#5B6B78]">{q.loc}</span></div>
+                  <blockquote className="text-sm text-ink border-l-2 border-[#F2B46B] pl-3 break-words">“{q.text}”</blockquote>
                 </div>
-              )}
-            </article>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ProviderTable({ ev }: { ev: CaseEvidence }) {
-  const billing = ev.claims.find((c) => c.title === "Past medical expenses");
-  const line = (re: RegExp) => billing?.support.find((s) => re.test(s.text))?.text.split(": ")[1];
-  const med = ev.sources.filter((s) => s.col === "medical" && s.doc);
-  if (!med.length) return null;
-  const rows = med.map((s) => {
-    const head = getDocumentContent(s.doc).blocks.find((b) => b.type === "heading");
-    const billed = s.type === "MRI report" ? line(/^Imaging/) : s.type === "Physical therapy notes" ? line(/^Physical therapy/) : s.type === "Treatment record" ? [line(/^Specialist/), line(/^Injections/)].filter(Boolean).join(" + ") || undefined : undefined;
-    const issue = /bill|invoice/i.test(s.title) && s.type !== "Treatment record" ? "File named as bills holds clinical notes; no charges" : !billing ? "No bill on file for this provider" : !billed ? "No charge for this provider in the billing summary" : "Summary amount only; no itemized bill";
-    return { s, provider: head && head.type === "heading" ? head.text : s.title, billed, issue };
-  });
-  return (
-    <section className="lg-card overflow-hidden">
-      <div className="px-5 py-4 border-b border-line"><h2 className="section-header">Treatment providers</h2><p className="secondary-text mt-0.5">{billing ? "Billed amounts come from the billing summary in the treatment record." : "No bill or billing summary is on file for any provider."} Visit counts aren't stated in any record on file.</p></div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] text-sm">
-          <thead className="bg-offwhite border-b border-line"><tr>{["Provider", "Record", "Date", "Visits", "Billed", "Flag"].map((h) => <th key={h} className="eyebrow text-left px-4 py-2.5">{h}</th>)}</tr></thead>
-          <tbody className="divide-y divide-line">
-            {rows.map((r) => (
-              <tr key={r.s.id} className="align-top">
-                <td className="px-4 py-2.5 text-ink font-medium">{r.provider}</td>
-                <td className="px-4 py-2.5"><span className="mono-ref break-all">{r.s.title}</span><span className="block text-xs text-[#5B6B78]">{r.s.type}</span></td>
-                <td className="px-4 py-2.5 whitespace-nowrap text-[#5B6B78]">{r.s.date ?? "—"}</td>
-                <td className="px-4 py-2.5">{NA("Not stated")}</td>
-                <td className="px-4 py-2.5 tabular-nums">{r.billed ?? NA("—")}</td>
-                <td className="px-4 py-2.5 text-ink">{r.issue}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="px-5 py-3 border-t border-line text-sm text-[#5B6B78]">Medical history: no prior records are on file, so omissions from the plaintiff's history can't be checked yet.</p>
-    </section>
-  );
-}
-
-function AmountTable({ claims }: { claims: Claim[] }) {
-  const L = claims.filter((c) => c.amount !== undefined);
-  if (!L.length) return null;
-  return (
-    <section className="lg-card overflow-hidden">
-      <div className="px-5 py-4 border-b border-line"><h2 className="section-header">Amounts claimed against the records</h2><p className="secondary-text mt-0.5">A missing document doesn't make an amount false; it stays unverified until reviewed.</p></div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead className="bg-offwhite border-b border-line"><tr><th className="eyebrow text-left px-4 py-2.5">Claim</th><th className="eyebrow text-right px-4 py-2.5">Claimed</th><th className="eyebrow text-right px-4 py-2.5">Records give</th><th className="eyebrow text-right px-4 py-2.5">Difference</th><th className="eyebrow text-left px-4 py-2.5">Status</th></tr></thead>
-          <tbody className="divide-y divide-line">
-            {L.map((c) => {
-              const diff = c.reconciled !== undefined ? Math.round((c.amount! - c.reconciled) * 100) / 100 : undefined;
-              return (
-                <tr key={c.id}>
-                  <td className="px-4 py-2.5"><span className="mono-ref text-deep mr-1.5">{c.id}</span>{c.title}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">{fmtMoney(c.amount!)}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">{c.reconciled !== undefined ? fmtMoney(c.reconciled) : NA("Unverified")}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">{diff ? <span className="text-[#B45309] font-semibold">{fmtMoney(diff)}</span> : diff === 0 ? "—" : NA("—")}</td>
-                  <td className="px-4 py-2.5"><Badge cls={diff ? "pill-progress" : c.reconciled !== undefined ? "pill-complete" : "pill-neutral"}>{diff ? "Disputed portion" : c.reconciled !== undefined ? "Reconciles" : "Pending itemized records"}</Badge></td>
-                </tr>
-              );
-            })}
-            <tr className="bg-offwhite font-semibold"><td className="px-4 py-2.5">Economic total claimed in records</td><td className="px-4 py-2.5 text-right tabular-nums">{fmtMoney(L.reduce((s, c) => s + c.amount!, 0))}</td><td colSpan={3} /></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function TermsTab({ ev, facts, onOpenConflict }: { ev: CaseEvidence; facts: CaseDetails; onOpenConflict: (id: string) => void }) {
-  const demand = num(facts.demandAmount);
-  const limitAmount = num(facts.policyLimits) ?? ev.policyLimit?.amount;
-  const dateConflict = ev.conflicts.find((c) => c.fact === "Date of the collision");
-  const deadline = (label: string, date?: string, verified?: string): { tone: string; title: string; body: ReactNode } => {
-    if (!date) return { tone: "warn", title: `${label} not recorded`, body: "Add it in Stage 2 Case Details once it has been calculated and checked." };
-    const n = daysUntil(date);
-    if (verified !== "Verified") return { tone: "warn", title: `${label} ${fmtDay(date)} is unverified`, body: "No status is worked out from an unverified date." };
-    return n !== undefined && n < 0 ? { tone: "crit", title: `${label} passed ${fmtDay(date)}`, body: `${-n} days ago, per the verified date in Case Details.` }
-      : { tone: n !== undefined && n <= 30 ? "warn" : "", title: `${label} ${fmtDay(date)}`, body: `${n} days left, per the verified date in Case Details.` };
-  };
-  const flags: { tone: string; title: string; body: ReactNode; basis: string }[] = [
-    ...(demand && limitAmount ? [{ tone: demand >= limitAmount ? "crit" : "", title: demand >= limitAmount ? "Demand at or above the policy limit" : "Demand within the policy limit", body: `Demand ${fmtMoney(demand)} against a limit of ${fmtMoney(limitAmount)}. Excess exposure and any time-limited terms need review.`, basis: "Case Details · policy declarations" }] : []),
-    ...(ev.noDemand ? [{ tone: "warn", title: "Demand terms can't be checked", body: "No demand letter is on file, so any deadline, release condition or lien language is unknown.", basis: "Case documents" }] : []),
-    ...(dateConflict ? [{ tone: "crit", title: "Date of loss is disputed in the records", body: <>Every deadline that runs from the date of loss depends on it. <button type="button" onClick={() => onOpenConflict(dateConflict.id)} className="font-semibold text-deep hover:text-ink">Open {dateConflict.id}</button></>, basis: "Police report · hospital record" }] : []),
-    { ...deadline("Statute of limitations", facts.solDate, facts.solVerified), basis: "Stage 2 Case Details" },
-    ...(facts.caseStatus === "Suit" ? [{ ...deadline("Answer due", facts.answerDueDate, facts.answerVerified), basis: "Stage 2 Case Details" }] : []),
-    ...(ev.coverage ? [{ tone: "warn", title: "Coverage for a vehicle loss needs review", body: <>The loss involves a commercial truck, and the policy on file is a general liability policy with this auto wording: “{ev.coverage.policy.text}”. Whether it responds is a question for coverage review, not a conclusion.</>, basis: `${ev.policyLimit?.source.title ?? "Policy"} · police report` }] : []),
-    { tone: "", title: "Lien and health-insurer status not recorded", body: "No lien, Medicare or health-insurer information is on file.", basis: "Case documents" },
-  ];
-  const terms: [string, ReactNode][] = [
-    ["Amount demanded", facts.demandAmount ? `$${facts.demandAmount.replace(/^\$/, "")}` : NA()],
-    ["Demand type", NA(ev.noDemand ? "No demand letter on file" : "Not recorded")],
-    ["Deadline", NA()],
-    ["Conditions and release terms", NA(ev.noDemand ? "No demand letter on file" : "Not recorded")],
-    ["Carrier response", NA()],
-    ["Offer date and amount", NA()],
-    ["Status", facts.demandStatus ?? NA()],
-  ];
-  return (
-    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-5 items-start">
-      <section className="lg-card p-5">
-        <h2 className="section-header mb-3">Demand terms</h2>
-        <dl className="grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
-          {terms.map(([k, v]) => <Fragment key={k}><dt className="text-[#5B6B78]">{k}</dt><dd className="text-ink break-words">{v}</dd></Fragment>)}
-        </dl>
-        <p className="text-xs text-[#5B6B78] mt-3">Amounts and status come from Stage 2 Case Details; nothing here is calculated from legal rules.</p>
-      </section>
-      <section className="lg-card p-5">
-        <h2 className="section-header mb-3">Risk flags</h2>
-        <ul className="space-y-2.5">
-          {flags.map((fl, i) => (
-            <li key={i} className={`rounded-xl border px-4 py-3 ${fl.tone === "crit" ? "bg-[#FEF2F2] border-[#FBD5D5]" : fl.tone === "warn" ? "bg-[#FFF7ED] border-[#FDE6C8]" : "bg-white border-line"}`}>
-              <div className="flex items-start justify-between gap-2 flex-wrap">
-                <p className="text-sm font-semibold text-ink">{fl.title}</p>
-                <span className="text-[11px] text-[#5B6B78]">{fl.basis}</span>
-              </div>
-              <p className="text-sm text-ink mt-1 leading-relaxed">{fl.body}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </div>
+              ))}
+              <div className="eyebrow pt-1">Evidence they attached</div>
+              {c.exhibits.length ? c.exhibits.map((e, i) => (
+                <div key={i} className="rounded-lg border border-line bg-white px-3.5 py-3 text-sm">
+                  <div className="flex items-center justify-between gap-2 flex-wrap"><span><span className="mono-ref text-deep">{e.ex}</span> · <b className="font-semibold text-ink break-words">{e.doc}</b></span>{e.str && <Badge cls={LEVEL_PILL[e.str]}>{e.str}</Badge>}</div>
+                  <p className="text-ink mt-1">{e.shows}</p>
+                  {e.loc && <p className="mono-ref text-xs text-[#5B6B78] mt-0.5">{e.loc}</p>}
+                </div>
+              )) : <p className="rounded-lg border border-[#FBD5D5] bg-[#FEF2F2] px-3.5 py-2.5 text-sm text-ink"><b className="text-[#B42318]">Missing grounds.</b> No evidence attached; the claim rests on counsel's words alone.</p>}
+            </section>
+            <section className="rounded-xl border border-line border-t-4 border-t-[#4FB97A] bg-offwhite p-4 space-y-2.5 min-w-0">
+              <h3 className="eyebrow">{cf ? "Our records show" : "Our file"}</h3>
+              {c.ours_.length ? c.ours_.map((o, i) => (
+                <div key={i} className="rounded-lg border border-line bg-white px-3.5 py-3">
+                  <div className="text-xs text-[#5B6B78] mb-1"><b className="font-semibold text-ink">{o.doc}</b> · <span className="mono-ref">{o.loc}</span></div>
+                  <blockquote className="text-sm text-ink border-l-2 border-[#4FB97A] pl-3 break-words">“{o.text}”</blockquote>
+                  {o.conflict && conflicts.some((k) => k.id === o.conflict) && <button type="button" onClick={() => onOpenConflict(o.conflict!)} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink">Open evidence conflict {o.conflict} <ArrowRight className="w-3.5 h-3.5" /></button>}
+                </div>
+              )) : <p className="rounded-lg border border-dashed border-line bg-white px-3.5 py-2.5 text-sm text-[#5B6B78]"><b className="text-ink">Nothing in our file yet.</b> See the gaps below for what to request.</p>}
+            </section>
+          </div>
+          {cf && c.response && <p className="rounded-xl border border-[#D9CCF0] bg-[#F7F3FD] px-4 py-3 text-sm text-ink"><b className="text-[#6B3FA0]">How the conflict cuts.</b> {c.response}</p>}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <section className="rounded-xl border border-line p-4">
+              <h3 className="card-title mb-2">Gaps in their support</h3>
+              <ul className="space-y-1.5">{c.gaps.map((g) => <li key={g} className="flex items-start gap-2 text-sm text-ink"><Square className="w-4 h-4 text-[#8A98A3] mt-0.5 shrink-0" aria-hidden="true" />{g}</li>)}</ul>
+            </section>
+            <section className="rounded-xl border border-line p-4">
+              <h3 className="card-title mb-2">Suggested response</h3>
+              {c.response ? <p className="text-sm text-ink leading-relaxed">{c.response}</p> : <p className="text-sm text-[#8A98A3]">None recorded.</p>}
+              {c.law && <div className="mt-2"><Badge cls="pill-neutral">{c.law}</Badge></div>}
+            </section>
+          </div>
+          <DecisionPanel caseId={caseId} itemKey={`claim:${c.id}`} title="Your position" options={POSITIONS} needsOwner={["Investigate"]} current={decision} />
+        </div>
+      )}
+    </article>
   );
 }

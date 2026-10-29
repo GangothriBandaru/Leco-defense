@@ -28,6 +28,8 @@ export interface CaseDocument {
   requestId?: string;
   intakeUploadId?: string;
   receivedAt?: string;
+  /** The document's text, when the case record carries it rather than a file. */
+  content?: { kind: "text" | "image"; blocks: ({ type: "heading" | "paragraph"; text: string } | { type: "fields"; pairs: [string, string][] } | { type: "list"; items: string[] })[] };
 }
 
 /** The categories a document can be filed under. */

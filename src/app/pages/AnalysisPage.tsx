@@ -11,6 +11,8 @@ import { buildCaseEvidence } from "../evidence/caseEvidence";
 import { useCaseDecisions, setFocus } from "../evidence/decisionStore";
 import { EvidenceConflictsWorkspace } from "../evidence/EvidenceConflictsWorkspace";
 import { DemandAnalysisWorkspace } from "../evidence/DemandAnalysisWorkspace";
+import { deriveDemand } from "../evidence/demandModel";
+import { isReferenceCase, referenceDemand } from "../evidence/referenceCase";
 import { useCaseDetails } from "../intake/caseDetailsStore";
 import { resolveCasePolicy } from "../insurance/casePolicy";
 import { resolveCaseFacts } from "../conflict/caseFacts";
@@ -679,7 +681,9 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
   const facts = useMemo(() => resolveCaseFacts(caseRecord, savedDetails, resolveCasePolicy(caseRecord, documents)), [data.caseId, savedDetails, documents]);
   const { requests: trackerRequests } = useTracker(data.caseId);
   const conflictsDecided = evidence.conflicts.filter((c) => decisions.items[`conflict:${c.id}`]).length;
-  const positionsSet = evidence.claims.filter((c) => decisions.items[`claim:${c.id}`]).length;
+  // One claims model for the card and all six tabs: the reference file for its own case, otherwise derived from the records.
+  const demandModel = useMemo(() => isReferenceCase(data.caseId) ? referenceDemand() : deriveDemand(evidence, facts, trackerRequests, documents), [data.caseId, evidence, facts, trackerRequests, documents]);
+  const positionsSet = demandModel.claims.filter((c) => decisions.items[`claim:${c.id}`]).length;
   const openConflict = (id: string) => { setFocus(id); onOpenDetail?.("conflicts"); document.querySelector("main")?.scrollTo(0, 0); };
 
   // The analysis cards — counts read from the findings themselves.
@@ -697,10 +701,10 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
     { title: "Case Timeline Overview", category: "Timeline", icon: CalendarDays, meta: `${events.length} key ${events.length === 1 ? "event" : "events"}`,
       description: "Key events extracted from the case timeline, with supporting evidence for each event.", onOpen: () => onOpenDetail?.("timeline") },
     { title: "Evidence Conflicts", category: "Evidence", icon: GitCompareArrows, count: evidence.conflicts.length,
-      meta: evidence.conflicts.length ? `${evidence.conflicts.length - conflictsDecided} open · ${conflictsDecided} decided` : "No conflicts found",
+      meta: evidence.conflicts.length ? `${evidence.conflicts.length - conflictsDecided} open · ${evidence.conflicts.length} found · ${evidence.sources.length} sources` : "No conflicts found",
       description: "Review disputed facts across statements, records, and expert evidence.", onOpen: () => onOpenDetail?.("conflicts") },
-    { title: "Demand & Complaint Analysis", category: "Demand", icon: FileSearch, count: evidence.claims.length,
-      meta: evidence.claims.length ? `${positionsSet} of ${evidence.claims.length} positions set` : "No claims found",
+    { title: "Demand & Complaint Analysis", category: "Demand", icon: FileSearch, count: demandModel.claims.length,
+      meta: demandModel.claims.length ? `${demandModel.claims.length - positionsSet} open · ${demandModel.claims.length} claims analyzed` : "No claims found",
       description: "Compare the plaintiff's demand and complaint against available evidence, identify gaps, and assess exposure.", onOpen: () => onOpenDetail?.("demand") },
   ];
 
@@ -710,14 +714,14 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
     violations: { title: "Violation Analysis", category: "Analysis", icon: Gavel, count: violationCount, description: "Identified violations, supporting evidence, and their relevance to potential liability." },
     timeline: { title: "Case Timeline Overview", category: "Timeline", icon: CalendarDays, count: events.length, description: "Key events extracted from the case timeline, with supporting evidence for each event." },
     conflicts: { title: "Evidence Conflicts", category: "Evidence", icon: GitCompareArrows, count: evidence.conflicts.length, description: "Review disputed facts across statements, records, and expert evidence." },
-    demand: { title: "Demand & Complaint Analysis", category: "Demand", icon: FileSearch, count: evidence.claims.length, description: "Compare the plaintiff's demand and complaint against available evidence, identify gaps, and assess exposure." },
+    demand: { title: "Demand & Complaint Analysis", category: "Demand", icon: FileSearch, count: demandModel.claims.length, description: "Compare the plaintiff's demand and complaint against available evidence, identify gaps, and assess exposure." },
   };
   // One findings set on its own page: the same cards, evidence and Preview /
   // Insights the stage showed in its tabs, every finding at once.
   const renderDetail = (signalTab: AnalysisDetail) => {
     if (signalTab === "conflicts") return <EvidenceConflictsWorkspace caseId={data.caseId} ev={evidence} />;
     if (signalTab === "demand") return (
-      <DemandAnalysisWorkspace caseId={data.caseId} ev={evidence} facts={facts} requests={trackerRequests} onOpenConflict={openConflict} onOpenTracker={onOpenTracker} />
+      <DemandAnalysisWorkspace caseId={data.caseId} model={demandModel} conflicts={evidence.conflicts} onOpenConflict={openConflict} onOpenTracker={onOpenTracker} />
     );
     const meta = DETAIL_META[signalTab];
     // Liability Signals: the full liability analysis workspace, when the case has one.

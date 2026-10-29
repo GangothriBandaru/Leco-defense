@@ -269,5 +269,6 @@ function buildContent(doc: any): DocumentContent {
 }
 
 export function getDocumentContent(doc: any): DocumentContent {
+  if (doc?.content?.blocks) return doc.content as DocumentContent;
   return buildContent(doc);
 }

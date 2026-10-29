@@ -65,7 +65,7 @@ export function EvidenceConflictsWorkspace({ caseId, ev }: { caseId: string; ev:
         <Metric label="Conflicts found" value={conflicts.length} sub={`${sevCount("Critical")} critical · ${sevCount("Major")} major · ${sevCount("Minor")} minor`} />
         <Metric label="Hurts our client" value={conflicts.filter((c) => c.effect === "Hurts defense").length} sub="Insured's account contradicted" />
         <Metric label="Plaintiff self-contradictions" value={conflicts.filter((c) => c.selfContradiction).length} sub="Within the plaintiff's own statements" />
-        <Metric label="Sources compared" value={sources.length} sub={`${conflictStatements.length} statements in conflicts · ${usedSources.size} sources cited`} />
+        <Metric label="Sources compared" value={sources.length} sub={sources.some((s) => s.statementCount) ? `${sources.reduce((a, s) => a + (s.statementCount ?? 0), 0)} statements extracted` : `${conflictStatements.length} statements in conflicts · ${usedSources.size} sources cited`} />
         <Metric label="Decided" value={decidedN} sub={`${conflicts.length - decidedN} still open`} />
       </div>
 
@@ -131,8 +131,11 @@ function ConflictDetail({ caseId, c, ev, decision, steps, sourceCount }: { caseI
       <header className="lg-card px-6 py-5">
         <div className="flex items-center gap-2 text-xs text-[#5B6B78]"><span className="mono-ref text-deep">{c.id}</span>{c.topic}<span className="ml-auto">{sourceCount} supporting source{sourceCount === 1 ? "" : "s"}</span></div>
         <h2 className="section-header mt-1">{c.title}</h2>
-        <div className="flex flex-wrap gap-1.5 mt-2"><Badge cls={SEVERITY_PILL[c.severity]}>{c.severity}</Badge><Badge cls={EFFECT_PILL[c.effect]}>{c.effect}</Badge></div>
+        <div className="flex flex-wrap gap-1.5 mt-2"><Badge cls={SEVERITY_PILL[c.severity]}>{c.severity}</Badge><Badge cls={EFFECT_PILL[c.effect]}>{c.effect}</Badge>{c.value && <Badge cls="pill-neutral">{c.value}</Badge>}</div>
         <p className="text-sm text-ink mt-3 leading-relaxed">{c.summary}</p>
+        {c.effect === "Hurts defense" && (
+          <p className="mt-3 rounded-lg border border-[#FBD5D5] bg-[#FEF2F2] px-3.5 py-2.5 text-sm text-ink"><b className="text-[#B42318]">This conflict hurts our client.</b> The insured's account is contradicted by other evidence. The carrier should hear about it from us before mediation.</p>
+        )}
       </header>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -218,7 +221,7 @@ function Matrix({ ev, onOpen }: { ev: CaseEvidence; onOpen: (id: string) => void
             </tr>
           </thead>
           <tbody>
-            {ev.conflicts.map((c) => (
+            {(ev.matrix ? ev.matrix.map((r) => ev.conflicts.find((c) => c.id === r.conflictId)!).filter(Boolean) : ev.conflicts).map((c) => (
               <tr key={c.id}>
                 <th scope="row" className="sticky left-0 z-10 bg-white text-left font-normal px-4 py-2 border-b border-line align-top">
                   <button type="button" onClick={() => onOpen(c.id)} className="text-left group">
@@ -228,14 +231,17 @@ function Matrix({ ev, onOpen }: { ev: CaseEvidence; onOpen: (id: string) => void
                 </th>
                 {MATRIX_COLS.map((m) => {
                   const ss = c.sides.flatMap((s) => s.statements).filter((s) => s.col === m.key);
-                  const stance: Stance | "mixed" | "none" = !ss.length ? "none" : ss.every((s) => s.stance === ss[0].stance) ? ss[0].stance : "mixed";
+                  // Where the file states the cell, use it; otherwise read it off the statements.
+                  const stated = ev.matrix?.find((r) => r.conflictId === c.id)?.cells.find((x) => x.col === m.key);
+                  const stance: Stance | "mixed" | "none" = stated ? stated.stance : !ss.length ? "none" : ss.every((s) => s.stance === ss[0].stance) ? ss[0].stance : "mixed";
+                  const label = stated?.text || ss[0]?.text;
                   const on = cell?.c === c.id && cell.col === m.key;
                   return (
                     <td key={m.key} className="px-1.5 py-1.5 border-b border-line align-top">
-                      <button type="button" disabled={!ss.length} onClick={() => setCell(on ? null : { c: c.id, col: m.key })} aria-pressed={on}
+                      <button type="button" disabled={!label} onClick={() => setCell(on ? null : { c: c.id, col: m.key })} aria-pressed={on}
                         aria-label={`${c.fact} · ${m.label}: ${STANCE_CELL[stance][1]}${ss.length ? `, ${ss.length} statement${ss.length === 1 ? "" : "s"}` : ""}`}
-                        className={`w-full min-h-[44px] rounded-md border px-2 py-1.5 text-left text-xs ${STANCE_CELL[stance][0]} ${on ? "ring-2 ring-brand" : ""} ${ss.length ? "cursor-pointer hover:brightness-[0.98]" : "cursor-default"}`}>
-                        {ss.length ? <><span className="block text-ink line-clamp-2">{ss[0].text}</span>{ss.length > 1 && <span className="text-[#5B6B78]">+{ss.length - 1} more</span>}</> : <span className="text-[#8A98A3]">—</span>}
+                        className={`w-full min-h-[44px] rounded-md border px-2 py-1.5 text-left text-xs ${STANCE_CELL[stance][0]} ${on ? "ring-2 ring-brand" : ""} ${label ? "cursor-pointer hover:brightness-[0.98]" : "cursor-default"}`}>
+                        {label ? <><span className="block text-ink line-clamp-2">{label}</span>{!stated && ss.length > 1 && <span className="text-[#5B6B78]">+{ss.length - 1} more</span>}</> : <span className="text-[#8A98A3]">—</span>}
                       </button>
                     </td>
                   );
