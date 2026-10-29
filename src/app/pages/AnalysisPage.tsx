@@ -3,8 +3,8 @@ import { FileTypeIcon, FileTypeTag } from "../components/fileType";
 import { StageNavigator } from "../components/StageNavigator";
 import {
   ChevronLeft, ChevronRight, ChevronDown, CheckCircle, FileText, Eye, Download, X,
-  AlertCircle, ArrowRight, User, Building2, Shield, Scale, Stethoscope, Gavel,
-  Users, Bot, Sparkles, ArrowUpRight, Plus, Pencil, Trash2, RotateCcw, ClipboardList, ExternalLink, CalendarDays,
+  AlertCircle, ArrowRight, User, Shield, Scale, Stethoscope, Gavel,
+  Bot, Sparkles, ArrowUpRight, Plus, Pencil, Trash2, RotateCcw, ClipboardList, ExternalLink, CalendarDays,
   GitCompareArrows, FileSearch,
 } from "lucide-react";
 import { buildCaseEvidence } from "../evidence/caseEvidence";
@@ -29,9 +29,7 @@ import {
   CaseDocument, classifyDocuments, generateAnalysisFindings, AnalysisFinding,
 } from "../types/case";
 import { VIOLATION_CARDS, VIOLATION_SEVERITY_PILL } from "../workspace/WorkspaceTabs";
-import { governingLawSummary } from "../jurisdiction/jurisdictionData";
 import { defendantsForCase } from "../defendants/defendantData";
-import { useDefendantDecisions } from "../defendants/defendantDecisionStore";
 import { LiabilityWorkspace } from "./LiabilityWorkspace";
 import { liabilityForCase } from "../liability/liabilityData";
 import {
@@ -960,25 +958,6 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
     );
   };
 
-  // Case Intelligence Summary fields
-  // Jurisdiction opens the Attorney Jurisdiction Review. Governing Law shows the
-  // approved law, else the provisional finding — labelled as such.
-  const law = governingLawSummary(data.caseId, data.jurisdiction, governingLaw);
-  // Defendant opens the Defendant Analysis; its note comes from that record.
-  const DEFENDANT = "Memory Care Facility LLC";
-  const defendants = defendantsForCase(data.caseId);
-  const defendantDecisions = useDefendantDecisions(defendants?.id);
-  const defendantNote = defendants
-    ? `${defendants.candidates.length} potential defendants · ${defendantDecisions?.confirmedAt ? "decisions confirmed" : "awaiting attorney decisions"}`
-    : undefined;
-  const summaryRows: { icon: any; label: string; value?: string; note?: string; onClick?: () => void; hint?: string }[] = [
-    { icon: User, label: "Plaintiff", value: data.plaintiff },
-    { icon: Building2, label: "Defendant", value: DEFENDANT, note: defendantNote, onClick: onOpenDefendants ? () => onOpenDefendants(DEFENDANT) : undefined, hint: "Open the Defendant Analysis" },
-    { icon: Shield, label: "Insurance Carrier", value: "ABC Professional Liability Insurance" },
-    { icon: Scale, label: "Jurisdiction", value: data.jurisdiction, onClick: onOpenJurisdiction, hint: "Open the Attorney Jurisdiction Review" },
-    { icon: Gavel, label: "Governing Law", value: law.value, note: law.note },
-  ];
-
   return (
     <div className="min-h-screen bg-wash">
       {/* Breadcrumb — the Liability Signals page carries its breadcrumb and
@@ -1061,98 +1040,16 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
           <span className="text-[#5B6B78]">Stage 3 -</span> <span className="text-ink">Analysis</span>
         </h1>
 
-        {/* ── Case Intelligence Summary (40) beside Analysis Findings (60) — the timeline now has its own page ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6 items-start lg:items-stretch">
-
-          {/* Case Intelligence Summary, compact two-column card grid */}
-          <div id="case-intelligence" className="lg-card px-5 py-4 flex flex-col min-w-0 scroll-mt-[150px]">
-            <div className="flex items-center gap-2.5 mb-3">
-              <h2 className="section-header">Case Intelligence Summary</h2>
-              <span className="pill pill-complete">92% Complete</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
-              {summaryRows.map(({ icon: Icon, label, value, note, onClick, hint }) => {
-                const body = (
-                  <>
-                    <div className="eyebrow flex items-center gap-1.5 mb-1">
-                      <Icon className="w-4 h-4 text-deep" strokeWidth={1.75} />
-                      {label}
-                    </div>
-                    <p className="text-sm font-semibold text-ink leading-snug">{value}</p>
-                    {note && <p className="text-xs text-[#5B6B78] leading-snug mt-0.5">{note}</p>}
-                  </>
-                );
-                return onClick ? (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={onClick}
-                    title={hint}
-                    aria-label={`${label}: ${value}. ${hint}`}
-                    className="group relative text-left flex flex-col justify-start lg-zone lg-zone-grey px-3.5 py-2.5 pr-8 cursor-pointer transition-all hover:border-soft hover:shadow-sm active:scale-[0.99]"
-                  >
-                    {body}
-                    <ArrowUpRight className="absolute top-3 right-3 w-3.5 h-3.5 text-deep opacity-60 group-hover:opacity-100 transition-opacity" strokeWidth={2} />
-                  </button>
-                ) : (
-                  <div key={label} className="lg-zone lg-zone-grey px-3.5 py-2.5">{body}</div>
-                );
-              })}
-
-              <div className="lg-zone lg-zone-grey px-3.5 py-2.5">
-                <div className="eyebrow flex items-center gap-1.5 mb-1">
-                  <Users className="w-4 h-4 text-deep" strokeWidth={1.75} />
-                  Key Witnesses
-                </div>
-                <p className="text-sm font-semibold text-ink leading-snug">Officer D. Vance</p>
-                <p className="text-sm font-semibold text-ink leading-snug">John Peterson</p>
-              </div>
-
-              <div className="lg-zone lg-zone-grey px-3.5 py-2.5">
-                <div className="eyebrow flex items-center gap-1.5 mb-1">
-                  <Stethoscope className="w-4 h-4 text-deep" strokeWidth={1.75} />
-                  Primary Medical Providers
-                </div>
-                <p className="text-sm font-semibold text-ink leading-snug">Cook County Medical Center</p>
-                <p className="text-sm font-semibold text-ink leading-snug">Physical Therapy Associates</p>
-              </div>
-
-              <div className="lg-zone lg-zone-grey px-3.5 py-2.5">
-                <div className="eyebrow flex items-center gap-1.5 mb-1">
-                  <Shield className="w-4 h-4 text-deep" strokeWidth={1.75} />
-                  Verified Evidence
-                </div>
-                <p className="text-sm font-semibold text-ink leading-snug">{verifiedCount} <span className="font-medium text-[#5B6B78]">Documents</span></p>
-              </div>
-
-              <div className="lg-zone lg-zone-grey px-3.5 py-2.5">
-                <div className="eyebrow flex items-center gap-1.5 mb-1">
-                  <CheckCircle className="w-4 h-4 text-deep" strokeWidth={1.75} />
-                  Analysis Status
-                </div>
-                <span className="pill pill-complete">Complete</span>
-              </div>
-            </div>
-
-            {/* Primary CTA pinned full-width at the bottom */}
-            <Button
-              onClick={onProceedToValuation}
-              className="btn btn-primary gap-2 w-full mt-auto"
-            >
-              Proceed To Valuation
-              <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
-            </Button>
-          </div>
+        {/* The Case Intelligence Summary lives in Stage 2; Analysis Findings uses the full width. */}
+        <div className="min-w-0">
 
         {/* ── Analysis findings — six deliverable cards, as in Case Ready ── */}
-        {/* Same height as the summary beside it: the two rows of cards share the spare height. */}
         <div id="analysis-deliverables" className="lg-card overflow-hidden min-w-0 scroll-mt-[150px] flex flex-col">
           <div className="flex items-center justify-between px-6 py-4 border-b border-line">
             <h2 className="section-header">Analysis Findings</h2>
             <span className="secondary-text">{analysisCards.length} analyses</span>
           </div>
-          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 flex-1 lg:auto-rows-fr">
+          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 flex-1 lg:auto-rows-fr">
             {analysisCards.map((item) => (
               <div
                 key={item.title}
@@ -1187,7 +1084,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
           </div>
         </div>
 
-        </div>{/* end Summary + Findings grid */}
+        </div>{/* end Findings */}
 
         {/* ── Evidence Verification + Analysis Complete (80 / 20) ── */}
         <div className="grid grid-cols-1 lg:grid-cols-[80fr_20fr] gap-6 items-start">

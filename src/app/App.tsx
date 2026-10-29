@@ -153,7 +153,7 @@ export default function App() {
     setActivePage("defendants");
   };
   const backToDefendantOrigin = () => {
-    if (defendantOrigin !== "analysis-detail") setReturnToSection(defendantOrigin === "case-ready" ? "defendant-deliverable" : "case-intelligence");
+    if (defendantOrigin !== "analysis-detail") setReturnToSection(defendantOrigin === "case-ready" ? "defendant-deliverable" : "analysis-deliverables");
     setActivePage(defendantOrigin);
   };
   const jurisdictionDecision = jurisdictionDecisions[caseKey];
