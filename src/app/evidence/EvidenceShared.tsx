@@ -43,7 +43,11 @@ export function StatementCard({ s, src }: { s: Statement; src?: Source }) {
       <blockquote className="text-sm text-ink leading-relaxed border-l-2 border-[#9BDAEC] pl-3 break-words">“{s.text}”</blockquote>
       <div className="text-xs text-[#5B6B78] mt-1.5 break-words">
         {s.where}{src?.date ? ` · ${src.date}` : ""}{src?.author ? ` · ${src.author}` : ""}
+        {src?.doc?.source && ` · submitted by ${src.doc.source === "Attorney" ? "Defense Counsel" : src.doc.source}`}
       </div>
+      {src && src.traits.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1.5">{src.traits.map((t) => <span key={t} className="pill pill-neutral">{t}</span>)}</div>
+      )}
     </div>
   );
 }

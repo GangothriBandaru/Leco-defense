@@ -50,7 +50,16 @@ export type Severity = "Critical" | "Major" | "Minor";
 export type Effect = "Helps defense" | "Hurts defense" | "Disputed experts" | "Mixed";
 export interface Note { text: string; basis: "source" | "analysis" }
 
-export interface Side { label: string; stance: Stance; statements: Statement[] }
+/** One side of a conflict: the plaintiff's version or the defense version. */
+export interface Side {
+  version: "plaintiff" | "defense";
+  /** What this side says happened, e.g. "Full strength at the ER". */
+  heading: string;
+  stance: Stance;
+  statements: Statement[];
+  /** Shown when nothing on file speaks for this side. */
+  empty?: string;
+}
 
 export interface Conflict {
   id: string;
@@ -187,8 +196,8 @@ export function buildCaseEvidence(caseData: any, documents: CaseDocument[]): Cas
       title: "Does the case record describe the same incident as the documents?",
       summary: "The case record describes a different kind of incident from the one the police and hospital records describe. Every later analysis depends on which one is right.",
       sides: [
-        { label: "Case record says", stance: "neutral", statements: [say(caseRecord, { text: recordText, where: "Case type · summary" }, "neutral")] },
-        { label: "Case documents say", stance: "neutral", statements: [say(crash.r.src, crash.h, "neutral"), ...(crashMed ? [say(crashMed.r.src, crashMed.h, "neutral")] : [])] },
+        { version: "plaintiff", heading: "A collision with a commercial truck", stance: "neutral", statements: [say(crash.r.src, crash.h, "neutral"), ...(crashMed ? [say(crashMed.r.src, crashMed.h, "neutral")] : [])] },
+        { version: "defense", heading: "The firm's case record describes a different matter", stance: "neutral", statements: [say(caseRecord, { text: recordText, where: "Case type · summary" }, "neutral")] },
       ],
       context: [
         { basis: "source", text: `The case record lists ${caseData?.caseType ?? "a case type"}${caseData?.caseSubType ? ` (${caseData.caseSubType})` : ""}.` },
@@ -215,8 +224,8 @@ export function buildCaseEvidence(caseData: any, documents: CaseDocument[]): Cas
       title: "When did the collision happen?",
       summary: `The police report gives ${day(a)}; the hospital record has the plaintiff arriving on ${day(b)}${b < a ? ", before the date the police report gives" : ""}.`,
       sides: [
-        { label: "Police report says", stance: "neutral", statements: [say(pol.src, polDate, "neutral")] },
-        { label: "Hospital record says", stance: "neutral", statements: [say(er.src, arr, "neutral"), ...(lag ? [say(er.src, lag, "neutral")] : [])] },
+        { version: "plaintiff", heading: `Their own records give ${day(a)} and ${day(b)}`, stance: "neutral", statements: [say(pol.src, polDate, "neutral"), say(er.src, arr, "neutral"), ...(lag ? [say(er.src, lag, "neutral")] : [])] },
+        { version: "defense", heading: "No defense account of the date", stance: "neutral", statements: [], empty: "Nothing from the insured or the defense on file gives the date of the collision." },
       ],
       context: [
         { basis: "source", text: "The police field is labelled “Date / Time”; the hospital field is labelled “Arrival”." },
@@ -243,8 +252,8 @@ export function buildCaseEvidence(caseData: any, documents: CaseDocument[]): Cas
       title: "Was there a strength deficit from the start?",
       summary: "The emergency exam recorded full strength in all extremities; physical therapy later recorded reduced left grip strength.",
       sides: [
-        { label: "Supports the plaintiff's account", stance: "plaintiff", statements: [say(ptGrip.r.src, ptGrip.h, "plaintiff"), ...(escal ? [say(escal.r.src, escal.h, "plaintiff")] : [])] },
-        { label: "Supports the defense", stance: "defense", statements: [say(erStrength.r.src, erStrength.h, "defense")] },
+        { version: "plaintiff", heading: "Weakness in the left arm from the injury", stance: "plaintiff", statements: [say(ptGrip.r.src, ptGrip.h, "plaintiff"), ...(escal ? [say(escal.r.src, escal.h, "plaintiff")] : [])] },
+        { version: "defense", heading: "Full strength at the emergency exam", stance: "defense", statements: [say(erStrength.r.src, erStrength.h, "defense")] },
       ],
       context: [
         { basis: "source", text: "The emergency exam is the record made closest to the collision." },
@@ -274,10 +283,11 @@ export function buildCaseEvidence(caseData: any, documents: CaseDocument[]): Cas
         title: "Does the MRI describe this patient?",
         summary: `The MRI history calls the patient ${stated} years old; the date of birth on the same report makes her ${age} on the date of service.`,
         sides: [
-          { label: "Clinical history says", stance: "self", statements: [say(mri.src, ageHit, "self")] },
-          { label: "Same report's header says", stance: "self", statements: [say(mri.src, dob, "self"), say(mri.src, dos, "self")] },
+          { version: "plaintiff", heading: `The MRI history describes a ${stated}-year-old`, stance: "self", statements: [say(mri.src, ageHit, "self")] },
+          { version: "defense", heading: `The same report's header makes her ${age}`, stance: "self", statements: [say(mri.src, dob, "self"), say(mri.src, dos, "self")] },
         ],
         context: [
+          { basis: "source", text: `The MRI header lists DOB ${dob.value} and a date of service of ${dos.value}; its clinical history says ${stated}-year-old.` },
           { basis: "analysis", text: `Age worked out from the record: born ${dob.value}, scanned ${dos.value} → ${age}.` },
           { basis: "analysis", text: "This may be a transcription slip, but it should be ruled out that the history belongs to another patient or an earlier study." },
         ],
@@ -302,10 +312,11 @@ export function buildCaseEvidence(caseData: any, documents: CaseDocument[]): Cas
       title: "Do the lost wages add up?",
       summary: `The employer states ${fmtMoney(claimed)} for ${n} days; the same record's salary gives ${fmtMoney(computed)} for ${n} working days.`,
       sides: [
-        { label: "Supports the plaintiff's figure", stance: "plaintiff", statements: [say(wage.src, lost, "plaintiff")] },
-        { label: "Same record's inputs", stance: "defense", statements: [say(wage.src, salary, "defense"), say(wage.src, days, "defense")] },
+        { version: "plaintiff", heading: `${fmtMoney(claimed)} in lost wages`, stance: "plaintiff", statements: [say(wage.src, lost, "plaintiff")] },
+        { version: "defense", heading: `The record's own salary gives ${fmtMoney(computed)}`, stance: "defense", statements: [say(wage.src, salary, "defense"), say(wage.src, days, "defense")] },
       ],
       context: [
+        { basis: "source", text: `The employer record lists an annual base salary of ${salary.value}, ${n} business days missed, and ${fmtMoney(claimed)} in lost wages.` },
         { basis: "analysis", text: `${fmtMoney(annual)} ÷ 260 working days = ${fmtMoney(Math.round(perDay * 100) / 100)} a day × ${n} days = ${fmtMoney(computed)}. Difference ${fmtMoney(Math.round((claimed - computed) * 100) / 100)}.` },
         { basis: "analysis", text: "The gap could come from overtime, bonus or benefits not shown in the record. Payroll records would settle it." },
       ],

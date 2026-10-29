@@ -3,7 +3,7 @@ import { GitCompareArrows, Search, FileSearch, CheckSquare, Square, ArrowRight, 
 import { toast } from "sonner";
 import { type CaseEvidence, type Conflict, type Stance, type Topic, type Severity, type Effect, MATRIX_COLS } from "./caseEvidence";
 import { useCaseDecisions, toggleStep, takeFocus } from "./decisionStore";
-import { Badge, SEVERITY_PILL, EFFECT_PILL, Tabs, StatementCard, Notes, NotesLegend, DecisionPanel, Empty } from "./EvidenceShared";
+import { Badge, SEVERITY_PILL, EFFECT_PILL, Tabs, StatementCard, Notes, DecisionPanel, Empty } from "./EvidenceShared";
 
 const DECISIONS = [
   "Use to impeach at deposition or trial",
@@ -72,38 +72,41 @@ export function EvidenceConflictsWorkspace({ caseId, ev }: { caseId: string; ev:
       <Tabs<"review" | "matrix" | "sources"> label="evidence" value={tab} onChange={setTab} tabs={[["review", "Conflict review", conflicts.length], ["matrix", "Fact × source matrix"], ["sources", "Source library", sources.length]]} />
 
       {tab === "review" && (
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] gap-5 items-start">
-          <section aria-label="Conflicts" className="lg-card overflow-hidden min-w-0 lg:sticky lg:top-[150px]">
-            <div className="p-3 border-b border-line grid grid-cols-2 gap-2">
-              {([["topic", "Topic", ["All", "Liability", "Injury", "Medical history", "Causation", "Damages"]], ["severity", "Severity", ["All", "Critical", "Major", "Minor"]], ["effect", "Effect on defense", ["All", "Helps defense", "Hurts defense", "Disputed experts", "Mixed"]], ["status", "Status", ["All", "Open", "Decided"]]] as [keyof typeof f, string, string[]][]).map(([k, l, opts]) => (
-                <label key={k} className="block min-w-0"><span className="eyebrow block mb-1">{l}</span>
-                  <select className={`${sel} w-full`} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })}>{opts.map((o) => <option key={o}>{o}</option>)}</select>
-                </label>
-              ))}
-            </div>
-            <div className="px-3 py-2 text-xs text-[#5B6B78] border-b border-line" aria-live="polite">{list.length} of {conflicts.length} conflict{conflicts.length === 1 ? "" : "s"}</div>
-            <ul className="divide-y divide-line lg:max-h-[calc(100vh-380px)] overflow-y-auto">
-              {list.length ? list.map((c) => {
-                const on = current?.id === c.id;
-                return (
-                  <li key={c.id}>
-                    <button type="button" onClick={() => setSelId(c.id)} aria-pressed={on} className={`w-full text-left px-4 py-3 transition-colors ${on ? "bg-tint/70 shadow-[inset_3px_0_0_var(--color-brand)]" : "hover:bg-wash"}`}>
-                      <span className="flex items-center gap-2 text-xs text-[#5B6B78]"><span className="mono-ref text-deep">{c.id}</span>{c.topic}<span className="ml-auto">{sourcesIn(c)} sources</span></span>
-                      <span className="block text-sm font-semibold text-ink mt-1 leading-snug">{c.title}</span>
-                      <span className="flex flex-wrap gap-1.5 mt-2">
-                        <Badge cls={SEVERITY_PILL[c.severity]}>{c.severity}</Badge>
-                        <Badge cls={EFFECT_PILL[c.effect]}>{c.effect}</Badge>
-                        <Badge cls={decided(c) ? "pill-complete" : "pill-neutral"}>{decided(c) ? "Decided" : "Open"}</Badge>
-                      </span>
-                    </button>
-                  </li>
-                );
-              }) : <li><Empty icon={Search} title={conflicts.length ? "No conflicts match these filters" : "No conflicts found"}>{conflicts.length ? "Change or clear a filter." : "Nothing in the case documents contradicts anything else on file."}</Empty></li>}
-            </ul>
-          </section>
+        <div className="space-y-4">
+          <div role="group" aria-label="Filter conflicts" className="lg-card px-4 py-3 flex flex-wrap items-end gap-x-4 gap-y-3">
+            {([["topic", "Topic", ["All", "Liability", "Injury", "Medical history", "Causation", "Damages"]], ["severity", "Severity", ["All", "Critical", "Major", "Minor"]], ["effect", "Effect on defense", ["All", "Helps defense", "Hurts defense", "Disputed experts", "Mixed"]], ["status", "Status", ["All", "Open", "Decided"]]] as [keyof typeof f, string, string[]][]).map(([k, l, opts]) => (
+              <label key={k} className="block min-w-[150px] flex-1 sm:flex-none sm:w-44"><span className="eyebrow block mb-1">{l}</span>
+                <select className={`${sel} w-full h-9`} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })}>{opts.map((o) => <option key={o}>{o}</option>)}</select>
+              </label>
+            ))}
+            <span className="ml-auto text-sm text-[#5B6B78] pb-2 whitespace-nowrap" aria-live="polite">{list.length} of {conflicts.length} conflict{conflicts.length === 1 ? "" : "s"}</span>
+          </div>
 
-          {current ? <ConflictDetail key={current.id} caseId={caseId} c={current} ev={ev} decision={dec.items[`conflict:${current.id}`]} steps={dec.steps} />
-            : <div className="lg-card"><Empty icon={GitCompareArrows} title="Select a conflict">Its sources, context and decision appear here.</Empty></div>}
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(270px,340px)_minmax(0,1fr)] gap-5 items-start">
+            <section aria-label="Conflicts" className="min-w-0 lg:sticky lg:top-[150px]">
+              <ul className="space-y-2 lg:max-h-[calc(100vh-180px)] overflow-y-auto p-0.5">
+                {list.length ? list.map((c) => {
+                  const on = current?.id === c.id;
+                  return (
+                    <li key={c.id}>
+                      <button type="button" onClick={() => setSelId(c.id)} aria-pressed={on} className={`w-full text-left rounded-xl border bg-white px-4 py-3 transition-colors ${on ? "border-brand ring-2 ring-tint" : "border-line hover:border-[#CBD7DE]"}`}>
+                        <span className="flex items-center gap-2 text-xs text-[#5B6B78]"><span className="mono-ref text-deep">{c.id}</span>{c.topic}<span className="ml-auto">{sourcesIn(c)} source{sourcesIn(c) === 1 ? "" : "s"}</span></span>
+                        <span className="block text-sm font-semibold text-ink mt-1 leading-snug">{c.title}</span>
+                        <span className="flex flex-wrap gap-1.5 mt-2">
+                          <Badge cls={SEVERITY_PILL[c.severity]}>{c.severity}</Badge>
+                          <Badge cls={EFFECT_PILL[c.effect]}>{c.effect}</Badge>
+                          <Badge cls={decided(c) ? "pill-complete" : "pill-neutral"}>{decided(c) ? "Decided" : "Open"}</Badge>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                }) : <li className="lg-card"><Empty icon={Search} title={conflicts.length ? "No conflicts match these filters" : "No conflicts found"}>{conflicts.length ? "Change or clear a filter." : "Nothing in the case documents contradicts anything else on file."}</Empty></li>}
+              </ul>
+            </section>
+
+            {current ? <ConflictDetail key={current.id} caseId={caseId} c={current} ev={ev} decision={dec.items[`conflict:${current.id}`]} steps={dec.steps} sourceCount={sourcesIn(current)} />
+              : <div className="lg-card"><Empty icon={GitCompareArrows} title="Select a conflict">Its sources, context and decision appear here.</Empty></div>}
+          </div>
         </div>
       )}
 
@@ -113,32 +116,62 @@ export function EvidenceConflictsWorkspace({ caseId, ev }: { caseId: string; ev:
   );
 }
 
-function ConflictDetail({ caseId, c, ev, decision, steps }: { caseId: string; c: Conflict; ev: CaseEvidence; decision?: import("./decisionStore").Decision; steps: Record<string, string> }) {
+const VERSION = {
+  plaintiff: { title: "Plaintiff's Version", accent: "border-t-[#F2B46B]" },
+  defense: { title: "Defense Version", accent: "border-t-[#4FB97A]" },
+};
+
+function ConflictDetail({ caseId, c, ev, decision, steps, sourceCount }: { caseId: string; c: Conflict; ev: CaseEvidence; decision?: import("./decisionStore").Decision; steps: Record<string, string>; sourceCount: number }) {
   const srcOf = (id: string) => ev.sources.find((s) => s.id === id);
-  const tone = (st: Stance) => st === "plaintiff" ? "border-t-[#F2B46B]" : st === "defense" ? "border-t-[#4FB97A]" : st === "self" ? "border-t-[#A68BD9]" : "border-t-[#B9C7D0]";
+  const fromRecords = c.context.filter((n) => n.basis === "source");
+  const analysis = c.context.filter((n) => n.basis === "analysis");
+  const stepsDone = c.steps.filter((s) => steps[`${c.id}:${s.id}`]).length;
   return (
-    <article id="conflict-detail" className="lg-card overflow-hidden min-w-0 scroll-mt-[150px]">
-      <header className="px-6 py-4 border-b border-line">
-        <div className="flex items-center gap-2 text-xs text-[#5B6B78]"><span className="mono-ref text-deep">{c.id}</span>{c.topic}</div>
+    <article id="conflict-detail" className="space-y-4 min-w-0 scroll-mt-[150px]">
+      <header className="lg-card px-6 py-5">
+        <div className="flex items-center gap-2 text-xs text-[#5B6B78]"><span className="mono-ref text-deep">{c.id}</span>{c.topic}<span className="ml-auto">{sourceCount} supporting source{sourceCount === 1 ? "" : "s"}</span></div>
         <h2 className="section-header mt-1">{c.title}</h2>
         <div className="flex flex-wrap gap-1.5 mt-2"><Badge cls={SEVERITY_PILL[c.severity]}>{c.severity}</Badge><Badge cls={EFFECT_PILL[c.effect]}>{c.effect}</Badge></div>
         <p className="text-sm text-ink mt-3 leading-relaxed">{c.summary}</p>
       </header>
-      <div className="px-6 py-5 space-y-6">
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {c.sides.map((s) => (
-            <section key={s.label} className={`rounded-xl border border-line border-t-4 ${tone(s.stance)} bg-offwhite p-4 space-y-2.5 min-w-0`}>
-              <h3 className="eyebrow">{s.label}</h3>
-              {s.statements.map((st) => <StatementCard key={st.id} s={st} src={srcOf(st.sourceId)} />)}
-            </section>
-          ))}
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {c.sides.map((s) => (
+          <section key={s.version} aria-labelledby={`v-${c.id}-${s.version}`} className={`lg-card border-t-4 ${VERSION[s.version].accent} p-4 space-y-2.5 min-w-0`}>
+            <h3 id={`v-${c.id}-${s.version}`} className="text-sm leading-snug"><span className="eyebrow block mb-0.5">{VERSION[s.version].title}</span><span className="font-semibold text-ink">{s.heading}</span></h3>
+            {s.statements.length
+              ? s.statements.map((st) => <StatementCard key={st.id} s={st} src={srcOf(st.sourceId)} />)
+              : <p className="rounded-lg border border-dashed border-line bg-offwhite px-3.5 py-3 text-sm text-[#5B6B78]">{s.empty ?? "No evidence on file for this side."}</p>}
+          </section>
+        ))}
+      </div>
+
+      <section aria-labelledby={`ctx-${c.id}`} className="lg-card p-5">
+        <h3 id={`ctx-${c.id}`} className="card-title">Context to Weigh</h3>
+        <p className="secondary-text mt-0.5 mb-3">Evidence that affects how much weight a source gets</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded-lg bg-offwhite border border-line p-3.5">
+            <div className="eyebrow mb-2">From the records</div>
+            {fromRecords.length ? <Notes notes={fromRecords} /> : <p className="text-sm text-[#8A98A3]">No further facts from the records.</p>}
+          </div>
+          <div className="rounded-lg bg-white border border-dashed border-[#CBD7DE] p-3.5">
+            <div className="eyebrow mb-2">Analysis · for attorney review</div>
+            {analysis.length ? <Notes notes={analysis} /> : <p className="text-sm text-[#8A98A3]">No analysis recorded.</p>}
+          </div>
         </div>
-        <NotesLegend />
-        <section><h3 className="card-title mb-2">Context to weigh</h3><Notes notes={c.context} /></section>
-        <section><h3 className="card-title mb-2">Why it matters</h3><Notes notes={c.why} /></section>
-        <section>
-          <h3 className="card-title mb-2">Suggested next steps</h3>
-          <ul className="space-y-1.5">
+      </section>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+        <section aria-labelledby={`why-${c.id}`} className="lg-card p-5">
+          <h3 id={`why-${c.id}`} className="card-title mb-2">Why It Matters</h3>
+          <Notes notes={c.why} />
+        </section>
+        <section aria-labelledby={`steps-${c.id}`} className="lg-card p-5">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <h3 id={`steps-${c.id}`} className="card-title">Suggested Next Steps</h3>
+            <span className="text-xs text-[#5B6B78] tabular-nums">{stepsDone} of {c.steps.length} done</span>
+          </div>
+          <ul className="space-y-2">
             {c.steps.map((s) => {
               const k = `${c.id}:${s.id}`, done = !!steps[k];
               return (
@@ -153,12 +186,12 @@ function ConflictDetail({ caseId, c, ev, decision, steps }: { caseId: string; c:
             })}
           </ul>
         </section>
-        <DecisionPanel caseId={caseId} itemKey={`conflict:${c.id}`} title="Attorney decision" options={DECISIONS} needsOwner={["Investigate further"]} current={decision} />
       </div>
+
+      <DecisionPanel caseId={caseId} itemKey={`conflict:${c.id}`} title="Attorney decision" options={DECISIONS} needsOwner={["Investigate further"]} current={decision} />
     </article>
   );
 }
-
 function Matrix({ ev, onOpen }: { ev: CaseEvidence; onOpen: (id: string) => void }) {
   const [cell, setCell] = useState<{ c: string; col: string } | null>(null);
   const srcOf = (id: string) => ev.sources.find((s) => s.id === id);
