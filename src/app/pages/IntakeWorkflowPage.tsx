@@ -1228,7 +1228,15 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
     <div id="received-summary" className="flex items-center bg-white border border-line rounded-xl @6xl:shrink-0 max-w-full">
       <dl className="flex flex-wrap items-start gap-y-3 py-3 divide-x divide-[#EEF3F6] min-w-0">
         <div className="px-4">
-          <dt className="eyebrow mb-1 whitespace-nowrap">Received</dt>
+          <dt className="eyebrow mb-1 whitespace-nowrap">State</dt>
+          <dd className="leading-6">
+            {receivedState
+              ? <span className={`pill whitespace-nowrap ${receivedState.pill}`}>{receivedState.label}</span>
+              : <span className="text-sm text-[#8A98A3]">—</span>}
+          </dd>
+        </div>
+        <div className="px-4">
+          <dt className="eyebrow mb-1 whitespace-nowrap">Received Date</dt>
           <dd className="text-sm font-semibold text-ink leading-6 whitespace-nowrap">
             {receivedDocs.length === 0
               ? <span className="font-normal text-[#8A98A3]">Not yet received</span>
@@ -1259,14 +1267,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                 <ChevronDown className={`w-3.5 h-3.5 self-center transition-transform ${receivedOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
               </button>
             )}
-          </dd>
-        </div>
-        <div className="px-4">
-          <dt className="eyebrow mb-1 whitespace-nowrap">State</dt>
-          <dd className="leading-6">
-            {receivedState
-              ? <span className={`pill whitespace-nowrap ${receivedState.pill}`}>{receivedState.label}</span>
-              : <span className="text-sm text-[#8A98A3]">—</span>}
           </dd>
         </div>
       </dl>
@@ -1602,7 +1602,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
         {/* Page Header + Global Presenter Control */}
         {/* SECTION 1 — Case Snapshot */}
         <div>
-          <h1 className="text-[24px] font-semibold text-ink leading-tight tracking-tight mb-4">Stage 1 · Case Discovery</h1>
+          <h1 className="text-[22px] font-semibold text-ink leading-tight tracking-tight mb-4">Stage 1 · Case Discovery</h1>
           <CaseSnapshot
             caseName={cardDetails.caseName ?? data.caseName}
             caseType={cardDetails.caseType}
@@ -1638,7 +1638,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
           <div id="documents-section" className="lg-card overflow-hidden scroll-mt-[150px]">
             <div className="w-full flex items-center justify-between gap-4 px-6 py-5">
               <div className="flex items-center gap-3">
-                <span className="card-title">Received Documents</span>
+                <span className="card-title text-[18px]">Received Documents</span>
               </div>
               <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0">
                 <Upload className="w-3.5 h-3.5" strokeWidth={1.75} />
