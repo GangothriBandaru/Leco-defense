@@ -11,7 +11,7 @@ export type ContextId = "stage" | "intake" | "workspace" | "case" | "global";
 
 export const CONTEXTS: { id: ContextId; label: string; blurb: string }[] = [
   { id: "stage", label: "Current Stage", blurb: "Only what is on screen right now" },
-  { id: "intake", label: "Case Intake Pipeline", blurb: "Collection, Analysis, Valuation, Case Ready" },
+  { id: "intake", label: "Case Intake Pipeline", blurb: "Collection, Conflict Check, Analysis, Valuation, Case Ready" },
   { id: "workspace", label: "Case Workspace", blurb: "All nine workspace stages" },
   { id: "case", label: "Entire Case", blurb: "Every stage, document and finding" },
   { id: "global", label: "Global", blurb: "Research sources outside this case" },
@@ -379,7 +379,7 @@ export function answer(q: string, ctx: ContextId, loc: AssistantLocation, source
 
 export interface WorkStageDef { key: string; pipeline: "intake" | "workspace"; id: string; label: string }
 
-export const INTAKE_STAGES = ["Collection", "Analysis", "Valuation", "Case Ready"] as const;
+export const INTAKE_STAGES = ["Collection", "Conflict Check", "Analysis", "Valuation", "Case Ready"] as const;
 
 export const WORKSPACE_STAGE_IDS: StageId[] = [
   "overview", "medical", "economic", "noneconomic", "liability",

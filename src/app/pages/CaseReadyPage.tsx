@@ -111,7 +111,7 @@ export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake
       <div className="max-w-[1400px] mx-auto px-8 py-8 space-y-8">
 
         {/* ── 1. CASE READY HEADER ── */}
-        <h1 className="page-title" style={{ fontSize: "24px" }}>Stage 4 - Case Ready</h1>
+        <h1 className="page-title" style={{ fontSize: "24px" }}>Stage 5 - Case Ready</h1>
         <div className="lg-card p-6">
           <div className="flex items-start justify-between gap-8">
             {/* Left */}

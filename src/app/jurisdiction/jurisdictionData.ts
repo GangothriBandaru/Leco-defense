@@ -302,7 +302,7 @@ export const CASE_JURISDICTIONS: CaseJurisdiction[] = [
       { field: "Incident location", value: "Memory care facility — address not on record", source: "Facility_Incident_Report.pdf", confidence: "Medium", verified: false },
       { field: "Jurisdiction on record", value: "Cook County, IL", source: "Case record", confidence: "Medium", verified: false, verifiedNote: "not tied to an address" },
       { field: "Client residence", value: null, source: null, confidence: null, verified: false },
-      { field: "Defendant", value: "Memory Care Facility LLC", source: "Stage 2 Analysis", confidence: "Medium", verified: false, verifiedNote: "caption names Logistics Co." },
+      { field: "Defendant", value: "Memory Care Facility LLC", source: "Stage 3 Analysis", confidence: "Medium", verified: false, verifiedNote: "caption names Logistics Co." },
       { field: "LLC registration", value: null, source: null, confidence: null, verified: false },
       { field: "Injuries / treatment", value: "Ischemic stroke confirmed by MRI; rehabilitation", source: "Radiology_Report.pdf; Physical_Therapy_Notes.pdf", confidence: "High", verified: true },
     ],
@@ -342,7 +342,7 @@ export const CASE_JURISDICTIONS: CaseJurisdiction[] = [
         severity: "MEDIUM",
         title: "Defendant named inconsistently",
         detail: "The caption names Logistics Co.; the Analysis stage identifies Memory Care Facility LLC. The correct entity — and its members' citizenship — decides venue and whether a federal forum is available at all.",
-        sources: ["Case caption", "Stage 2 Analysis — Case Intelligence Summary"],
+        sources: ["Case caption", "Stage 3 Analysis — Case Intelligence Summary"],
       },
       {
         id: "facility-licensing",

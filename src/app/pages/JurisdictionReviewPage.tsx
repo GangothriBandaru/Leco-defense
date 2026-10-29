@@ -13,7 +13,7 @@ import {
 } from "../jurisdiction/jurisdictionData";
 
 // ── Attorney Jurisdiction Review ─────────────────────────────────────────────
-// Stage 2 Analysis → Jurisdiction. Renders the open case's jurisdiction record
+// Stage 3 Analysis → Jurisdiction. Renders the open case's jurisdiction record
 // (jurisdictionData) and holds the attorney's decision on it. The system lays
 // out the forums, the fault picture and the deadlines; the attorney decides.
 

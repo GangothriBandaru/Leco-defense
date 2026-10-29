@@ -34,7 +34,7 @@ interface NotesContextValue {
 
 const NotesContext = createContext<NotesContextValue | null>(null);
 
-const STAGES = ["Collection", "Analysis", "Valuation", "Case Ready"] as const;
+const STAGES = ["Collection", "Conflict Check", "Analysis", "Valuation", "Case Ready"] as const;
 
 // A couple of seed notes for the demo case so counts/badge are populated.
 const SEED_NOTES: Note[] = [

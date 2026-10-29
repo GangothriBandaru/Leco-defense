@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Inbox, ScanSearch, DollarSign, CheckCircle, Check } from "lucide-react";
+import { Inbox, ShieldCheck, ScanSearch, DollarSign, CheckCircle, Check } from "lucide-react";
 
 interface StageNavigatorProps {
   currentStage: string;
@@ -8,6 +8,7 @@ interface StageNavigatorProps {
 
 const stages = [
   { name: "Client Intake", label: "Case Discovery", icon: Inbox, description: "Documents Collected" },
+  { name: "Conflict Check", label: "Conflict Check & Case Details", icon: ShieldCheck, description: "Conflicts Cleared" },
   { name: "Analysis", label: "Analysis", icon: ScanSearch, description: "Evidence Analyzed" },
   { name: "Valuation", label: "Valuation", icon: DollarSign, description: "Damages Computed" },
   { name: "Case Ready", label: "Case Ready", icon: CheckCircle, description: "Ready For Review" },
@@ -32,6 +33,8 @@ export function StageNavigator({ currentStage, onStageClick }: StageNavigatorPro
               <Fragment key={stage.name}>
                 <button
                   onClick={() => onStageClick?.(stage.name)}
+                  title={`Stage ${index + 1} · ${stage.label}`}
+                  aria-current={isActive ? "step" : undefined}
                   className={`group flex-1 min-w-0 text-left rounded-xl border px-4 py-3 flex items-center gap-3 min-h-[80px] transition-all duration-200 ${
                     isActive
                       ? "border-brand bg-[#F6FDFF]"
@@ -59,7 +62,7 @@ export function StageNavigator({ currentStage, onStageClick }: StageNavigatorPro
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2 mb-0.5">
                       <span
-                        className={`text-xs font-semibold uppercase tracking-wide leading-none ${
+                        className={`text-xs font-semibold uppercase tracking-wide leading-none whitespace-nowrap ${
                           isActive ? "text-deep" : "text-[#8A98A3]"
                         }`}
                       >
@@ -72,7 +75,7 @@ export function StageNavigator({ currentStage, onStageClick }: StageNavigatorPro
                       )}
                     </span>
                     <span
-                      className={`block font-display text-lg font-semibold leading-tight truncate ${
+                      className={`font-display text-lg font-semibold leading-tight line-clamp-2 ${
                         isActive || isCompleted ? "text-ink" : "text-[#8A98A3]"
                       }`}
                     >

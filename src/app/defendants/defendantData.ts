@@ -413,7 +413,7 @@ export const CASE_DEFENDANTS: CaseDefendants[] = [
         ],
       },
       {
-        id: SRC.analysis, group: "Case record and analysis", name: "Case Intelligence Summary", type: "Stage 2 Analysis", files: [],
+        id: SRC.analysis, group: "Case record and analysis", name: "Case Intelligence Summary", type: "Stage 3 Analysis", files: [],
         facts: [
           { at: "Defendant", text: "Memory Care Facility LLC" },
           { at: "Carrier", text: "ABC Professional Liability Insurance" },

@@ -1858,8 +1858,8 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
               </div>
           </div>
           <NextStepBox
-            text="Documents collected. Continue to Stage 2 to analyze the evidence and build the case."
-            ctaLabel="Proceed to Analysis"
+            text="Documents collected. Continue to Stage 2 to run the conflict check and confirm the case details."
+            ctaLabel="Proceed to Conflict Check"
             onClick={onContinue}
           />
         </div>{/* end section 2 — documents */}

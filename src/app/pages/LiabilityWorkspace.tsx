@@ -18,7 +18,7 @@ import {
 } from "../liability/liabilityModel";
 
 // ── Liability Analysis workspace ─────────────────────────────────────────────
-// Stage 2 → Analysis → Liability Signals. Renders the liability model for the
+// Stage 3 → Analysis → Liability Signals. Renders the liability model for the
 // open case, in the reference's order: header, the three summary cards, fault
 // allocation, plaintiff negligence (L4) with its playbook and estimate,
 // defendant negligence (L5) with its playbook and estimates, other parties,

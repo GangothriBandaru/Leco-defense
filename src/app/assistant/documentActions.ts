@@ -169,6 +169,7 @@ export function documentAction(action: DocActionId, docs: string[], stageLabel: 
 
 const INTAKE_SUGGESTIONS: Record<string, string[]> = {
   Collection: ["What documents are still missing?", "Is collection complete?", "What should be collected next?"],
+  "Conflict Check": ["Which parties still need a conflict search?", "What case details are missing?", "Which deadlines are unverified?"],
   Analysis: ["What are the strongest findings?", "What evidence needs further analysis?", "Are there contradictions?"],
   Valuation: [
     "Which damages figures are best supported?",

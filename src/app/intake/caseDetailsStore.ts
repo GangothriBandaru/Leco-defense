@@ -18,6 +18,53 @@ export interface CaseDetails {
   policyNumber?: string;
   insurerName?: string;
   insurerJurisdiction?: string;
+
+  // ── Stage 2 Case Details ──
+  // Insured & insurance. policyName above is the policy type.
+  insuredType?: string;
+  insuredContact?: string;
+  insuredAddress?: string;
+  insuredState?: string;
+  insuredCountry?: string;
+  insuredJurisdiction?: string;
+  policyLimits?: string;
+  coverageNotes?: string;
+  // Plaintiff & counsel
+  plaintiffName?: string;
+  plaintiffLocation?: string;
+  plaintiffState?: string;
+  plaintiffCounty?: string;
+  plaintiffJurisdiction?: string;
+  counselName?: string;
+  counselFirm?: string;
+  counselEmail?: string;
+  counselPhone?: string;
+  counselAddress?: string;
+  // Incident, suit and deadlines. Dates are yyyy-mm-dd; *Verified is "Verified" | "Unverified".
+  incidentType?: string;
+  incidentDate?: string;
+  incidentLocation?: string;
+  incidentState?: string;
+  incidentCounty?: string;
+  jurisdictionalLimits?: string;
+  caseStatus?: string;
+  suitFiledDate?: string;
+  courtName?: string;
+  courtLocation?: string;
+  courtState?: string;
+  courtCounty?: string;
+  jurisdictionVerified?: string;
+  solDate?: string;
+  solVerified?: string;
+  answerDueDate?: string;
+  answerVerified?: string;
+  governingLaw?: string;
+  // Demands & exposure. demandDocs holds document names joined by "\n".
+  demandAmount?: string;
+  demandDate?: string;
+  demandStatus?: string;
+  demandDocs?: string;
+  exposureNotes?: string;
 }
 
 const STORAGE_KEY = "leco.caseDetails.v1";
@@ -35,25 +82,29 @@ function load(): Record<string, CaseDetails> {
 let details: Record<string, CaseDetails> = typeof window === "undefined" ? {} : load();
 const listeners = new Set<() => void>();
 
-function save() {
+function save(): boolean {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(details));
+    return true;
   } catch {
     // Storage unavailable — the edits still hold for the rest of this session.
+    return false;
   }
 }
 
-/** Replaces the case's saved details. Blank values are dropped, so a cleared
- *  field falls back to the case record or shows as not provided. */
-export function saveCaseDetails(caseId: string, next: CaseDetails) {
+/** Updates the fields given; fields left out keep their saved values. Blank
+ *  values are dropped, so a cleared field falls back to the case record or
+ *  shows as not provided. Returns false when the browser would not store it. */
+export function saveCaseDetails(caseId: string, next: CaseDetails): boolean {
   const clean: CaseDetails = {};
-  for (const [k, v] of Object.entries(next)) {
+  for (const [k, v] of Object.entries({ ...details[caseId], ...next })) {
     const t = typeof v === "string" ? v.trim() : "";
     if (t) clean[k as keyof CaseDetails] = t;
   }
   details = { ...details, [caseId]: clean };
-  save();
+  const stored = save();
   listeners.forEach((l) => l());
+  return stored;
 }
 
 function subscribe(listener: () => void) {

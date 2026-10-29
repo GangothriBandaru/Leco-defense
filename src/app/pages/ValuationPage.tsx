@@ -1003,7 +1003,7 @@ export function ValuationPage({ caseData, analysisFindings = [], documents = [],
 
         {/* Page Header */}
         <div>
-          <h1 className="page-title" style={{ fontSize: "24px" }}>Stage 3 - Case Valuation</h1>
+          <h1 className="page-title" style={{ fontSize: "24px" }}>Stage 4 - Case Valuation</h1>
         </div>
 
         {/* ── VALUATION SUMMARY ── */}

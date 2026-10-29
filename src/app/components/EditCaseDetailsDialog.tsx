@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { Button } from "./ui/button";
 import type { CaseDetails } from "../intake/caseDetailsStore";
 
-const CASE_TYPES = [
+export const CASE_TYPES = [
   "Motor Vehicle Accident",
   "Truck Accident",
   "Slip & Fall",
@@ -14,18 +14,18 @@ const CASE_TYPES = [
   "Other",
 ];
 
-const input =
+export const input =
   "w-full bg-white border border-line rounded-lg px-4 py-3 text-sm text-[#0F1E2B] placeholder:text-[#5B6B78] focus:outline-none focus:border-brand transition-all";
-const inputError = "border-[#B91C1C] focus:border-[#B91C1C]";
+export const inputError = "border-[#B91C1C] focus:border-[#B91C1C]";
 
-function Field({ label, required, error, children }: { label: string; required?: boolean; error?: string; children: React.ReactNode }) {
+export function Field({ label, required, error, htmlFor, children }: { label: string; required?: boolean; error?: string; htmlFor?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-sm font-semibold text-[#0F1E2B] mb-2">
+      <label htmlFor={htmlFor} className="block text-sm font-semibold text-[#0F1E2B] mb-2">
         {label} {required ? <span className="text-red-500">*</span> : <span className="text-[#5B6B78] font-normal">(Optional)</span>}
       </label>
       {children}
-      {error && <p className="text-xs text-[#B91C1C] mt-1.5">{error}</p>}
+      {error && <p role="alert" className="text-xs text-[#B91C1C] mt-1.5">{error}</p>}
     </div>
   );
 }

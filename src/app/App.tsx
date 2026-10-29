@@ -3,9 +3,10 @@ import { DashboardSidebar } from "./components/DashboardSidebar";
 import { DashboardTopbar, DocumentTrackerButton } from "./components/DashboardTopbar";
 import { useCaseDetails } from "./intake/caseDetailsStore";
 import { DocumentTrackerPage } from "./pages/DocumentTrackerPage";
+import { ConflictCheckPage } from "./pages/ConflictCheckPage";
 
 // The Notes stage names, as the stage navigator names them.
-const NAV_STAGE: Record<string, string> = { Collection: "Client Intake", Analysis: "Analysis", Valuation: "Valuation", "Case Ready": "Case Ready" };
+const NAV_STAGE: Record<string, string> = { Collection: "Client Intake", "Conflict Check": "Conflict Check", Analysis: "Analysis", Valuation: "Valuation", "Case Ready": "Case Ready" };
 import { Toaster } from "./components/ui/sonner";
 import { GlobalCaseRepoPage } from "./pages/GlobalCaseRepoPage";
 import { ClientsPage } from "./pages/ClientsPage";
@@ -92,10 +93,11 @@ export default function App() {
   const savedCaseDetails = useCaseDetails(openedCase?.caseId);
   const selectedCase = useMemo(() => {
     if (!openedCase || !savedCaseDetails) return openedCase;
-    const { caseName, caseType, caseSubType, caseJurisdiction } = savedCaseDetails;
+    const { caseName, caseType, caseSubType, caseJurisdiction, plaintiffName } = savedCaseDetails;
     return {
       ...openedCase,
       ...(caseName && { caseName }),
+      ...(plaintiffName && { plaintiff: plaintiffName }),
       ...(caseType && { caseType }),
       ...(caseSubType && { caseSubType }),
       ...(caseJurisdiction && { jurisdiction: caseJurisdiction }),
@@ -217,7 +219,7 @@ export default function App() {
     if (activePage !== "analysis" && activePage !== "case-ready") setReturnToSection(undefined);
     // The insurance pages are full pages, so each opens at the top of the
     // scrolling main area rather than wherever the previous page was left.
-    if (activePage === "insurance" || activePage === "insurance-detail" || activePage === "deliverable" || activePage === "jurisdiction" || activePage === "defendants" || activePage === "analysis-detail") {
+    if (activePage === "conflict" || activePage === "insurance" || activePage === "insurance-detail" || activePage === "deliverable" || activePage === "jurisdiction" || activePage === "defendants" || activePage === "analysis-detail") {
       document.querySelector("main")?.scrollTo(0, 0);
     }
   }, [activePage]);
@@ -256,6 +258,7 @@ export default function App() {
   const handleStageNavigation = (stageName: string) => {
     const map: Record<string, string> = {
       "Client Intake": "workflow",
+      "Conflict Check": "conflict",
       Analysis: "analysis",
       Valuation: "valuation",
       "Case Ready": "case-ready",
@@ -272,11 +275,22 @@ export default function App() {
             pipeline={pipeline}
             onPipelineUpdate={updatePipeline}
             onDocumentsUpdate={(fn) => setPipeline((prev) => ({ ...prev, documents: fn(prev.documents) }))}
-            onContinue={() => setActivePage("analysis")}
+            onContinue={() => setActivePage("conflict")}
             onStageClick={handleStageNavigation}
             onBackToIntake={() => setActivePage("intake")}
           />
         );
+      case "conflict":
+        return selectedCase ? (
+          <ConflictCheckPage
+            key={caseKey}
+            caseData={selectedCase}
+            documents={pipeline.documents}
+            onStageClick={handleStageNavigation}
+            onBackToIntake={() => setActivePage("intake")}
+            onProceedToAnalysis={() => setActivePage("analysis")}
+          />
+        ) : <CaseIntakePage onOpenWorkflow={handleOpenWorkflow} />;
       case "classification":
         return (
           <ClassificationPage
@@ -469,6 +483,7 @@ export default function App() {
   const STAGE_BY_PAGE: Record<string, string> = {
     workflow: "Collection",
     classification: "Collection",
+    conflict: "Conflict Check",
     analysis: "Analysis",
     jurisdiction: "Analysis",
     defendants: defendantOrigin === "case-ready" ? "Case Ready" : "Analysis",
@@ -484,7 +499,7 @@ export default function App() {
   const currentCaseName = selectedCase?.caseName ?? "";
   // Human label for wherever the attorney currently is, for the assistant.
   const PAGE_LABEL: Record<string, string> = {
-    intake: "Case Intake", workflow: "Case Intake", classification: "Classification",
+    intake: "Case Intake", workflow: "Case Intake", classification: "Classification", conflict: "Conflict Check & Case Details",
     analysis: "Analysis", jurisdiction: "Attorney Jurisdiction Review", defendants: "Defendant Analysis", valuation: "Valuation", "case-ready": "Case Ready", deliverable: "Case Ready",
     workspace: "Case Workspace", cases: "Case Workspace", clients: "Clients",
     communication: "Communication", demands: "Demand Letters", templates: "Templates", tracker: "Document Tracker",

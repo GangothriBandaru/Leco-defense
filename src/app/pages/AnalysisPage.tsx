@@ -1020,7 +1020,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
         <>
         {/* Page Header — current stage */}
         <h1 className="text-[24px] font-semibold leading-tight">
-          <span className="text-[#5B6B78]">Stage 2 -</span> <span className="text-ink">Analysis</span>
+          <span className="text-[#5B6B78]">Stage 3 -</span> <span className="text-ink">Analysis</span>
         </h1>
 
         {/* ── Case Intelligence Summary (40) beside Analysis Findings (60) — the timeline now has its own page ── */}
