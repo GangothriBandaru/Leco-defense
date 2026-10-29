@@ -3,8 +3,9 @@ import { StageNavigator } from "../components/StageNavigator";
 import {
   ChevronLeft, CheckCircle, ChevronDown, ChevronRight,
   ExternalLink, BarChart2,
-  ArrowRight, Flag, Circle, Shield, Users
+  ArrowRight, Flag, Circle, Shield, Users, Scale, Stethoscope, Gavel, CalendarDays, GitCompareArrows, FileSearch
 } from "lucide-react";
+import { useAnalysisDeliverables } from "./caseReadyAnalysis";
 import { DELIVERABLES, type DeliverableKind } from "./DeliverablePage";
 import { defendantsForCase } from "../defendants/defendantData";
 import { useDefendantDecisions } from "../defendants/defendantDecisionStore";
@@ -36,6 +37,8 @@ interface CaseReadyPageProps {
   onOpenDefendants?: () => void;
   /** Section to bring into view on arrival — used when returning from a sub-page. */
   scrollToSection?: string;
+  /** Opens one of the Analysis-stage tools listed among the deliverables. */
+  onOpenAnalysisTool?: (tool: "liability" | "injury" | "violations" | "timeline" | "conflicts" | "demand") => void;
 }
 
 const CHECKLIST_DETAILS: Record<string, string> = {
@@ -51,7 +54,26 @@ const CHECKLIST_DETAILS: Record<string, string> = {
 // The four deliverables — the same list their dedicated pages are built from.
 const deliverables = DELIVERABLES.map((d) => ({ ...d, color: "bg-tint text-deep" }));
 
-export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake, onOpenWorkspace, onOpenInsurance, onOpenDeliverable, onOpenDefendants, scrollToSection }: CaseReadyPageProps) {
+export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake, onOpenWorkspace, onOpenInsurance, onOpenDeliverable, onOpenDefendants, scrollToSection, onOpenAnalysisTool }: CaseReadyPageProps) {
+  // The Analysis-stage results listed among the deliverables, from the same data the Analysis stage reads.
+  const analysis = useAnalysisDeliverables(caseData, pipeline?.documents ?? []);
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const analysisDeliverables = [
+    { tool: "liability" as const, category: "Liability", icon: Scale, title: "Liability Signals", meta: plural(analysis.liability, "finding"),
+      description: "Key findings identifying potential liability and the evidence supporting each finding." },
+    { tool: "injury" as const, category: "Medical", icon: Stethoscope, title: "Injury Signals", meta: plural(analysis.injury, "finding"),
+      description: "Key injury findings, medical evidence, and documented impacts relevant to the case." },
+    { tool: "violations" as const, category: "Analysis", icon: Gavel, title: "Violation Analysis", meta: plural(analysis.violations, "violation"),
+      description: "Identified violations, supporting evidence, and their relevance to potential liability." },
+    { tool: "timeline" as const, category: "Timeline", icon: CalendarDays, title: "Case Timeline Overview", meta: "Case timeline",
+      description: "Key events extracted from the case timeline, with supporting evidence for each event." },
+    { tool: "conflicts" as const, category: "Evidence", icon: GitCompareArrows, title: "Evidence Conflicts",
+      meta: analysis.conflicts ? `${analysis.conflicts - analysis.conflictsDecided} open · ${analysis.conflictsDecided} decided` : "No conflicts found",
+      description: "Review disputed facts across statements, records, and expert evidence." },
+    { tool: "demand" as const, category: "Demand", icon: FileSearch, title: "Demand & Complaint Analysis",
+      meta: analysis.claims ? `${analysis.positionsSet} of ${analysis.claims} positions set · ${plural(analysis.claims, "claim")} analyzed` : "No claims found",
+      description: "Compare the plaintiff's demand and complaint against available evidence, identify gaps, and assess exposure." },
+  ];
   const defendants = defendantsForCase(caseData?.caseId ?? "PI-2024-001");
   const defendantDecisions = useDefendantDecisions(defendants?.id);
   // Returning from a sub-page lands back on the deliverable it was opened from.
@@ -251,8 +273,8 @@ export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake
           <div id="generated-deliverables" className="lg-card overflow-hidden scroll-mt-[150px]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-line">
               <h2 className="section-header">Generated Deliverables</h2>
-              {/* Counted: the deliverables, Insurance and Defendant Analysis. */}
-              <span className="secondary-text">{DELIVERABLES.length + 2} documents ready</span>
+              {/* Counted: the deliverables, Insurance, Defendant Analysis and the Analysis-stage tools. */}
+              <span className="secondary-text">{DELIVERABLES.length + 2 + (onOpenAnalysisTool ? analysisDeliverables.length : 0)} documents ready</span>
             </div>
 
             <div className="p-6 grid grid-cols-2 gap-4">
@@ -341,6 +363,37 @@ export function CaseReadyPage({ caseData, pipeline, onStageClick, onBackToIntake
                   </button>
                 </div>
               </div>
+
+              {/* The Analysis-stage tools, opening the same views the Analysis Findings cards open. */}
+              {onOpenAnalysisTool && analysisDeliverables.map((item) => (
+                <div
+                  key={item.tool}
+                  id={`analysis-deliverable-${item.tool}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onOpenAnalysisTool(item.tool)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpenAnalysisTool(item.tool); } }}
+                  className="lg-card lg-card-i p-4 flex flex-col cursor-pointer scroll-mt-[150px]"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-tint text-deep">
+                      <item.icon className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      {item.category}
+                    </div>
+                  </div>
+                  <h3 className="card-title mb-1">{item.title}</h3>
+                  <p className="secondary-text leading-relaxed flex-1">{item.description}</p>
+                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-line">
+                    <span className="mono-ref">{item.meta}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onOpenAnalysisTool(item.tool); }}
+                      className="flex items-center gap-1 text-xs font-medium text-deep hover:text-ink transition-colors"
+                    >
+                      Open <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
           </div>

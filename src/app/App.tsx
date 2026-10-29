@@ -419,6 +419,7 @@ export default function App() {
             onOpenInsurance={() => openInsuranceFrom("case-ready")}
             onOpenDeliverable={openDeliverable}
             onOpenDefendants={() => openDefendantsFrom("case-ready")}
+            onOpenAnalysisTool={openAnalysisDetail}
             scrollToSection={returnToSection}
           />
         );

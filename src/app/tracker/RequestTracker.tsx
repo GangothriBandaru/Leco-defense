@@ -369,12 +369,14 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
         )}
       </div>
 
+      {/* One white panel holds the categories; the cards inside sit on a light grey surface. */}
+      <div className="lg-card p-4">
       <div role="group" aria-label="Request categories" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2.5">
         {cats.map(({ c, L }) => {
           const on = cat === c, n = L.length, d = L.filter(isDone).length, o = L.filter(isOver).length;
           return (
             <button key={c} type="button" aria-pressed={on} onClick={() => setCat(c)}
-              className={`flex flex-col gap-2.5 text-left border rounded-xl p-3 min-w-0 transition-colors ${on ? "bg-wash border-brand ring-2 ring-tint" : "bg-white border-line hover:border-[#CBD7DE]"}`}>
+              className={`flex flex-col gap-2.5 text-left border rounded-xl p-3 min-w-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${on ? "bg-wash border-brand ring-2 ring-tint" : "bg-[#F4F6F8] border-[#E8EDF1] hover:border-[#CBD7DE] hover:bg-[#EFF3F6]"}`}>
               <span className="flex items-start gap-2.5 min-w-0">
                 {c === "all"
                   ? <span className="w-8 h-8 rounded-lg bg-tint text-deep inline-flex items-center justify-center shrink-0"><Inbox className="w-4 h-4" strokeWidth={1.75} /></span>
@@ -388,13 +390,14 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
                   <span className="tabular-nums">{n ? <>{d} of {n} complete</> : "No requests"}</span>
                   {o > 0 && <span className="font-semibold text-[#B42318] tabular-nums">{o} overdue</span>}
                 </span>
-                <span className="block h-1 rounded-full bg-track overflow-hidden" role="progressbar" aria-label={`${c === "all" ? "All categories" : c} completion`} aria-valuemin={0} aria-valuemax={n} aria-valuenow={d}>
+                <span className="block h-1 rounded-full bg-line overflow-hidden" role="progressbar" aria-label={`${c === "all" ? "All categories" : c} completion`} aria-valuemin={0} aria-valuemax={n} aria-valuenow={d}>
                   <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: n ? `${(d / n) * 100}%` : 0 }} />
                 </span>
               </span>
             </button>
           );
         })}
+      </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(300px,400px)_minmax(0,1fr)] gap-4 items-start">
