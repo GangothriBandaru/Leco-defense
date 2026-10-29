@@ -5,24 +5,11 @@ import { StageNavigator } from "../components/StageNavigator";
 import type { CaseDocument } from "../types/case";
 import { resolveCasePolicy } from "../insurance/casePolicy";
 import { useCaseDetails } from "../intake/caseDetailsStore";
-import { type CaseCtx, isDone, fmtTime } from "../tracker/trackerData";
+import { type CaseCtx, fmtTime } from "../tracker/trackerData";
 import { useTracker, refreshLocal } from "../tracker/trackerStore";
 import { RequestTracker } from "../tracker/RequestTracker";
 import { CaseMailbox } from "../tracker/CaseMailbox";
 import { NewRequestDrawer } from "../tracker/NewRequestDrawer";
-
-function Ring({ pct }: { pct: number }) {
-  const R = 18, C = 2 * Math.PI * R;
-  return (
-    <span className="relative inline-flex w-[46px] h-[46px] shrink-0">
-      <svg width="46" height="46" viewBox="0 0 46 46" aria-hidden="true">
-        <circle cx="23" cy="23" r={R} fill="none" stroke="var(--color-track)" strokeWidth="5" />
-        <circle cx="23" cy="23" r={R} fill="none" stroke="var(--color-brand)" strokeWidth="5" strokeLinecap="round" strokeDasharray={`${C * pct} ${C}`} transform="rotate(-90 23 23)" />
-      </svg>
-      <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-ink">{Math.round(pct * 100)}%</span>
-    </span>
-  );
-}
 
 export function DocumentTrackerPage({ caseData, documents, stage, backLabel, onBack, onStageClick }: {
   caseData: any; documents: CaseDocument[]; stage: string; backLabel: string; onBack: () => void; onStageClick: (s: string) => void;
@@ -43,8 +30,6 @@ export function DocumentTrackerPage({ caseData, documents, stage, backLabel, onB
   const [drawer, setDrawer] = useState(false);
   const [focus, setFocus] = useState<{ id: string; n: number } | undefined>();
 
-  const done = requests.filter(isDone).length;
-  const pages = requests.reduce((a, r) => a + (r.pages || 0), 0);
   const unread = mail.filter((m) => m.unread).length;
   const openRequest = (id: string) => { setTab("tracker"); setFocus({ id, n: Date.now() }); };
 
@@ -63,15 +48,8 @@ export function DocumentTrackerPage({ caseData, documents, stage, backLabel, onB
       <StageNavigator currentStage={stage} onStageClick={onStageClick} />
 
       <div className="max-w-[1400px] mx-auto p-8 space-y-5">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <Ring pct={requests.length ? done / requests.length : 0} />
-            <div>
-              <div className="eyebrow">Document Tracker · {ctx.caseId}</div>
-              <h1 className="text-[24px] font-semibold text-ink leading-tight tracking-tight">Document requests</h1>
-              <p className="text-sm text-[#5B6B78] mt-0.5">{done} of {requests.length} complete · {pages.toLocaleString()} page{pages === 1 ? "" : "s"} collected</p>
-            </div>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h1 className="text-[22px] font-semibold text-ink leading-tight tracking-tight">Document requests</h1>
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="text-xs text-[#5B6B78]">{refreshedAt ? `Refreshed locally at ${fmtTime(refreshedAt)}` : "Stored in this browser"}</span>
             <button type="button" aria-label="Refresh" title="Reload what this browser has stored"
@@ -85,15 +63,23 @@ export function DocumentTrackerPage({ caseData, documents, stage, backLabel, onB
           </div>
         </div>
 
-        <div role="tablist" aria-label="Document Tracker" className="grid grid-cols-2 gap-1.5 bg-track border border-line rounded-xl p-1.5 max-w-[620px]">
-          {([["tracker", "Request Tracker", "Status of every request", Inbox], ["mail", "Case Mailbox", "Case email, threaded", Mail]] as const).map(([k, l, s, I]) => (
-            <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
-              className={`relative flex items-center gap-2.5 text-left rounded-lg px-3 py-2 transition-colors ${tab === k ? "bg-white shadow-sm text-deep" : "text-[#5B6B78] hover:text-ink"}`}>
-              <I className="w-4 h-4 shrink-0" strokeWidth={1.75} />
-              <span className="min-w-0"><b className="block text-sm font-semibold text-ink">{l}</b><span className="block text-xs truncate">{s}</span></span>
-              {k === "mail" && unread > 0 && <span className="ml-auto text-[11px] font-semibold rounded-full bg-brand text-white px-2 py-0.5">{unread} unread</span>}
-            </button>
-          ))}
+        <div role="tablist" aria-label="Document Tracker" className="grid grid-cols-2 gap-1 bg-track rounded-xl p-1 max-w-[640px]">
+          {([["tracker", "Request Tracker", "Status of every request", Inbox], ["mail", "Case Mailbox", "Case email, threaded", Mail]] as const).map(([k, l, s, I]) => {
+            const on = tab === k;
+            return (
+              <button key={k} type="button" role="tab" aria-selected={on} onClick={() => setTab(k)}
+                className={`flex items-center gap-3 text-left rounded-lg px-3 py-2.5 min-w-0 transition-colors ${on ? "bg-white border border-line shadow-[0_1px_2px_rgba(14,58,71,0.06)]" : "border border-transparent hover:bg-white/60"}`}>
+                <span className={`w-8 h-8 rounded-lg inline-flex items-center justify-center shrink-0 ${on ? "bg-tint text-deep" : "bg-white/70 text-[#5B6B78]"}`}>
+                  <I className="w-4 h-4" strokeWidth={1.75} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <b className={`block text-sm font-semibold truncate ${on ? "text-ink" : "text-[#3C4F5C]"}`}>{l}</b>
+                  <span className="block text-xs text-[#5B6B78] truncate">{s}</span>
+                </span>
+                {k === "mail" && unread > 0 && <span className="text-[11px] font-semibold rounded-full bg-brand text-white px-2 py-0.5 whitespace-nowrap">{unread} unread</span>}
+              </button>
+            );
+          })}
         </div>
 
         <div className={tab === "tracker" ? "" : "hidden"}>

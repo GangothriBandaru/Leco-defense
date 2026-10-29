@@ -18,7 +18,8 @@ import { toast } from "sonner";
 
 const btn = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:bg-wash transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 const btnP = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
-const chip = (on: boolean) => `inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${on ? "border-brand bg-tint text-deep" : "border-line bg-white text-ink hover:border-[#CBD7DE]"}`;
+const METRIC_TONE = { crit: "bg-[#FEF3F2] text-[#B42318]", warn: "bg-[#FFF7ED] text-[#B45309]", acc: "bg-tint text-deep", "": "bg-[#F1F5F7] text-[#5B6B78]" };
+const chip =(on: boolean) => `inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${on ? "border-brand bg-tint text-deep" : "border-line bg-white text-ink hover:border-[#CBD7DE]"}`;
 
 type NextAction = "send" | "approve" | "remind" | "escalate" | "review" | "received" | "ack";
 function nextStep(r: DocRequest): { title: string; text: string; actions: [NextAction, string][]; tone: string } {
@@ -322,42 +323,43 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
   const list = useMemo(() => requests
     .filter((r) => inFilter(r, f) && (cat === "all" || r.cat === cat) && (!qq || `${r.to} ${r.docs.join(" ")} ${r.cat} ${r.type} ${r.id}`.toLowerCase().includes(qq)))
     .sort((a, b) => BUCKETS.indexOf(bucket(a)) - BUCKETS.indexOf(bucket(b)) || urgency(a) - urgency(b)), [requests, f, cat, qq]);
-  const current = requests.find((r) => r.id === sel) ?? list[0];
+  const current = list.find((r) => r.id === sel) ?? list[0];
   const cur = FILTERS.find((x) => x.key === f);
-  const usedCats = CATEGORIES.filter((c) => requests.some((r) => r.cat === c));
-  const doneAll = requests.filter(isDone).length;
+  const inCat = cat === "all" ? requests : requests.filter((r) => r.cat === cat);
+  const cats = [{ c: "all", L: requests }, ...CATEGORIES.map((c) => ({ c, L: requests.filter((r) => r.cat === c) }))];
 
-  const metric = (k: ListFilter, n: number, label: string, sub: string, Icon: typeof Clock, tone: string) => (
+  const metric = (k: ListFilter, n: number, label: string, sub: string, Icon: typeof Clock, tone: keyof typeof METRIC_TONE) => (
     <button type="button" aria-pressed={f === k} onClick={() => setF(f === k ? "action" : k)}
-      className={`flex gap-3 items-start text-left bg-white border rounded-xl p-3.5 transition-colors ${f === k ? "border-brand ring-2 ring-tint" : "border-line hover:border-[#CBD7DE]"}`}>
-      <span className={`w-9 h-9 rounded-lg inline-flex items-center justify-center shrink-0 ${tone === "crit" ? "bg-[#FEF2F2] text-[#B91C1C]" : tone === "warn" ? "bg-[#FFF7ED] text-[#B45309]" : "bg-tint text-deep"}`}><Icon className="w-4 h-4" strokeWidth={1.75} /></span>
-      <span className="min-w-0">
-        <span className={`block text-[22px] font-semibold leading-none ${tone === "crit" && n ? "text-[#B91C1C]" : "text-ink"}`}>{n}</span>
-        <span className="block text-sm font-semibold text-ink mt-1">{label}</span>
-        <span className="block text-xs text-[#5B6B78] mt-0.5 truncate">{sub}</span>
+      className={`h-full flex gap-3 items-start text-left bg-white border rounded-xl p-4 min-w-0 transition-colors ${f === k ? "border-brand ring-2 ring-tint" : "border-line hover:border-[#CBD7DE] hover:bg-[#FCFEFF]"}`}>
+      <span className={`w-9 h-9 rounded-lg inline-flex items-center justify-center shrink-0 ${METRIC_TONE[tone]}`}><Icon className="w-4 h-4" strokeWidth={1.75} /></span>
+      <span className="min-w-0 flex-1">
+        <span className={`block text-[24px] font-semibold leading-7 tabular-nums ${tone === "crit" && n ? "text-[#B42318]" : "text-ink"}`}>{n}</span>
+        <span className="block text-sm font-semibold text-ink mt-1 truncate">{label}</span>
+        <span className="block text-xs text-[#5B6B78] mt-0.5 truncate" title={sub}>{sub}</span>
       </span>
     </button>
   );
 
-  if (!requests.length) {
-    return (
-      <div className="lg-card p-10 flex flex-col items-center text-center gap-3">
-        <Inbox className="w-9 h-9 text-[#9BDAEC]" strokeWidth={1.5} />
-        <div>
-          <p className="card-title">No document requests on this case yet</p>
-          <p className="text-sm text-[#5B6B78] mt-1 max-w-md">Create a request to track it from draft to reviewed. Reminders, escalations and replies are recorded against it.</p>
-        </div>
-        <button type="button" onClick={onNew} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-brand hover:bg-deep text-white text-sm font-semibold"><Plus className="w-4 h-4" />New request</button>
-      </div>
-    );
-  }
+  const listEmpty = !requests.length || !inCat.length ? (
+    <div className="lg-card text-center text-sm text-[#5B6B78] py-10 px-6 flex flex-col items-center gap-2">
+      <Inbox className="w-8 h-8 text-[#9BDAEC]" strokeWidth={1.5} />
+      <b className="text-ink">{requests.length ? `No ${cat.toLowerCase()} requests yet` : "No document requests on this case yet"}</b>
+      <span className="max-w-sm">Create a request to track it from draft to reviewed. Reminders, escalations and replies are recorded against it.</span>
+      <button type="button" onClick={onNew} className={`${btnP} mt-1`}><Plus className="w-3.5 h-3.5" />New request</button>
+    </div>
+  ) : (
+    <div className="text-center text-sm text-[#5B6B78] py-10 flex flex-col items-center gap-2">
+      <CheckCheck className="w-7 h-7 text-[#9BDAEC]" /><b className="text-ink">All clear</b>No requests match this view.
+      {f !== "all" && <button type="button" onClick={() => setF("all")} className={`${btn} mt-1`}>Show all {inCat.length} request{inCat.length === 1 ? "" : "s"}</button>}
+    </div>
+  );
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {metric("overdue", over.length, "Overdue", over.length ? over.map((r) => r.to).join(", ") : "Nothing overdue", Clock, "crit")}
         {metric("week", week.length, "Due this week", "Next 7 days", Bell, "warn")}
-        {metric("waiting", waiting.length, "Waiting on plaintiff", "Discovery and signed forms", Scale, "")}
+        {metric("waiting", waiting.length, "Waiting on plaintiff", "Discovery and signed forms", Scale, "acc")}
         {metric("review", review.length, "To review", "Received, not reviewed", Inbox, "")}
         {over.length > 0 && (
           <div className="sm:col-span-2 xl:col-span-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#FEF2F2] border border-[#FBD5D5] px-4 py-2.5 text-sm font-semibold text-[#B91C1C]">
@@ -367,17 +369,32 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
         )}
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-2">
-        {[{ c: "all", n: requests.length, d: doneAll, o: over.length }, ...usedCats.map((c) => { const L = requests.filter((r) => r.cat === c); return { c, n: L.length, d: L.filter(isDone).length, o: L.filter(isOver).length }; })].map((t) => (
-          <button key={t.c} type="button" aria-pressed={cat === t.c} onClick={() => setCat(t.c)} className={`flex items-center gap-2.5 text-left bg-white border rounded-xl px-3 py-2.5 min-w-0 transition-colors ${cat === t.c ? "border-brand ring-2 ring-tint" : "border-line hover:border-[#CBD7DE]"}`}>
-            {t.c === "all" ? <span className="w-[30px] h-[30px] rounded-lg bg-tint text-deep inline-flex items-center justify-center shrink-0"><Inbox className="w-4 h-4" /></span> : <CatIcon cat={t.c} size={30} />}
-            <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-semibold text-ink truncate">{t.c === "all" ? "All categories" : t.c}</span>
-              <span className="block text-[11.5px] text-[#5B6B78]">{t.d} of {t.n} complete{t.o ? <> · <b className="text-[#B91C1C]">{t.o} overdue</b></> : null}</span>
-              <span className="block h-1 rounded-full bg-track mt-1 overflow-hidden"><span className="block h-full bg-brand" style={{ width: `${(t.d / t.n) * 100}%` }} /></span>
-            </span>
-          </button>
-        ))}
+      <div role="group" aria-label="Request categories" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2.5">
+        {cats.map(({ c, L }) => {
+          const on = cat === c, n = L.length, d = L.filter(isDone).length, o = L.filter(isOver).length;
+          return (
+            <button key={c} type="button" aria-pressed={on} onClick={() => setCat(c)}
+              className={`flex flex-col gap-2.5 text-left border rounded-xl p-3 min-w-0 transition-colors ${on ? "bg-wash border-brand ring-2 ring-tint" : "bg-white border-line hover:border-[#CBD7DE]"}`}>
+              <span className="flex items-start gap-2.5 min-w-0">
+                {c === "all"
+                  ? <span className="w-8 h-8 rounded-lg bg-tint text-deep inline-flex items-center justify-center shrink-0"><Inbox className="w-4 h-4" strokeWidth={1.75} /></span>
+                  : <CatIcon cat={c} size={32} />}
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-semibold text-ink leading-[17px] min-h-[34px] line-clamp-2 break-words">{c === "all" ? "All categories" : c}</span>
+                </span>
+              </span>
+              <span className="mt-auto space-y-1.5">
+                <span className="flex items-baseline justify-between gap-2 text-xs text-[#5B6B78] whitespace-nowrap">
+                  <span className="tabular-nums">{n ? <>{d} of {n} complete</> : "No requests"}</span>
+                  {o > 0 && <span className="font-semibold text-[#B42318] tabular-nums">{o} overdue</span>}
+                </span>
+                <span className="block h-1 rounded-full bg-track overflow-hidden" role="progressbar" aria-label={`${c === "all" ? "All categories" : c} completion`} aria-valuemin={0} aria-valuemax={n} aria-valuenow={d}>
+                  <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: n ? `${(d / n) * 100}%` : 0 }} />
+                </span>
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(300px,400px)_minmax(0,1fr)] gap-4 items-start">
@@ -447,9 +464,7 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
                   })}
                 </div>
               );
-            }) : (
-              <div className="text-center text-sm text-[#5B6B78] py-10 flex flex-col items-center gap-2"><CheckCheck className="w-7 h-7 text-[#9BDAEC]" /><b className="text-ink">All clear</b>No requests match this view.</div>
-            )}
+            }) : listEmpty}
           </div>
         </section>
         <section className="lg:sticky lg:top-[150px] min-w-0">

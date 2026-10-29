@@ -66,36 +66,36 @@ function MailCard({ m, open, onToggle, onReply, onForward }: { m: MailMsg; open:
         </span>
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-2 flex-wrap text-sm">
-            <b className="font-semibold text-ink">{m.fromN || "Unknown sender"}</b>
+            <b className="font-semibold text-ink break-words min-w-0">{m.fromN || "Unknown sender"}</b>
             <Tag text={m.kind} tone={KIND_TONE[m.kind]} />
             {m.att.length > 0 && <span className="inline-flex items-center gap-0.5 text-xs text-[#5B6B78]"><Paperclip className="w-3 h-3" />{m.att.length}</span>}
           </span>
-          <span className={`block text-xs text-[#5B6B78] mt-0.5 ${open ? "" : "truncate"}`}>
+          <span className={`block text-xs text-[#5B6B78] mt-0.5 ${open ? "break-words" : "truncate"}`}>
             {open ? `to ${addr(m.toN, m.toE)}` : m.body.replace(/\s+/g, " ").slice(0, 120)}
           </span>
         </span>
-        <span className="text-[11px] text-[#5B6B78] text-right whitespace-nowrap">{fmtShort(m.at)}<br />{fmtTime(m.at)}</span>
+        <span className="text-[11px] text-[#5B6B78] text-right whitespace-nowrap tabular-nums">{fmtShort(m.at)}<br />{fmtTime(m.at)}</span>
       </button>
       {open && (
         <div className="px-3.5 pb-3.5 sm:pl-[58px] space-y-3">
-          <div className="text-xs text-[#5B6B78] border-b border-dashed border-line pb-2 space-y-0.5">
-            <div><span className="eyebrow inline-block w-14">From</span>{addr(m.fromN, m.fromE)}</div>
-            <div><span className="eyebrow inline-block w-14">To</span>{addr(m.toN, m.toE)}</div>
-            <div><span className="eyebrow inline-block w-14">Subject</span>{m.subject}</div>
-            <div><span className="eyebrow inline-block w-14">Date</span>{fmtDate(m.at)}, {fmtTime(m.at)}</div>
-          </div>
-          <div className="whitespace-pre-wrap text-sm text-ink leading-relaxed max-w-[70ch]">{m.body}</div>
+          <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs text-[#5B6B78] border-b border-line pb-2.5">
+            <dt className="eyebrow leading-[18px]">From</dt><dd className="break-words leading-[18px]">{addr(m.fromN, m.fromE)}</dd>
+            <dt className="eyebrow leading-[18px]">To</dt><dd className="break-words leading-[18px]">{addr(m.toN, m.toE)}</dd>
+            <dt className="eyebrow leading-[18px]">Subject</dt><dd className="break-words leading-[18px] text-ink">{m.subject}</dd>
+            <dt className="eyebrow leading-[18px]">Date</dt><dd className="leading-[18px]">{fmtDate(m.at)}, {fmtTime(m.at)}</dd>
+          </dl>
+          <div className="whitespace-pre-wrap break-words text-sm text-ink leading-[1.65] max-w-[72ch]">{m.body}</div>
           {m.att.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {m.att.map((a) => (
-                <span key={a.name} className="inline-flex items-center gap-1.5 border border-line rounded-lg px-2.5 py-1.5 text-xs bg-offwhite">
-                  <Paperclip className="w-3.5 h-3.5 text-deep" /> <span className="mono-ref">{a.name}</span>
+                <span key={a.name} title={a.name} className="inline-flex items-center gap-1.5 border border-line rounded-lg px-2.5 py-1.5 text-xs bg-offwhite max-w-full min-w-0">
+                  <Paperclip className="w-3.5 h-3.5 text-deep shrink-0" /> <span className="mono-ref truncate">{a.name}</span>
                 </span>
               ))}
             </div>
           )}
           {m.dir !== "draft" && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 pt-0.5">
               {m.dir === "in" && <button type="button" onClick={onReply} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line text-xs font-semibold text-deep hover:bg-wash"><Reply className="w-3.5 h-3.5" />Reply</button>}
               <button type="button" onClick={onForward} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line text-xs font-semibold text-deep hover:bg-wash"><Forward className="w-3.5 h-3.5" />Forward</button>
             </div>

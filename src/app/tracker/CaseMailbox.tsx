@@ -39,59 +39,68 @@ export function CaseMailbox({ ctx, mail, requests, onOpenRequest }: {
     if (window.innerWidth < 1024) window.setTimeout(() => document.getElementById("mail-read")?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
   };
 
+  // Panes share one fixed height on wide screens so each scrolls on its own.
+  const pane = "lg:h-[min(760px,calc(100vh-170px))] lg:overflow-y-auto";
   return (
     <div className="space-y-3">
       <NotConnected />
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(260px,340px)_minmax(0,1fr)] xl:grid-cols-[190px_minmax(280px,340px)_minmax(0,1fr)] gap-4 items-start">
-        <nav aria-label="Mail folders" className="hidden xl:flex flex-col gap-0.5 sticky top-[150px]">
-          {FOLDERS.map((x) => {
-            const I = x[2], n = count(x), on = x[0] === folder;
-            return (
-              <button key={x[0]} type="button" onClick={() => { setFolder(x[0]); setSel(""); }} aria-current={on ? "true" : undefined}
-                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-left ${on ? "bg-tint text-deep font-semibold" : "text-ink hover:bg-wash"}`}>
-                <I className="w-4 h-4 shrink-0" strokeWidth={1.75} /><span className="flex-1">{x[1]}</span>
-                {n > 0 && <span className={`text-[11px] font-semibold px-1.5 rounded-full ${on ? "bg-white" : "bg-track"}`}>{n}</span>}
-              </button>
-            );
-          })}
-          <p className="text-xs text-[#5B6B78] border-t border-line mt-2 pt-3 px-2.5">Only mail for <b className="text-ink">{ctx.caseName}</b>, filed by request.</p>
+      <div className="lg-card overflow-hidden grid grid-cols-1 lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] xl:grid-cols-[208px_minmax(280px,340px)_minmax(0,1fr)]">
+        <nav aria-label="Mail folders" className={`hidden xl:flex flex-col border-r border-line bg-offwhite p-3 ${pane}`}>
+          <div className="eyebrow px-2.5 pb-2">Folders</div>
+          <div className="flex flex-col gap-0.5">
+            {FOLDERS.map((x) => {
+              const I = x[2], n = count(x), on = x[0] === folder;
+              return (
+                <button key={x[0]} type="button" onClick={() => { setFolder(x[0]); setSel(""); }} aria-current={on ? "true" : undefined}
+                  className={`h-9 flex items-center gap-2.5 rounded-lg px-2.5 text-sm text-left transition-colors ${on ? "bg-tint text-deep font-semibold" : "text-ink hover:bg-white"}`}>
+                  <I className="w-4 h-4 shrink-0" strokeWidth={1.75} />
+                  <span className="flex-1 min-w-0 truncate">{x[1]}</span>
+                  {n > 0 && <span className={`min-w-[22px] text-center text-[11px] font-semibold tabular-nums px-1.5 rounded-full ${on ? "bg-white" : "bg-track"}`}>{n}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-auto text-xs text-[#5B6B78] border-t border-line pt-3 px-2.5 break-words">Only mail for <b className="text-ink">{ctx.caseName}</b>, filed by request.</p>
         </nav>
 
-        <section className="space-y-2.5 min-w-0">
-          <label className="xl:hidden block">
-            <span className="sr-only">Folder</span>
-            <select value={folder} onChange={(e) => { setFolder(e.target.value); setSel(""); }} className="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand">
-              {FOLDERS.map((x) => <option key={x[0]} value={x[0]}>{x[1]}{count(x) ? ` (${count(x)})` : ""}</option>)}
-            </select>
-          </label>
-          <label className="flex items-center gap-2 bg-white border border-line rounded-lg px-3 focus-within:border-brand">
-            <Search className="w-4 h-4 text-[#8A98A3]" /><input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search case mail" className="flex-1 min-w-0 py-2 text-sm bg-transparent outline-none" />
-          </label>
-          <div className="flex items-baseline justify-between px-0.5"><b className="text-sm font-semibold text-ink">{fd[1]}</b><span className="text-xs text-[#5B6B78]">{threads.length} conversation{threads.length === 1 ? "" : "s"}</span></div>
-          <div className="lg-card overflow-hidden lg:max-h-[720px] lg:overflow-y-auto divide-y divide-line">
+        <section aria-label="Conversations" className="min-w-0 flex flex-col lg:border-r border-line lg:h-[min(760px,calc(100vh-170px))]">
+          <div className="p-3 space-y-2 border-b border-line">
+            <label className="xl:hidden block">
+              <span className="sr-only">Folder</span>
+              <select value={folder} onChange={(e) => { setFolder(e.target.value); setSel(""); }} className="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand">
+                {FOLDERS.map((x) => <option key={x[0]} value={x[0]}>{x[1]}{count(x) ? ` (${count(x)})` : ""}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 bg-white border border-line rounded-lg px-3 focus-within:border-brand">
+              <Search className="w-4 h-4 text-[#8A98A3]" /><input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search case mail" className="flex-1 min-w-0 py-2 text-sm bg-transparent outline-none" />
+            </label>
+            <div className="flex items-baseline justify-between px-0.5"><b className="text-sm font-semibold text-ink">{fd[1]}</b><span className="text-xs text-[#5B6B78]">{threads.length} conversation{threads.length === 1 ? "" : "s"}</span></div>
+          </div>
+          <div className="flex-1 min-h-0 max-h-[460px] lg:max-h-none overflow-y-auto divide-y divide-line">
             {threads.length ? threads.map((th) => {
               const m = th.last, r = requests.find((x) => x.id === th.k), on = current?.k === th.k;
               return (
-                <button key={th.k} type="button" onClick={() => pick(th.k)} aria-pressed={on} className={`w-full flex gap-2.5 text-left px-3.5 py-3 ${on ? "bg-tint" : "hover:bg-wash"}`}>
-                  <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${th.unread ? "bg-brand" : ""}`} aria-label={th.unread ? "Unread" : undefined} />
-                  <span className="flex-1 min-w-0 space-y-0.5">
-                    <span className="flex justify-between gap-2 text-[13px]">
-                      <span className={`truncate ${th.unread ? "font-semibold text-ink" : "text-ink"}`}>{m.dir === "in" ? m.fromN || m.fromE || "Unknown sender" : `To: ${m.toN || m.toE || "—"}`}</span>
-                      <span className="text-[11px] text-[#5B6B78] whitespace-nowrap">{fmtShort(m.at)}</span>
+                <button key={th.k} type="button" onClick={() => pick(th.k)} aria-pressed={on}
+                  className={`w-full grid grid-cols-[8px_minmax(0,1fr)] gap-x-2.5 text-left px-4 py-3 transition-colors ${on ? "bg-tint/70 shadow-[inset_3px_0_0_var(--color-brand)]" : "hover:bg-wash"}`}>
+                  <span className={`w-2 h-2 rounded-full mt-[7px] ${th.unread ? "bg-brand" : ""}`} aria-label={th.unread ? "Unread" : undefined} />
+                  <span className="min-w-0">
+                    <span className="flex items-baseline justify-between gap-3">
+                      <span className={`truncate text-[13.5px] text-ink ${th.unread ? "font-semibold" : "font-medium"}`}>{m.dir === "in" ? m.fromN || m.fromE || "Unknown sender" : `To: ${m.toN || m.toE || "—"}`}</span>
+                      <span className="text-xs text-[#5B6B78] whitespace-nowrap tabular-nums">{fmtShort(m.at)}</span>
                     </span>
-                    <span className={`block text-[13.5px] truncate ${th.unread ? "font-semibold text-ink" : "text-ink"}`}>{r ? r.to : m.subject}</span>
-                    <span className="block text-xs text-[#5B6B78] truncate">{m.body.replace(/\s+/g, " ").slice(0, 90)}</span>
-                    <span className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <span className={`block mt-0.5 text-[13px] truncate ${th.unread ? "font-semibold text-ink" : "text-[#26404D]"}`}>{m.subject}</span>
+                    <span className="block mt-0.5 text-xs leading-[18px] text-[#5B6B78] truncate">{m.body.replace(/\s+/g, " ").slice(0, 140)}</span>
+                    <span className="flex flex-wrap items-center gap-1.5 mt-2">
                       <Tag text={m.kind} tone={KIND_TONE[m.kind]} />
-                      {r && <span className="rounded-md bg-track px-1.5 py-px text-[11px] text-ink">{r.cat}</span>}
-                      {th.L.length > 1 && <span className="text-[11px] text-[#5B6B78]">{th.L.length} messages</span>}
-                      {th.L.some((x) => x.att.length) && <Paperclip className="w-3 h-3 text-[#5B6B78]" />}
+                      {r && <span className="rounded-md bg-track px-1.5 py-px text-[11px] text-ink truncate max-w-[160px]">{r.cat}</span>}
+                      {th.L.length > 1 && <span className="text-[11px] text-[#5B6B78] tabular-nums">{th.L.length} messages</span>}
+                      {th.L.some((x) => x.att.length) && <Paperclip className="w-3 h-3 text-[#5B6B78]" aria-label="Has attachments" />}
                     </span>
                   </span>
                 </button>
               );
             }) : (
-              <div className="text-center text-sm text-[#5B6B78] py-10 px-4 flex flex-col items-center gap-2">
+              <div className="text-center text-sm text-[#5B6B78] py-12 px-6 flex flex-col items-center gap-2">
                 <Inbox className="w-7 h-7 text-[#9BDAEC]" /><b className="text-ink">Nothing here</b>
                 {folder === "inbox" || folder === "court" || folder === "ack" || folder === "resp" || folder === "needs"
                   ? "Incoming email isn't connected, so only replies and approvals you record appear here."
@@ -101,21 +110,25 @@ export function CaseMailbox({ ctx, mail, requests, onOpenRequest }: {
           </div>
         </section>
 
-        <section id="mail-read" className="min-w-0 lg:col-start-2 xl:col-start-3 lg:row-start-1 lg:row-span-2 xl:row-span-1 scroll-mt-[150px]">
+        <section id="mail-read" aria-label="Message" className={`min-w-0 border-t lg:border-t-0 border-line scroll-mt-[150px] ${pane}`}>
           {current ? (
-            <div className="lg-card p-5 space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="eyebrow">{req ? <>{req.cat} · {req.type} · <span className="mono-ref">{req.id}</span></> : "No linked request"}</div>
-                  <h3 className="card-title mt-0.5 break-words">{req ? req.to : current.last.subject}</h3>
-                  {req && <div className="flex flex-wrap items-center gap-2 mt-1.5"><StatusPill r={req} /><DueChip r={req} /></div>}
+            <div className="p-5 lg:p-6 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-line">
+                <div className="min-w-0 flex-1">
+                  <div className="eyebrow break-words">{req ? <>{req.cat} · {req.type} · <span className="mono-ref">{req.id}</span></> : "No linked request"}</div>
+                  <h3 className="card-title mt-1 break-words">{current.last.subject}</h3>
+                  {req && (
+                    <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-[#5B6B78]">
+                      <StatusPill r={req} /><DueChip r={req} /><span className="min-w-0 truncate">Request to <b className="font-semibold text-ink">{req.to}</b></span>
+                    </div>
+                  )}
                 </div>
-                {req && <button type="button" onClick={() => onOpenRequest(req.id)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:bg-wash">Open request <ArrowRight className="w-3.5 h-3.5" /></button>}
+                {req && <button type="button" onClick={() => onOpenRequest(req.id)} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:bg-wash shrink-0">Open request <ArrowRight className="w-3.5 h-3.5" /></button>}
               </div>
               <Thread key={current.k} ctx={ctx} messages={current.L} />
             </div>
           ) : (
-            <div className="lg-card p-10 text-center text-sm text-[#5B6B78] flex flex-col items-center gap-2"><Mail className="w-8 h-8 text-[#9BDAEC]" />Select a conversation.</div>
+            <div className="h-full min-h-[240px] p-10 text-center text-sm text-[#5B6B78] flex flex-col items-center justify-center gap-2"><Mail className="w-8 h-8 text-[#9BDAEC]" />Select a conversation.</div>
           )}
         </section>
       </div>
