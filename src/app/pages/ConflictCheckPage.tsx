@@ -9,7 +9,7 @@ import { resolveCaseFacts, join } from "../conflict/caseFacts";
 import { type Party, useConflictRecord, partyState, overallState } from "../conflict/conflictStore";
 import { CaseIntelligenceSummary } from "../conflict/CaseIntelligenceSummary";
 import { ConflictSearch } from "../conflict/ConflictSearch";
-import { CaseDetailsForm, validateCaseDetails } from "../conflict/CaseDetailsForm";
+import { CaseDetailsForm, validateCaseDetails, type SectionKey } from "../conflict/CaseDetailsForm";
 
 type Tab = "conflict" | "details";
 const TABS: { key: Tab; label: string }[] = [
@@ -21,6 +21,10 @@ const FIELD_LABEL: Record<string, string> = {
   insuredName: "insured name", insuredType: "insured type", plaintiffName: "plaintiff name", caseStatus: "whether a suit has been filed",
   suitFiledDate: "suit filed date", courtName: "court name",
 };
+
+// Unsaved Case Details edits, per case, kept while the app is open so leaving
+// Stage 2 and coming back doesn't lose them.
+const draftCache = new Map<string, CaseDetails>();
 
 const same = (a: CaseDetails, b: CaseDetails) => {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof CaseDetails>;
@@ -43,7 +47,8 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
 
   const [tab, setTab] = useState<Tab>("conflict");
   // The form's working copy lives here, so switching tabs keeps unsaved edits.
-  const [draft, setDraft] = useState<CaseDetails>(facts);
+  const [draft, setDraft] = useState<CaseDetails>(() => draftCache.get(caseId) ?? facts);
+  const [section, setSection] = useState<SectionKey>("insured");
   const [showErrors, setShowErrors] = useState(false);
   const dirty = !same(draft, facts);
   // Saved values that change elsewhere flow into a form with no edits of its own.
@@ -54,6 +59,16 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
     if (same(draft, base)) setDraft(facts);
   }, [facts]);
   const errors = validateCaseDetails(draft);
+  useEffect(() => {
+    if (dirty) draftCache.set(caseId, draft); else draftCache.delete(caseId);
+  }, [draft, dirty, caseId]);
+  // A reload or closed tab would drop unsaved edits; the browser asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   const save = () => {
     setShowErrors(true);
@@ -95,6 +110,7 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
 
   const goToDetails = () => {
     setTab("details");
+    setSection("plaintiff");
     window.setTimeout(() => {
       const el = document.getElementById(!facts.counselName ? "cd-counselName" : "cd-counselFirm");
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -170,6 +186,9 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
                 showErrors={showErrors}
                 documents={documents}
                 dirty={dirty}
+                saved={facts}
+                section={section}
+                setSection={setSection}
                 onSave={save}
                 onDiscard={discard}
               />
