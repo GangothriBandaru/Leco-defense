@@ -1,5 +1,20 @@
-import { Bell } from "lucide-react";
+import { Bell, FileSearch } from "lucide-react";
 import { Avatar, AvatarFallback } from "./ui/avatar";
+
+// Opens the open case's documents and their processing status. Styled to sit
+// beside the AI Assistant launcher.
+export function DocumentTrackerButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={disabled ? "Open a case to track its documents" : "Document Tracker"}
+      className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors border-line bg-white text-deep hover:border-brand hover:bg-tint disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-line disabled:hover:bg-white"
+    >
+      <FileSearch className="w-4 h-4" strokeWidth={1.75} /> Document Tracker
+    </button>
+  );
+}
 
 // The assistant prop is a slot for the global AI Assistant launcher. The rest
 // topbar is unchanged.

@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { DashboardSidebar } from "./components/DashboardSidebar";
-import { DashboardTopbar } from "./components/DashboardTopbar";
+import { DashboardTopbar, DocumentTrackerButton } from "./components/DashboardTopbar";
+import { useCaseDetails } from "./intake/caseDetailsStore";
 import { GlobalCaseRepoPage } from "./pages/GlobalCaseRepoPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { CommunicationPage } from "./pages/CommunicationPage";
@@ -81,7 +82,21 @@ function buildPipelineForCase(caseData: any): PipelineState {
 
 export default function App() {
   const [activePage, setActivePage] = useState("intake");
-  const [selectedCase, setSelectedCase] = useState<any>(null);
+  const [openedCase, setSelectedCase] = useState<any>(null);
+  // Case name and type edited on the Case Discovery card apply wherever the case shows.
+  const savedCaseDetails = useCaseDetails(openedCase?.caseId);
+  const selectedCase = useMemo(() => {
+    if (!openedCase || !savedCaseDetails) return openedCase;
+    const { caseName, caseType } = savedCaseDetails;
+    return { ...openedCase, ...(caseName && { caseName }), ...(caseType && { caseType }) };
+  }, [openedCase, savedCaseDetails]);
+  // Bumped by the Document Tracker button; the Case Discovery page scrolls to
+  // its Documents section and clears it.
+  const [docTrackerRequest, setDocTrackerRequest] = useState(0);
+  const openDocumentTracker = () => {
+    setDocTrackerRequest((n) => n + 1);
+    setActivePage("workflow");
+  };
   const [pipeline, setPipeline] = useState<PipelineState>(INITIAL_PIPELINE);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // Section of the stage page to land on when returning from a sub-page.
@@ -249,6 +264,8 @@ export default function App() {
             onContinue={() => setActivePage("analysis")}
             onStageClick={handleStageNavigation}
             onBackToIntake={() => setActivePage("intake")}
+            focusDocumentsRequest={docTrackerRequest}
+            onFocusDocumentsHandled={() => setDocTrackerRequest(0)}
           />
         );
       case "classification":
@@ -474,7 +491,14 @@ export default function App() {
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
         />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <DashboardTopbar assistant={<AssistantLauncher />} />
+          <DashboardTopbar
+            assistant={
+              <div className="flex items-center gap-2">
+                <DocumentTrackerButton onClick={openDocumentTracker} disabled={!selectedCase} />
+                <AssistantLauncher />
+              </div>
+            }
+          />
           <div className="flex-1 flex min-h-0 overflow-hidden">
             <AssistantMain>{renderPage()}</AssistantMain>
             <AssistantPanel />

@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect, useMemo } from "react";
 import { FileTypeIcon, FileTypeTag } from "../components/fileType";
 import { StageNavigator } from "../components/StageNavigator";
 import { CaseSnapshot } from "../components/CaseSnapshot";
+import { EditCaseDetailsDialog } from "../components/EditCaseDetailsDialog";
+import { useCaseDetails, saveCaseDetails, type CaseDetails } from "../intake/caseDetailsStore";
+import { resolveCasePolicy } from "../insurance/casePolicy";
 import { Send, Upload, CheckCircle, Circle, ArrowRight, Check, X, FileText, Copy, Download, Eye, Search, ChevronLeft, ChevronDown, Mail, MessageSquare, AlertCircle, AlertTriangle, ListChecks, Bot, Pencil, RefreshCw, Plus, Clock, Info, Trash2, RotateCcw, ClipboardCheck } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { DocActions, DocumentWorkspaceModal, RowActionGroup } from "../components/DocumentWorkspace";
@@ -55,6 +58,9 @@ interface IntakeWorkflowPageProps {
   onContinue?: () => void;
   onStageClick?: (stageName: string) => void;
   onBackToIntake?: () => void;
+  /** Non-zero when the Document Tracker asks for the Documents section. */
+  focusDocumentsRequest?: number;
+  onFocusDocumentsHandled?: () => void;
 }
 
 const documentCategories = [
@@ -152,7 +158,7 @@ function NextStepBox({ text, ctaLabel, onClick }: { text: string; ctaLabel: stri
   );
 }
 
-export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDocumentsUpdate, onContinue, onStageClick, onBackToIntake }: IntakeWorkflowPageProps) {
+export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDocumentsUpdate, onContinue, onStageClick, onBackToIntake, focusDocumentsRequest, onFocusDocumentsHandled }: IntakeWorkflowPageProps) {
   // Default case data if none provided
   const defaultCaseData = {
     caseName: "Estate of Miller vs Logistics Co.",
@@ -169,6 +175,23 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
 
   const data = { ...defaultCaseData, ...caseData };
 
+  // The case card: the attorney's saved edits first, then what the case's own
+  // insurance document establishes. Nothing else is filled in.
+  const savedDetails = useCaseDetails(data.caseId);
+  const policy = useMemo(() => resolveCasePolicy(data, pipeline.documents), [data.caseType, pipeline.documents]);
+  const cardDetails: CaseDetails = {
+    caseName: savedDetails?.caseName ?? data.caseName,
+    caseType: savedDetails?.caseType ?? data.caseType,
+    insuredName: savedDetails?.insuredName ?? policy.namedInsured,
+    insuredEmail: savedDetails?.insuredEmail,
+    insuredPhone: savedDetails?.insuredPhone,
+    policyName: savedDetails?.policyName ?? policy.policyType,
+    policyNumber: savedDetails?.policyNumber ?? policy.policyNo,
+    insurerName: savedDetails?.insurerName ?? policy.insurer,
+    insurerJurisdiction: savedDetails?.insurerJurisdiction,
+  };
+  const [editingDetails, setEditingDetails] = useState(false);
+
   // Default expansion reflects the active blocker: open the Retainer while it is
   // unsigned, otherwise focus the Documents once the case has files. Intake stays
   // collapsed to a single-row summary by default.
@@ -179,11 +202,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   });
   const toggleAccordion = (key: "retainer" | "request" | "documents") =>
     setAccordionOpen((prev) => ({ ...prev, [key]: !prev[key] }));
-  // Workspace tabs: Intake Request (the retainer, the intake request and the
-  // missing documents) and Documents, shown one at a time.
-  const [activeTab, setActiveTab] = useState<"request" | "documents">(
-    pipeline.retainerStatus === "signed" && pipeline.documents.length > 0 ? "documents" : "request"
-  );
   const [documents, setDocuments] = useState(documentCategories);
   const [showIntakeModal, setShowIntakeModal] = useState(false);
   const [showFollowUpModal, setShowFollowUpModal] = useState(false);
@@ -634,7 +652,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   // Shared uploaded documents (pipeline state)
   const sharedDocs = pipeline.documents;
   const plaintiffActivityDetected = sharedDocs.length > 0;
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedFileNames, setUploadedFileNames] = useState<string[]>([]);
   const [showUploadSuccess, setShowUploadSuccess] = useState(false);
 
@@ -879,7 +896,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const mediaFileCount = media.videos.length + media.sets.reduce((n, x) => n + x.files.length, 0);
   const openMediaUpload = () => { setUploadMenuOpen(false); setMediaModalOpen(true); };
   const openDocumentUpload = () => { setUploadMenuOpen(false); docInputRef.current?.click(); };
-  const viewMediaEvidence = () => { setDocumentsSubTab("media"); setActiveTab("documents"); };
+  const viewMediaEvidence = () => setDocumentsSubTab("media");
   // What the attorney's last video & photo upload actually put on the case.
   const [mediaUploadResult, setMediaUploadResult] = useState<MediaUploadResult | null>(null);
   // "Oct 9, 2026 · 6:15 PM"
@@ -1138,30 +1155,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const missingDocCount = missingEvidence.length;
   const missingDocNames = missingEvidence.map((m) => m.title);
 
-  const collectionTasks = [retainerSigned, intakeResponseReceived, processingComplete];
-  const completeCount = collectionTasks.filter(Boolean).length;
-  const totalTasks = collectionTasks.length;
-
-  const canProceed = retainerSigned && documentsReceived && processingComplete;
-
-
-  // Sidebar task navigation: expand + scroll to the matching workspace section
-  const focusSection = (key: "retainer" | "request" | "documents" | "missing") => {
-    setActiveTab(key === "documents" ? "documents" : "request");
-    if (key !== "missing") setAccordionOpen((prev) => ({ ...prev, [key]: true }));
-
-    const id = {
-      // For a new case the full sections are not shown — their compact cards are.
-      retainer: showIntroCards ? "retainer-card" : "retainer-section",
-      request: showIntroCards ? "request-card" : "intake-request-section",
-      documents: missingDocCount > 0 && documentsReceived ? "missing-docs-documents" : "documents-section",
-      missing: "missing-docs-section",
-    }[key];
-    setTimeout(() => {
-      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
-  };
-
   // Demo handlers — flip all dependent UI from the per-section header toggles
   const applyDemoRetainer = (state: "sent" | "signed") => {
     setDemoRetainerState(state);
@@ -1176,45 +1169,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
         : r);
     });
   };
-
-  const intakeReqCount = intakeRequests[0]?.requestedDocs?.length ?? 0;
-  const docsTotal = sharedDocs.length + missingDocCount;
-
-  const collectionTaskList = [
-    {
-      key: "retainer" as const,
-      name: "Retainer",
-      Icon: retainerSigned ? CheckCircle : Clock,
-      iconColor: retainerSigned ? "text-brand" : "text-amber-600",
-      status: retainerSigned ? "Agreement signed" : retainerStatus === "not-sent" ? "Not yet sent" : "Awaiting signature",
-      statusColor: retainerSigned ? "text-deep" : "text-amber-700",
-      CtaIcon: retainerSigned ? Eye : Mail,
-      cta: retainerSigned ? "Preview agreement" : "Send reminder",
-      primary: !retainerSigned,
-    },
-    {
-      key: "request" as const,
-      name: "Intake request",
-      Icon: intakeResponseReceived || intakeSent ? CheckCircle : Circle,
-      iconColor: intakeResponseReceived || intakeSent ? "text-brand" : "text-[#9BDAEC]",
-      status: intakeResponseReceived ? "Response received" : intakeSent ? `Sent${intakeReqCount ? ` · ${intakeReqCount} requested` : ""}` : "Not yet sent",
-      statusColor: intakeResponseReceived || intakeSent ? "text-deep" : "text-[#5B6B78]",
-      CtaIcon: Eye,
-      cta: intakeResponseReceived ? "View submission" : "View request",
-      primary: false,
-    },
-    {
-      key: "documents" as const,
-      name: "Documents",
-      Icon: processingComplete ? CheckCircle : documentsReceived ? AlertTriangle : Circle,
-      iconColor: processingComplete ? "text-brand" : documentsReceived ? "text-amber-600" : "text-[#9BDAEC]",
-      status: !documentsReceived ? "Awaiting documents" : missingDocCount > 0 ? `${docsFinishedOk} processed · ${missingDocCount} missing` : `${docsFinishedOk} processed`,
-      statusColor: processingComplete ? "text-deep" : documentsReceived ? "text-amber-700" : "text-[#5B6B78]",
-      CtaIcon: ListChecks,
-      cta: missingDocCount > 0 ? "Check missing docs" : "Review documents",
-      primary: false,
-    },
-  ];
 
   // ── Status filters ──
   const [docFilter, setDocFilter] = useState<DocFilter>("all");
@@ -1483,12 +1437,6 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
   const requestedParts = new Set(storedRequests.flatMap((r) => r.requestedDocs.flatMap((d) => REQUIREMENT_PARTS[d] ?? [])));
   const notYetRequested = missingEvidence.filter((m) => !requestedParts.has(m.title) &&
     !storedRequests.some((r) => [m.title, ...(SAME_REQUIREMENT[m.title] ?? [])].some((t) => r.requestedDocs.includes(t))));
-  // The expanded detail panel under the four cards — one at a time.
-  const [cardPanel, setCardPanel] = useState<"retainer" | "request" | "documents" | "media" | null>(null);
-  const toggleCardPanel = (k: "retainer" | "request" | "documents" | "media") => {
-    setCardPanel((cur) => (cur === k ? null : k));
-    window.setTimeout(() => document.getElementById("card-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 60);
-  };
 
   // ── The Documents processing summary, per sub-tab ──
   // Case evidence: the case documents and their file checks. Retainer
@@ -1576,155 +1524,16 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
     </div>
   );
 
-  // ── The compact cards: Retainer, request, Upload Documents, Upload Media ──
-  // Built once, in two sizes — compact in the card row, large in the upload
-  // popup — so the counts and actions are the same wherever they show.
-  const [uploadPopupOpen, setUploadPopupOpen] = useState(false);
-  const showIntroCards = effectiveRetainers.length === 0 && !sentReq;
-  const collectionCards = (variant: "compact" | "large") => {
-              const btnP = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden text-ellipsis [&>svg]:shrink-0";
-              const btnS = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all whitespace-nowrap shrink-0";
-              // Agreement and request actions are outlined; the uploads stay filled.
-              const btnO = "inline-flex items-center justify-center gap-1 h-8 px-2 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden text-ellipsis [&>svg]:shrink-0";
-              const iconBtn = "w-8 h-8 inline-flex items-center justify-center rounded-lg text-deep hover:bg-tint transition-colors shrink-0";
-              // One structure for every card: header (icon, title, corner
-              // actions) · status · a few short lines · actions at the foot.
-              const large = variant === "large";
-              const card = (key: "retainer" | "request" | "documents" | "media", Icon: any, title: string, corner: React.ReactNode, status: string, pill: string, body: React.ReactNode, primary: React.ReactNode, showView = true) => {
-                // Only the two upload cards remain once a retainer or request
-                // exists: each spans half the row, so its details sit at the left
-                // and its actions at the right instead of in a tall narrow column.
-                const wide = !large && !showIntroCards && (key === "documents" || key === "media");
-                const actions = (
-                  <div className={`flex items-center gap-1 min-w-0 [&>button]:min-w-0 [&>button:first-child]:shrink ${wide ? "max-w-full" : "mt-auto pt-1"}`}>
-                    {primary}
-                    {showView && (large
-                      ? <button onClick={() => { setUploadPopupOpen(false); setCardPanel(key); window.setTimeout(() => document.getElementById("card-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80); }} className={btnS}>View</button>
-                      : <button onClick={() => toggleCardPanel(key)} aria-expanded={cardPanel === key} className={btnS}>{cardPanel === key ? "Hide" : "View"}</button>)}
-                  </div>
-                );
-                const head = (
-                  <div className="flex items-center justify-between gap-2 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-7 h-7 rounded-lg bg-tint flex items-center justify-center shrink-0">
-                        <Icon className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} />
-                      </div>
-                      <h3 className={`${large ? "card-title" : "text-sm font-semibold"} text-ink truncate`}>{title}</h3>
-                    </div>
-                    <div className="flex items-center -my-1 -mr-1">{corner}</div>
-                  </div>
-                );
-                if (wide) return (
-                  <div id={`${key}-card`} className={`lg-card p-4 flex items-center justify-between gap-4 flex-wrap min-w-0 h-full scroll-mt-[150px] ${cardPanel === key ? "ring-1 ring-brand" : ""}`}>
-                    <div className="min-w-0 flex-1 basis-[180px] self-start flex flex-col gap-1.5">
-                      {head}
-                      <span className={`self-start max-w-full truncate ${pill}`}>{status}</span>
-                      <div className="text-xs text-[#5B6B78] space-y-0.5 min-w-0 empty:hidden">{body}</div>
-                    </div>
-                    {actions}
-                  </div>
-                );
-                return (
-                <div id={large ? undefined : `${key}-card`} className={`lg-card flex flex-col min-w-0 h-full scroll-mt-[150px] ${large ? "p-6 gap-3" : "p-4 gap-2"} ${cardPanel === key && !large ? "ring-1 ring-brand" : ""}`}>
-                  {head}
-                  <span className={`self-start max-w-full truncate ${pill}`}>{status}</span>
-                  <div className={`${large ? "text-sm" : "text-xs"} text-[#5B6B78] space-y-0.5 min-w-0 flex-1`}>{body}</div>
-                  {actions}
-                </div>
-                );
-              };
-
-              // Retainer
-              const r = newestRetainer;
-              const rSigned = r?.status === "Signed";
-              const retainerCard = card(
-                "retainer", FileText, "Retainer",
-                // Upload a signed document — while none is signed yet.
-                !rSigned ? (
-                  <button onClick={r ? openUploadAgreement : handleMarkAsSigned} title="Upload signed document" aria-label="Upload signed document" className={iconBtn}>
-                    <Upload className="w-4 h-4" strokeWidth={1.75} />
-                  </button>
-                ) : null,
-                !r ? "Not created" : rSigned ? "Signed" : "Awaiting signature",
-                !r ? "pill pill-neutral" : rSigned ? "pill pill-complete" : "pill pill-progress",
-                !r ? <p>No retainer sent yet.</p> : (
-                  <p>
-                    {effectiveRetainers.length} {effectiveRetainers.length === 1 ? "retainer" : "retainers"}
-                    {rSigned ? (retainerSource === "attorney" ? " · signed copy from attorney" : " · signed by client") : ` · sent ${r.sentDate}`}
-                  </p>
-                ),
-                !r
-                  ? <button onClick={handleOpenSendRetainerModal} className={btnO}><Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Send Retainer</button>
-                  : <button onClick={handleGenerateNewRetainer} className={btnO}><Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Generate Retainer</button>,
-                false,
-              );
-
-              // Request
-              const lp = latestProgress;
-              const requestCard = card(
-                "request", Send, sentReq ? "Additional Request" : "Intake Request", null,
-                !sentReq || !lp ? "No request sent" : `${latestReq.id} · ${lp.status}`,
-                !sentReq || !lp ? "pill pill-neutral" : REQUEST_STATUS_PILL[lp.status] ?? "pill pill-neutral",
-                !sentReq || !lp ? <p>Request documents from the client through a secure link.</p> : (
-                  <>
-                    <p>{lp.satisfied} of {lp.total} requested items received</p>
-                    {storedRequests.length > 1 && <p>{storedRequests.length} requests on this case</p>}
-                  </>
-                ),
-                // The first request through the intake-request flow; once one
-                // has been sent, further ones as additional requests.
-                !sentReq ? (
-                  <button onClick={openCreateRequest} title="Create Intake Request" className={btnO}>
-                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Create Intake Request
-                  </button>
-                ) : (
-                  <button onClick={handleOpenAdditionalRequest} title="Additional Request" className={btnO}>
-                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Additional Request
-                  </button>
-                ),
-                // Nothing to view before a request has been sent.
-                !!sentReq,
-              );
-
-              // Documents — the attorney's own uploads; client files only when there are some
-              const byAttorney = sharedDocs.filter((d) => d.source === "Attorney").length;
-              const byClient = sharedDocs.filter((d) => d.source === "Plaintiff").length;
-              const docsCard = card(
-                "documents", Upload, "Upload Documents", null,
-                `${byAttorney} uploaded by attorney`, "pill pill-neutral",
-                <>
-                  {byClient > 0 && <p>{byClient} from client submissions</p>}
-                  {runningCount > 0 && <p className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} /> {runningCount} processing</p>}
-                  {failedCount > 0 && <p className="text-[#B91C1C]">{failedCount} failed</p>}
-                </>,
-                <button onClick={() => docInputRef.current?.click()} className={btnP}><Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Documents</button>,
-              );
-
-              // Media
-              const allMedia = [...media.videos.map((v) => ({ src: v.source, f: v.file })), ...media.sets.flatMap((x) => x.files.map((f) => ({ src: x.source, f })))];
-              const mediaByClient = allMedia.filter((m) => m.src === "Client").length;
-              const mediaProcessing = allMedia.filter((m) => mediaFileStatus(m.f) === "processing").length;
-              const mediaFailed = allMedia.filter((m) => mediaFileStatus(m.f) === "failed").length;
-              const mediaCardEl = card(
-                "media", Camera, "Upload Media", null,
-                `${allMedia.length} media ${allMedia.length === 1 ? "file" : "files"}`, "pill pill-neutral",
-                <>
-                  {allMedia.length > 0 && <p>{media.videos.length} {media.videos.length === 1 ? "video" : "videos"} · {media.sets.length} photo {media.sets.length === 1 ? "set" : "sets"}</p>}
-                  {mediaByClient > 0 && <p>{mediaByClient} from client submissions</p>}
-                  {mediaProcessing > 0 && <p className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} /> {mediaProcessing} processing</p>}
-                  {mediaFailed > 0 && <p className="text-[#B91C1C]">{mediaFailed} failed</p>}
-                </>,
-                <button onClick={() => { setUploadPopupOpen(false); openMediaUpload(); }} className={btnP}><Camera className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Media</button>,
-              );
-    return { retainerCard, requestCard, docsCard, mediaCardEl };
-  };
-
-  const blockedParts: string[] = [];
-  if (!retainerSigned) blockedParts.push("retainer unsigned");
-  if (!documentsReceived) blockedParts.push("no documents");
-  else if (missingDocCount > 0) blockedParts.push(`${missingDocCount} docs missing`);
-  else if (!processingComplete) blockedParts.push("processing incomplete");
-  const blockedSummary = blockedParts.length ? `Blocked: ${blockedParts.join(" · ")}` : "";
+  useEffect(() => {
+    if (!focusDocumentsRequest) return;
+    setDocumentsSubTab("intake");
+    setDocFilter("all");
+    setDocSearch("");
+    window.setTimeout(() => {
+      document.getElementById("documents-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+    onFocusDocumentsHandled?.();
+  }, [focusDocumentsRequest]);
 
   return (
     <div className="min-h-screen bg-wash">
@@ -1755,946 +1564,37 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
         {/* Page Header + Global Presenter Control */}
         {/* SECTION 1 — Case Snapshot */}
         <div>
-          <h1 className="text-[24px] font-semibold text-ink leading-tight tracking-tight mb-4">Stage 1 · Collection</h1>
+          <h1 className="text-[24px] font-semibold text-ink leading-tight tracking-tight mb-4">Stage 1 · Case Discovery</h1>
           <CaseSnapshot
-            caseName={data.caseName}
-            caseType={data.caseType}
-            caseSubType={(data as any).caseSubType}
-            plaintiff={data.plaintiff}
-            plaintiffEmail={data.plaintiffEmail}
-            plaintiffPhone={data.plaintiffPhone}
-            jurisdiction={data.jurisdiction}
+            caseName={cardDetails.caseName ?? data.caseName}
+            caseType={cardDetails.caseType}
             caseId={data.caseId}
-            dateOfIncident={data.dateOfIncident}
             summary={data.summary}
+            insuredName={cardDetails.insuredName}
+            insuredEmail={cardDetails.insuredEmail}
+            insuredPhone={cardDetails.insuredPhone}
+            policyName={cardDetails.policyName}
+            policyNumber={cardDetails.policyNumber}
+            insurerName={cardDetails.insurerName}
+            insurerJurisdiction={cardDetails.insurerJurisdiction}
+            onEdit={() => setEditingDetails(true)}
           />
+          {editingDetails && (
+            <EditCaseDetailsDialog
+              caseId={data.caseId}
+              initial={cardDetails}
+              onClose={() => setEditingDetails(false)}
+              onSave={(next) => {
+                saveCaseDetails(data.caseId, next);
+                setEditingDetails(false);
+              }}
+            />
+          )}
         </div>
 
-        {/* SECTION 2 — Main Workspace */}
-        {/* flex-row-reverse renders the checklist on the right and the tabs +
-            content on the left, while keeping the checklist first in the DOM. */}
-        <div className="flex flex-row-reverse gap-6 items-start">
-          {/* ── RIGHT SIDEBAR ── */}
-          <aside className="w-[320px] shrink-0 sticky top-[150px] space-y-4">
-            {/* Collection Checklist */}
-            <div className="lg-card p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="card-title">Collection checklist</h3>
-                <span className={`pill ${completeCount === totalTasks ? "pill-complete" : "pill-progress"}`}>
-                  {completeCount} of {totalTasks}
-                </span>
-              </div>
-
-              <div className="space-y-3">
-                {collectionTaskList.map((t) => (
-                  <div key={t.key} className="border border-line rounded-xl p-4">
-                    <div className="flex items-start gap-2.5 mb-3">
-                      <t.Icon className={`w-[18px] h-[18px] shrink-0 mt-0.5 ${t.iconColor}`} strokeWidth={1.75} />
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-ink leading-tight">{t.name}</div>
-                        <div className={`text-xs mt-0.5 ${t.statusColor}`}>{t.status}</div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => (t.onClick ? t.onClick() : focusSection(t.key))}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all bg-tint hover:bg-soft text-deep"
-                    >
-                      <t.CtaIcon className="w-4 h-4" strokeWidth={1.75} />
-                      {t.cta}
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="border-t border-line my-4" />
-
-              <button
-                onClick={canProceed ? onContinue : undefined}
-                disabled={!canProceed}
-                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  canProceed
-                    ? "bg-brand hover:bg-deep text-white"
-                    : "bg-track text-[#8A98A3] cursor-not-allowed"
-                }`}
-              >
-                Proceed to Analysis
-                <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
-              </button>
-              {!canProceed && blockedSummary && (
-                <p className="text-xs text-[#5B6B78] mt-2.5 text-center">{blockedSummary}</p>
-              )}
-            </div>
-          </aside>
-
-          {/* ── RIGHT WORKSPACE ── */}
-          <div className="flex-1 min-w-0 space-y-3">
-
-          {/* ── Workspace tab bar ── */}
-          <div id="workspace-tabs" className="lg-card p-1.5 flex items-center gap-1.5 scroll-mt-[150px]">
-            {([
-              { key: "request" as const, label: "Intake Request" },
-              { key: "documents" as const, label: "Documents" },
-            ]).map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  activeTab === tab.key
-                    ? "bg-brand text-white shadow-sm"
-                    : "text-[#5B6B78] hover:text-ink hover:bg-wash"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* ── Intake Request tab ── */}
-          {activeTab === "request" && (<>
-          {/* 1 · Retainer — its own container. Not shown for a new case with no
-              retainer and no request: the compact cards carry those actions. */}
-          {!showIntroCards && (
-          <div id="retainer-section" className="scroll-mt-[150px] space-y-4 rounded-xl border border-line bg-white p-5 shadow-sm">
-            {/* Section heading — the action on the same row, at the right */}
-            <div className="flex items-center justify-between gap-4 flex-wrap">
-              <h2 className="section-header">Retainer</h2>
-              <div className="flex items-center gap-3 shrink-0">
-                {effectiveRetainers.length > 1 ? (
-                  /* Status filter — multiple retainers */
-                  <div className="inline-flex items-center bg-track border border-line rounded-lg p-0.5">
-                    {([["Awaiting Signature", "Awaiting Signature"], ["Signed", "Signed"], ["all", "All"]] as const).map(([val, label]) => (
-                      <button
-                        key={val}
-                        onClick={() => setRetainerFilter(val)}
-                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${retainerFilter === val ? "bg-white text-ink shadow-sm" : "text-[#5B6B78] hover:text-ink"}`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                {effectiveRetainers.length === 0 ? (
-                  <button onClick={handleOpenSendRetainerModal} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all">
-                    <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Send Retainer
-                  </button>
-                ) : (
-                  <button onClick={handleGenerateNewRetainer} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all">
-                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Generate New Retainer
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-line overflow-hidden">
-                {effectiveRetainers.length === 0 ? (
-                  /* ── EMPTY: no retainer sent ── */
-                  <div className="text-center py-10 px-6">
-                    <div className="inline-flex p-4 bg-tint rounded-full mb-4">
-                      <FileText className="w-8 h-8 text-[#5B6B78]" strokeWidth={1.75} />
-                    </div>
-                    <h3 className="card-title mb-1">No Retainer Agreement Sent</h3>
-                    <p className="secondary-text mb-6">Send a retainer agreement to the plaintiff to begin the representation, or upload one already signed.</p>
-                    <div className="flex items-center justify-center gap-3">
-                      <Button onClick={handleMarkAsSigned} className="bg-white border border-line text-ink hover:bg-wash">
-                        Upload a Signed doc
-                      </Button>
-                    </div>
-                  </div>
-
-                ) : effectiveRetainers.length === 1 ? (
-                  /* ── SINGLE retainer — compact, content directly in the section ── */
-                  (() => {
-                    const r = effectiveRetainers[0];
-                    const signed = r.status === "Signed";
-                    const fields = signed
-                      ? [
-                          { label: "Status", value: "Signed" },
-                          { label: "Signed Date", value: r.signedDate || "Not on record" },
-                          { label: "Recipient", value: r.recipient },
-                          { label: "Template", value: r.template },
-                        ]
-                      : [
-                          { label: "Status", value: "Sent" },
-                          { label: "Sent Date", value: r.sentDate },
-                          { label: "Recipient", value: r.recipient },
-                          { label: "Template", value: r.template },
-                        ];
-                    const docName = signed
-                      ? (r.signedDocName || "No signed document uploaded")
-                      : (r.sentDocName || "PI_Retainer_Agreement.pdf");
-                    const retainerDoc = { name: docName, source: "Retainer", date: signed ? (r.signedDate || "Jun 11, 2026") : r.sentDate, status: signed ? "Signed" : "Sent", storageKey: signed && retainerSource === "attorney" ? retainerFile?.storageKey : undefined };
-                    return (
-                      <>
-                      <div className="bg-offwhite p-4 space-y-3">
-                        {/* Box 1 — info grid */}
-                        <div className="bg-white border border-line rounded-xl overflow-hidden">
-                          <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-line">
-                            {fields.map(({ label, value }) => (
-                              <div key={label} className="px-5 py-3.5">
-                                <div className="eyebrow mb-1">{label}</div>
-                                {label === "Status"
-                                ? <span className={`pill ${value === "Signed" ? "pill-complete" : "pill-progress"}`}>{value === "Signed" ? <CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> : <Clock className="w-3.5 h-3.5" strokeWidth={1.75} />}{value === "Signed" ? "Signed" : "Sent · awaiting signature"}</span>
-                                : <div className="text-sm font-semibold text-ink truncate">{value}</div>}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Box 2 — document (sent doc while awaiting, signed doc once signed) */}
-                        <div className="bg-white border border-line rounded-xl px-5 py-3.5 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 bg-tint border border-line rounded-lg flex items-center justify-center shrink-0">
-                              <FileTypeIcon name={docName} className="w-4 h-4 text-deep" />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="eyebrow mb-0.5">{signed ? "Signed Document" : "Retainer Document"}</div>
-                              <div className="mono-ref text-ink flex items-center gap-2">{docName}<FileTypeTag name={docName} /></div>
-                            </div>
-                          </div>
-                          {signed ? (r.signedDocName ? (
-                            <RowActionGroup name={docName} onEdit={() => { setRetainerEdit(sectionRetainerDoc(r)); setRetainerEditError(null); }} onDelete={() => { setRetainerDelete(sectionRetainerDoc(r)); setRetainerDeleteError(null); }}>
-                              <DocActions
-                                size="row"
-                                onPreview={() => handlePreviewDocument(retainerDoc)}
-                                onInsights={() => handleOpenInsights(retainerDoc)}
-                                onDownload={() => handleDownloadDocument(retainerDoc)}
-                                disabled={{ download: retainerDoc.storageKey ? undefined : "The original file is not stored in this prototype" }}
-                              />
-                            </RowActionGroup>
-                          ) : null) : (
-                            <div className="flex items-center gap-2 shrink-0">
-                              <button onClick={handleOpenSendRetainerModal} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all flex items-center gap-1.5">
-                                <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
-                              </button>
-                              <button onClick={openUploadAgreement} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
-                                <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Agreement
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                        {signed && retainerSource === "attorney" && (
-                          <p className="text-xs text-[#5B6B78] px-1">{retainerFile ? "Signed copy uploaded by the attorney." : "Marked signed by the attorney — no signed document uploaded."}</p>
-                        )}
-                      </div>
-                      </>
-                    );
-                  })()
-
-                ) : (
-                  /* ── MULTIPLE retainers — each repeats the exact single-retainer card ── */
-                  (() => {
-                    const sorted = [...effectiveRetainers].sort((a, b) => b.id - a.id);
-                    const shown = retainerFilter === "all" ? sorted : sorted.filter((r) => r.status === retainerFilter);
-                    return (
-                      <div className="bg-wash p-4 space-y-4">
-                        {shown.length === 0 ? (
-                          <div className="text-center py-8 secondary-text">No retainers match this filter.</div>
-                        ) : (
-                          shown.map((r) => {
-                            const signed = r.status === "Signed";
-                            const fields = signed
-                              ? [
-                                  { label: "Status", value: "Signed" },
-                                  { label: "Signed Date", value: r.signedDate || "Not on record" },
-                                  { label: "Recipient", value: r.recipient },
-                                  { label: "Template", value: r.template },
-                                ]
-                              : [
-                                  { label: "Status", value: "Sent" },
-                                  { label: "Sent Date", value: r.sentDate },
-                                  { label: "Recipient", value: r.recipient },
-                                  { label: "Template", value: r.template },
-                                ];
-                            const docName = signed
-                              ? (r.signedDocName || "No signed document uploaded")
-                              : (r.sentDocName || "PI_Retainer_Agreement.pdf");
-                            const retainerDoc = { name: docName, source: "Retainer", date: signed ? (r.signedDate || r.sentDate) : r.sentDate, status: r.status };
-                            return (
-                              <div key={r.id} className="border border-line rounded-xl overflow-hidden">
-                                <div className="bg-offwhite p-4 space-y-3">
-                                  {/* Box 1 — info grid */}
-                                  <div className="bg-white border border-line rounded-xl overflow-hidden">
-                                    <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-line">
-                                      {fields.map(({ label, value }) => (
-                                        <div key={label} className="px-5 py-3.5">
-                                          <div className="eyebrow mb-1">{label}</div>
-                                          {label === "Status"
-                                ? <span className={`pill ${value === "Signed" ? "pill-complete" : "pill-progress"}`}>{value === "Signed" ? <CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} /> : <Clock className="w-3.5 h-3.5" strokeWidth={1.75} />}{value === "Signed" ? "Signed" : "Sent · awaiting signature"}</span>
-                                : <div className="text-sm font-semibold text-ink truncate">{value}</div>}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-
-                                  {/* Box 2 — document (sent doc while awaiting, signed doc once signed) */}
-                                  <div className="bg-white border border-line rounded-xl px-5 py-3.5 flex items-center justify-between gap-3">
-                                    <div className="flex items-center gap-3 min-w-0">
-                                      <div className="w-8 h-8 bg-tint border border-line rounded-lg flex items-center justify-center shrink-0">
-                                        <FileTypeIcon name={docName} className="w-4 h-4 text-deep" />
-                                      </div>
-                                      <div className="min-w-0">
-                                        <div className="eyebrow mb-0.5">{signed ? "Signed Document" : "Retainer Document"}</div>
-                                        <div className="mono-ref text-ink flex items-center gap-2">{docName}<FileTypeTag name={docName} /></div>
-                                      </div>
-                                    </div>
-                                    {signed && r.signedDocName && (
-                                      <RowActionGroup name={docName} onEdit={() => { setRetainerEdit(sectionRetainerDoc(r)); setRetainerEditError(null); }} onDelete={() => { setRetainerDelete(sectionRetainerDoc(r)); setRetainerDeleteError(null); }}>
-                                        <DocActions
-                                          size="row"
-                                          onPreview={() => handlePreviewDocument(retainerDoc)}
-                                          onInsights={() => handleOpenInsights(retainerDoc)}
-                                          onDownload={() => handleDownloadDocument(retainerDoc)}
-                                          disabled={{ download: "The original file is not stored in this prototype" }}
-                                        />
-                                      </RowActionGroup>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Bottom bar — while awaiting signature */}
-                                {!signed && (
-                                  <div className="flex items-center justify-end gap-3 bg-white border-t border-line px-4 py-3">
-                                    <button onClick={handleOpenSendRetainerModal} className="px-4 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-all flex items-center gap-1.5">
-                                      <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
-                                    </button>
-                                    <button onClick={openUploadAgreement} className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-deep transition-all flex items-center gap-1.5">
-                                      <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Agreement
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })
-                        )}
-
-                      </div>
-                    );
-                  })()
-                )}
-              </div>
-          </div>
-
-          )}
-
-          {/* 2 · Intake Request — the request, the client's response, progress;
-              its own container, and likewise not shown for a new case. */}
-          {!showIntroCards && (
-          <div id="intake-request-section" className="scroll-mt-[150px] space-y-4 rounded-xl border border-line bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <h2 className="section-header">Intake Request</h2>
-            <div className="flex items-center gap-2 shrink-0">
-              {sentReq && (
-                <button
-                  onClick={handleOpenAdditionalRequest}
-                  title="Request more documents from the client"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line bg-white text-deep text-xs font-semibold hover:bg-wash transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Additional Request
-                </button>
-              )}
-              <button onClick={() => setUploadPopupOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all">
-                <Upload className="w-3.5 h-3.5" strokeWidth={1.75} /> Upload Docs
-              </button>
-            </div>
-          </div>
-          {!currentReq && (
-            <div className="lg-card p-6 flex items-center justify-between gap-4 flex-wrap">
-              <div className="min-w-0">
-                <h3 className="card-title mb-1">No intake request sent yet</h3>
-                <p className="secondary-text">Request documents from the client through a secure link.</p>
-              </div>
-              <button onClick={openCreateRequest} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-line bg-white text-deep text-sm font-semibold hover:bg-wash transition-all">
-                <Plus className="w-4 h-4" strokeWidth={1.75} /> Create Request
-              </button>
-            </div>
-          )}
-          {currentReq && cur && (() => {
-            const req = intakeRequests.find((x) => x.id === currentReq.id)!;
-            const answered = cur.responded;
-            // The sent card keeps the request's send status; the client's
-            // answer is its own card below.
-            const sentStatus = answered ? "Sent" : cur.status;
-            const statusColors: Record<string, string> = {
-              Draft: "pill pill-neutral",
-              Sent: "pill pill-progress",
-              Opened: "pill pill-progress",
-              "In progress": "pill pill-progress",
-              Expired: "pill pill-risk",
-              Cancelled: "pill pill-neutral",
-            };
-            const asked = selectedMediaOptions(req.requestedMedia);
-            const got = receivedMediaFor(req.id);
-            const missingNames = [...cur.outstanding.flatMap((x) => x.missingParts ?? [x.name]), ...notYetRequested.map((m) => m.title)];
-            // The client response panel's status: received in full, in part, or not yet.
-            const responseLabel = !answered ? (cur.status === "In progress" ? "In progress" : currentReq.openedAt ? "Opened · not responded" : "Not responded") : cur.status === "Completed" ? "Received" : cur.status;
-            const outstandingDocs = cur.outstanding.filter((x) => x.kind === "document");
-            type StepState = "done" | "current" | "attention" | "pending";
-            const lastSubmission = currentReq.submissions?.[currentReq.submissions.length - 1];
-            const followUps = storedRequests.filter((x) => x.followUpOf === currentReq.id);
-            // Processing of the files this request brought in.
-            const reqDocs = cur.rows.flatMap((row) => row.files.filter((f) => f.source !== "Attorney upload").map((f) => f.doc).filter(Boolean) as CaseDocument[]);
-            const procRunning = reqDocs.filter((d) => !processingFinished(d)).length;
-            const procFailed = reqDocs.filter((d) => d.status === "Failed").length;
-            const procReview = reqDocs.filter((d) => d.status === "Attorney Review Required").length;
-            const procDone = reqDocs.length > 0 && procRunning === 0 && procFailed === 0 && procReview === 0;
-            const collectionSteps: { title: string; state: StepState; when?: string; detail?: string }[] = [
-              {
-                title: currentReq.followUpOf ? `Follow-up to ${currentReq.followUpOf} sent` : "Request created and sent",
-                state: "done",
-                when: sentLabel(currentReq.lastSentAt),
-                detail: `${currentReq.deliveryMethod === "sms" ? "SMS" : "Email"} to ${cur.recipient}`,
-              },
-              answered
-                ? {
-                    title: "Client response received",
-                    state: "done",
-                    when: lastSubmission ? sentLabel(lastSubmission.submittedAt) : "Time not recorded",
-                    detail: lastSubmission
-                      ? `${currentReq.submissions!.length} ${currentReq.submissions!.length === 1 ? "submission" : "submissions"}`
-                      : "Recorded before submissions were tracked",
-                  }
-                : {
-                    title: "Client response",
-                    state: currentReq.openedAt || cur.status === "In progress" ? "current" : "pending",
-                    when: currentReq.openedAt ? `Link opened ${sentLabel(currentReq.openedAt)}` : undefined,
-                    detail: cur.status === "In progress" ? "The client has started uploading" : "Waiting for the client",
-                  },
-              {
-                title: "Requested documents collected",
-                state: !answered ? "pending" : cur.outstanding.length === 0 ? "done" : "attention",
-                detail: answered
-                  ? `${cur.satisfied} of ${cur.total} received${cur.outstanding.length ? ` · ${cur.outstanding.length} outstanding` : ""}${followUps.length ? ` · follow-up ${followUps.map((x) => x.id).join(", ")} sent` : ""}`
-                  : undefined,
-              },
-              {
-                title: "Document processing",
-                state: reqDocs.length === 0 ? "pending" : procFailed || procReview ? "attention" : procRunning ? "current" : "done",
-                detail: reqDocs.length === 0
-                  ? undefined
-                  : [procDone && `${reqDocs.length} ${reqDocs.length === 1 ? "file" : "files"} processed`, procRunning && `${procRunning} processing`, procReview && `${procReview} need review`, procFailed && `${procFailed} failed`].filter(Boolean).join(" · "),
-              },
-              {
-                title: "Collection complete",
-                // Everything requested is in and processed, and nothing is
-                // missing from the case file — the same names the column shows.
-                state: cur.status === "Completed" && procDone && missingNames.length === 0 ? "done" : "pending",
-                when: cur.status === "Completed" && procDone && missingNames.length === 0 && lastSubmission ? sentLabel(lastSubmission.submittedAt) : undefined,
-                detail: missingNames.length ? `${missingNames.length} ${missingNames.length === 1 ? "document" : "documents"} still missing` : undefined,
-              },
-            ];
-            return (
-              <div id="request-progress" className="space-y-3 scroll-mt-[150px]">
-                {storedRequests.length > 1 && (
-                  <div role="tablist" aria-label="Intake requests" className="inline-flex items-center bg-track border border-line rounded-lg p-0.5">
-                    {[...storedRequests].reverse().map((x) => (
-                      <button
-                        key={x.id}
-                        role="tab"
-                        aria-selected={x.id === currentReq.id}
-                        onClick={() => setProgressReqId(x.id)}
-                        className={`px-2.5 py-1 rounded-md text-xs font-semibold font-mono transition-all ${x.id === currentReq.id ? "bg-white text-ink shadow-sm" : "text-[#5B6B78] hover:text-ink"}`}
-                      >
-                        {x.id}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* ── Intake request card — the collection timeline, then the request and the
-                    client's response side by side, then the request link.
-                    The files themselves are listed in Requested documents below. ── */}
-                <div key={req.id} className="lg-card overflow-hidden" onClick={() => intakeOverflowOpen && setIntakeOverflowOpen(null)}>
-                  {/* The request's journey, left to right — read from its records; no
-                      step is marked done that the data does not show. */}
-                  <div className="bg-offwhite px-5 py-3 overflow-x-auto">
-                    <ol className="grid min-w-[620px]" style={{ gridTemplateColumns: `repeat(${collectionSteps.length}, minmax(0, 1fr))` }}>
-                      {collectionSteps.map((st, i) => {
-                        const last = i === collectionSteps.length - 1;
-                        const dot = {
-                          done: "bg-[#E7F6EC] border-[#9FD8B0] text-[#1E7B3C]",
-                          current: "bg-tint border-brand text-deep",
-                          attention: "bg-[#FFF4E5] border-[#F5C27A] text-[#B45309]",
-                          pending: "bg-white border-line text-[#8A98A3]",
-                        }[st.state];
-                        return (
-                          <li key={st.title} className="min-w-0 pr-3">
-                            <div className="flex items-center">
-                              <span className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${dot}`}>
-                                {st.state === "done" ? <Check className="w-3 h-3" strokeWidth={2.25} />
-                                  : st.state === "attention" ? <AlertTriangle className="w-2.5 h-2.5" strokeWidth={2} />
-                                  : st.state === "current" ? <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-                                  : <span className="text-[10px] font-semibold">{i + 1}</span>}
-                              </span>
-                              {!last && <span className={`h-px flex-1 ml-2 ${st.state === "done" ? "bg-[#9FD8B0]" : "bg-line"}`} />}
-                            </div>
-                            <div className={`mt-1.5 text-xs font-semibold leading-snug ${st.state === "pending" ? "text-[#8A98A3]" : "text-ink"}`}>{st.title}</div>
-                            {(st.when || st.detail) && (
-                              <div className="text-[11px] text-[#8A98A3] leading-snug truncate" title={[st.when, st.detail].filter(Boolean).join(" · ")}>{st.when ?? st.detail}</div>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  </div>
-                  {/* Request (left) and client response (right), divided by a rule — no nested cards. */}
-                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] border-t border-line divide-y lg:divide-y-0 lg:divide-x divide-line">
-                    <div className="px-4 xl:px-5 py-4 min-w-0 flex flex-col">
-                      <div className="flex items-center gap-2 mb-3 flex-wrap min-h-[24px]">
-                        <span className="eyebrow">Request</span>
-                        <span className="mono-ref font-bold text-ink">{req.id}</span>
-                        {req.version > 1 && <span className="text-[11px] text-[#5B6B78] border border-line px-1 rounded font-mono">v{req.version}</span>}
-                        <span className={`inline-flex items-center gap-1 ${statusColors[sentStatus] ?? "pill pill-neutral"}`}>
-                          <Clock className="w-3 h-3" strokeWidth={1.75} />
-                          {sentStatus}
-                        </span>
-                      </div>
-                      <dl className="grid grid-cols-[104px_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-snug">
-                        <dt className="text-[#8A98A3]">Recipient</dt>
-                        <dd className="text-ink truncate" title={req.recipient}>{req.recipient}</dd>
-                        <dt className="text-[#8A98A3]">Delivery</dt>
-                        <dd className="text-ink">{req.deliveryMethod === "sms" ? "SMS" : "Email"} · {req.lastSentAt ? sentLabel(req.lastSentAt) : req.lastSent}</dd>
-                        <dt className="text-[#8A98A3]">Requested</dt>
-                        <dd className="text-ink">
-                          {req.requestedDocs.length} {req.requestedDocs.length === 1 ? "document" : "documents"}
-                          <button type="button" onClick={() => setRequestedListOpen((o) => !o)} aria-expanded={requestedListOpen} className="ml-1.5 text-xs font-semibold text-deep hover:underline">
-                            {requestedListOpen ? "Hide" : "View"}
-                          </button>
-                        </dd>
-                        <dt className="text-[#8A98A3] flex items-center gap-1">Video &amp; photos</dt>
-                        <dd className="text-ink break-words">{asked.length > 0 ? asked.map((o) => o.title).join(", ") : "Not requested"}</dd>
-                      </dl>
-                      {req.lastModified && <div className="mt-2 text-[11px] text-amber-700">Last modified {req.lastModified}</div>}
-                      <div className="mt-auto pt-4 flex items-center gap-1.5 flex-wrap">
-                        {/* This request's own response decides it — not any other request's. */}
-                        <span title={answered ? "Client has already responded. You can no longer modify this request." : undefined} className="inline-flex">
-                          <button onClick={() => handleModifyRequest(req.id)} disabled={answered}
-                            aria-describedby={answered ? `modify-locked-${req.id}` : undefined}
-                            className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all bg-white border border-line text-ink hover:bg-wash disabled:opacity-45 disabled:cursor-not-allowed disabled:pointer-events-none">
-                            <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Modify Request
-                          </button>
-                          {answered && <span id={`modify-locked-${req.id}`} className="sr-only">Client has already responded. You can no longer modify this request.</span>}
-                        </span>
-                        <button onClick={() => handleOpenResend(req.id)} className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all bg-white border border-line text-ink hover:bg-wash">
-                          <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Resend
-                        </button>
-                        <button onClick={() => setRemovingReqId(req.id)} className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all bg-white border border-line text-[#B91C1C] hover:bg-[#FEF2F2]">
-                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} /> Delete
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Only what the client's own submissions fulfil. */}
-                    <div className="px-4 xl:px-5 py-4 min-w-0 flex flex-col">
-                      <div className="flex items-center gap-2 mb-3 flex-wrap min-h-[24px]">
-                        <span className="eyebrow">Client response</span>
-                        <span className={`inline-flex items-center gap-1 ${answered ? REQUEST_STATUS_PILL[cur.status] ?? "pill pill-neutral" : "pill pill-neutral"}`}>
-                          {answered && cur.status === "Completed" && <CheckCircle className="w-3 h-3" strokeWidth={1.75} />} {responseLabel}
-                        </span>
-                      </div>
-                      <dl className="grid grid-cols-[104px_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs leading-snug">
-                        <dt className="text-[#8A98A3]">Received</dt>
-                        <dd className="text-ink">
-                          {cur.satisfied} of {cur.total} requested
-                          {answered && (
-                            <button type="button" onClick={() => setReceivedListOpen((o) => !o)} aria-expanded={receivedListOpen} className="ml-1.5 text-xs font-semibold text-deep hover:underline">
-                              {receivedListOpen ? "Hide" : "View"}
-                            </button>
-                          )}
-                        </dd>
-                        <dt className="text-[#8A98A3]">Outstanding</dt>
-                        <dd className="text-ink">
-                          {answered ? (
-                            missingNames.length ? (
-                              <span className="text-[#B45309] break-words" title={missingNames.join(", ")}>
-                                {missingNames.length} · {missingNames.slice(0, 3).join(", ")}{missingNames.length > 3 ? ` +${missingNames.length - 3} more` : ""}
-                              </span>
-                            ) : "None"
-                          ) : <span className="text-[#8A98A3]">Awaiting the client's response</span>}
-                        </dd>
-                        <dt className="text-[#8A98A3]">Video &amp; photos</dt>
-                        <dd className="text-ink">
-                          {got.files > 0 ? (
-                            <>
-                              {got.files} {got.files === 1 ? "file" : "files"} · {got.videos} {got.videos === 1 ? "video" : "videos"}, {got.sets} photo {got.sets === 1 ? "set" : "sets"}
-                              {got.processing && <span className="inline-flex items-center gap-1 text-deep ml-1"><Loader2 className="w-3 h-3 text-brand animate-spin" strokeWidth={1.75} /> Processing</span>}
-                              <button type="button" onClick={viewMediaEvidence} className="ml-1.5 text-xs font-semibold text-deep hover:underline">Open Media Evidence →</button>
-                            </>
-                          ) : asked.length > 0 ? (answered ? "None received" : "Awaiting") : "Not requested"}
-                        </dd>
-                        {req.clientNotes && (
-                          <>
-                            <dt className="text-[#8A98A3]">Client notes</dt>
-                            <dd className="text-ink line-clamp-2 whitespace-pre-line" title={req.clientNotes}>{req.clientNotes}</dd>
-                          </>
-                        )}
-                      </dl>
-                      {answered && (
-                        <div className="mt-auto pt-4 flex items-center gap-1.5 flex-wrap">
-                          <button
-                            onClick={() => { setViewingSubmissionId(req.id); setShowViewSubmissionModal(true); }}
-                            className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all bg-brand hover:bg-deep text-white"
-                          >
-                            <Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> View Submission
-                          </button>
-                          {outstandingDocs.length > 0 && (
-                            <button onClick={() => requestOutstanding(currentReq, cur)} className="h-8 inline-flex items-center gap-1 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all text-white hover:opacity-90" style={{ background: "#B45309" }}>
-                              <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request Missing Documents
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* The request link, full width so the whole URL fits. */}
-                  {req.token && <div className="border-t border-line"><RequestLinkRow token={req.token} uploads={(req.uploads?.length ?? 0) + got.files} className="px-5 py-2.5" /></div>}
-
-
-                  {requestedListOpen && (
-                    <div className="border-t border-line bg-offwhite px-5 py-3">
-                      <div className="eyebrow mb-2">Requested in {req.id}</div>
-                      {/* The original request: what was asked for — never the client's response. */}
-                      <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
-                        {req.requestedDocs.map((name) => (
-                          <li key={name} className="bg-white border border-line rounded-lg px-3 py-2">
-                            <span className="text-sm font-semibold text-ink break-words">{name}</span>
-                          </li>
-                        ))}
-                        {asked.map((o) => (
-                          <li key={o.key} className="bg-white border border-line rounded-lg px-3 py-2 flex items-center gap-2">
-                            <span className="text-sm font-semibold text-ink break-words">{o.title}</span>
-                            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {answered && receivedListOpen && (
-                    // Every requested item, with where the client's response leaves it.
-                    <div className="border-t border-line bg-offwhite px-5 py-3">
-                      <div className="eyebrow mb-2">Response to {req.id}</div>
-                      <ul className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-2">
-                        {cur.rows.map((row) => {
-                          const label = row.state === "Received" ? "Received" : row.state === "Partially received" ? "Partially received" : row.state === "Not matched" ? "Can't be determined" : "Missing";
-                          const pill = row.state === "Received" ? "pill pill-complete" : row.state === "Partially received" ? "pill pill-progress" : row.state === "Not matched" ? "pill pill-neutral" : "pill pill-risk";
-                          const received = row.state === "Received" || row.state === "Partially received";
-                          return (
-                            <li key={row.name} className="bg-white border border-line rounded-lg px-3 py-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-sm font-semibold text-ink truncate">{row.name}{row.kind === "media" && <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>}</span>
-                                <span className={`${pill} shrink-0`}>{label}</span>
-                              </div>
-                              {received && row.files.length > 0 && (
-                                <div className="text-xs text-[#5B6B78] mt-1 break-words">Received: {row.files.map((f) => f.name).join(", ")}</div>
-                              )}
-                              {row.missingParts && <div className="text-xs text-[#B45309] mt-0.5">Outstanding: {row.missingParts.join(", ")}</div>}
-                              {!received && <div className="text-xs text-[#B45309] mt-0.5">{REQ_STATE_NOTE[row.state] ?? "Not received yet."}</div>}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-
-                {/* Requested documents — the files behind each requested item */}
-                <div className="lg-card overflow-hidden">
-                  {/* The selected request's counts — only items the client's own files fulfil count as received. */}
-                  <div className="flex items-center justify-between gap-x-4 gap-y-1 flex-wrap px-4 py-3 border-b border-line">
-                    <h3 className="card-title" title={cur.legacy ? "From the case documents on file" : undefined}>Requested documents</h3>
-                    <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-xs text-[#5B6B78]">
-                      <span><span className="font-semibold text-ink tabular-nums">{cur.total}</span> requested</span>
-                      <span className="text-[#C5CED6]">·</span>
-                      <span><span className="font-semibold text-ink tabular-nums">{cur.satisfied}</span> received</span>
-                      <span className="text-[#C5CED6]">·</span>
-                      <span><span className={`font-semibold tabular-nums ${cur.outstanding.length ? "text-[#B45309]" : "text-ink"}`}>{cur.outstanding.length}</span> outstanding</span>
-                      <span className="text-[#C5CED6]">·</span>
-                      <span className="font-semibold text-ink tabular-nums">{cur.pct}%</span>
-                    </div>
-                  </div>
-                  <ul className="divide-y divide-line">
-                    {cur.rows.map((row) => (
-                      <li key={row.name} className="px-3.5 py-2.5">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-semibold text-ink">{row.name}</span>
-                          {row.kind === "media" && <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A98A3]">Media</span>}
-                          <span className={REQ_STATE_PILL[row.state]}>{REQ_STATE_LABEL[row.state]}</span>
-                        </div>
-                        {row.files.length === 0 || row.state === "Uploaded, not submitted" ? (
-                          <div className="text-xs text-[#8A98A3] mt-0.5">{REQ_STATE_NOTE[row.state]}</div>
-                        ) : (
-                          <ul className="mt-1 space-y-1">
-                            {row.files.map((f) => (
-                              <li key={f.key} className="flex items-center justify-between gap-2">
-                                <div className="min-w-0 flex items-center gap-x-2 gap-y-0.5 flex-wrap text-xs text-[#5B6B78]">
-                                  <span className="mono-ref text-ink truncate max-w-[220px]" title={f.name}>{f.name}</span>
-                                  <span>{f.source}</span>
-                                  {f.at && <span>{atLabel(f.at)}</span>}
-                                  {/* Processing is a separate matter — shown only when it needs attention */}
-                                  {f.status && f.status !== "Processed" && f.status !== "Reviewed" && (
-                                    <span className="text-[11px] text-[#8A98A3]">
-                                      File: <span className={`pill ${DOC_STATUS_PILL[f.status]}`}>{f.status === "Attorney Review Required" ? "Needs Review" : f.status}</span>
-                                    </span>
-                                  )}
-                                </div>
-                                {f.doc && (
-                                  // The same row actions as the Documents tab: Preview,
-                                  // Insights, and More actions (Edit, Delete, Download).
-                                  <RowActionGroup name={f.doc.name} onEdit={() => openEdit(f.doc!)} onDelete={() => { setDeleteDoc(f.doc!); setDeleteError(null); }}>
-                                    <DocActions
-                                      size="row"
-                                      onPreview={() => handlePreviewDocument(f.doc)}
-                                      onInsights={() => handleOpenInsights(f.doc)}
-                                      onDownload={() => handleDownloadDocument(f.doc)}
-                                      disabled={{
-                                        insights: !processingFinished(f.doc) ? "Available once processing finishes" : undefined,
-                                        download: f.doc.storageKey ? undefined : "The original file is not stored in this browser",
-                                      }}
-                                    />
-                                  </RowActionGroup>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        {row.viaCaseFile && (
-                          <div className="text-xs text-[#5B6B78] mt-1">Fulfilled by a file on the case: this request predates submission tracking, so its files are not linked to it.</div>
-                        )}
-                        {row.state === "On file" && (
-                          <div className="text-xs text-[#B45309] mt-1">{REQ_STATE_NOTE["On file"]}</div>
-                        )}
-                        {row.missingParts && (
-                          <div className="text-xs text-[#B45309] mt-1">Not received: {row.missingParts.join(", ")}</div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-
-                  {/* 5 · Still outstanding — names, from the comparison above */}
-                  {(outstandingDocs.length > 0 || notYetRequested.length > 0) && (
-                    <div className="px-3.5 py-2.5 border-t border-line bg-[#FFFBF2] space-y-1.5">
-                      <div className="eyebrow" style={{ color: "#854F0B" }}>Still outstanding</div>
-                      {outstandingDocs.length > 0 && (
-                        <div className="flex items-center justify-between gap-3 flex-wrap">
-                          <span className="text-xs text-[#854F0B]">
-                            Requested in {currentReq.id}: {outstandingDocs.map((x) => (x.missingParts ? x.missingParts.map((m) => `${m} (part of ${x.name})`).join(", ") : x.name)).join(", ")}
-                          </span>
-                          {answered && (
-                            <button onClick={() => requestOutstanding(currentReq, cur)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold text-white" style={{ background: "#B45309" }}>
-                              <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request Missing Documents
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      {notYetRequested.length > 0 && (
-                        <div className="flex items-center justify-between gap-3 flex-wrap">
-                          <span className="text-xs text-[#854F0B]">Additional case-file requirement, not in the request: {notYetRequested.map((m) => m.title).join(", ")}</span>
-                          <button onClick={() => openMissingRequestModal(notYetRequested)} className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[#FAC775] bg-white text-xs font-semibold text-[#854F0B] hover:bg-[#FAEEDA]">
-                            <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-
-          </div>
-
-          )}
-
-          {/* 3 · Upload cards — documents and media */}
+        {/* SECTION 2 — Documents */}
+        <div className="space-y-3">
           <input ref={docInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
-          <div id="collection-cards" className={`grid grid-cols-1 min-[640px]:grid-cols-2 gap-3 scroll-mt-[150px] ${showIntroCards ? "min-[1400px]:grid-cols-4" : ""}`}>
-            {(() => {
-              // Retainer and request cards only until either exists — after
-              // that, their full sections above take over.
-              const c = collectionCards("compact");
-              return <>{showIntroCards && c.retainerCard}{showIntroCards && c.requestCard}{c.docsCard}{c.mediaCardEl}</>;
-            })()}
-          </div>
-
-          {/* Upload Docs — the two upload cards, large */}
-          {uploadPopupOpen && (() => {
-            const c = collectionCards("large");
-            return (
-              <div className="fixed inset-0 bg-ink/50 flex items-center justify-center z-50 p-4" onClick={() => setUploadPopupOpen(false)}>
-                <div role="dialog" aria-modal="true" aria-label="Upload to this case" className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-sm" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-between px-6 py-4 border-b border-line">
-                    <h2 className="card-title">Upload to this case</h2>
-                    <button onClick={() => setUploadPopupOpen(false)} aria-label="Close" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
-                  </div>
-                  <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 bg-offwhite">
-                    {c.docsCard}
-                    {c.mediaCardEl}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* The selected card's details — one panel, under the cards */}
-          {cardPanel && (
-            <div id="card-panel" className="lg-card overflow-hidden scroll-mt-[150px]">
-              <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-line">
-                <span className="card-title">
-                  {{ retainer: "Retainer", request: "Requests", documents: "Uploaded documents", media: "Media evidence" }[cardPanel]}
-                </span>
-                <button onClick={() => setCardPanel(null)} aria-label="Close details" className="p-1.5 hover:bg-tint rounded-lg"><X className="w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} /></button>
-              </div>
-              <div className="p-4 bg-offwhite">
-                {cardPanel === "documents" && (
-                  sharedDocs.length === 0 ? (
-                    <p className="secondary-text">No documents on this case yet.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {([["Attorney", "Uploaded by attorney"], ["Plaintiff", "Client submissions"]] as const).map(([src, label]) => {
-                        const rows = sharedDocs.filter((d) => d.source === src);
-                        if (rows.length === 0) return null;
-                        return (
-                          <div key={src} className="bg-white border border-line rounded-xl overflow-hidden">
-                            <div className="px-4 py-2 border-b border-line flex items-center gap-2">
-                              <span className="eyebrow">{label}</span>
-                              <span className="text-xs text-[#8A98A3]">{rows.length} {rows.length === 1 ? "file" : "files"}</span>
-                              {src === "Plaintiff" && latestReq && latestProgress && (
-                                <span className="text-xs text-[#5B6B78] ml-auto">
-                                  Request {latestReq.id}: {latestProgress.satisfied} of {latestProgress.total} requested items fulfilled
-                                </span>
-                              )}
-                            </div>
-                            <ul className="divide-y divide-line">
-                              {rows.map((d) => (
-                                <li key={d.id} className="px-4 py-2 flex items-center justify-between gap-3">
-                                  <div className="min-w-0 flex items-center gap-2 flex-wrap text-xs text-[#5B6B78]">
-                                    <FileTypeIcon name={d.name} />
-                                    <span className="mono-ref text-ink truncate max-w-[260px]" title={d.name}>{d.name}</span>
-                                    <span>{d.receivedAt ? sentLabel(d.receivedAt) : d.date}</span>
-                                    {d.requestId && <span>{d.requestId}</span>}
-                                    <span className={`pill whitespace-nowrap ${DOC_STATUS_PILL[d.status]}`}>{d.status === "Attorney Review Required" ? "Needs Review" : d.status}</span>
-                                  </div>
-                                  <RowActionGroup name={d.name} onEdit={() => openEdit(d)} onDelete={() => { setDeleteDoc(d); setDeleteError(null); }}>
-                                    <DocActions
-                                      size="row"
-                                      onPreview={() => handlePreviewDocument(d)}
-                                      onInsights={() => handleOpenInsights(d)}
-                                      onDownload={() => handleDownloadDocument(d)}
-                                      disabled={{
-                                        insights: !processingFinished(d) ? "Available once processing finishes" : d.status === "Failed" ? "Processing failed — retry first" : undefined,
-                                        download: d.storageKey ? undefined : "The original file is not stored in this browser",
-                                      }}
-                                    />
-                                  </RowActionGroup>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )
-                )}
-
-                {cardPanel === "media" && (
-                  <MediaEvidencePanel caseId={data.caseId} documents={sharedDocs} onUpload={openMediaUpload} />
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* What the last upload actually added */}
-          <div className="space-y-3 empty:hidden">
-                      {/* The attorney's last video & photo upload — real results only */}
-                      {mediaUploadResult && (() => {
-                        const vids = mediaUploadResult.uploaded.filter((u): u is { type: "video"; name: string } => u.type === "video");
-                        const sets = mediaUploadResult.uploaded.filter((u): u is { type: "set"; kind: "scene" | "medical"; count: number } => u.type === "set");
-                        const photos = sets.reduce((n, x) => n + x.count, 0);
-                        const files = vids.length + photos;
-                        return (
-                          <div className={`mb-4 rounded-xl p-4 border ${files > 0 ? "bg-green-50 border-green-200" : "bg-[#FEF2F2] border-[#FBD5D5]"}`}>
-                            <div className="flex items-start gap-3">
-                              {files > 0
-                                ? <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" strokeWidth={1.75} />
-                                : <AlertCircle className="w-5 h-5 text-[#B91C1C] shrink-0 mt-0.5" strokeWidth={1.75} />}
-                              <div className="flex-1 min-w-0">
-                                {files > 0 && (
-                                  <>
-                                    <p className="text-sm font-semibold text-green-800 mb-1">
-                                      {files} {files === 1 ? "file" : "files"} uploaded successfully
-                                    </p>
-                                    <ul className="space-y-0.5">
-                                      {vids.map((v) => <li key={v.name} className="text-xs text-green-700 font-mono truncate">{v.name}</li>)}
-                                      {sets.length > 0 && (
-                                        <li className="text-xs text-green-700">
-                                          {sets.length} photo {sets.length === 1 ? "set" : "sets"} ({photos} {photos === 1 ? "photo" : "photos"})
-                                        </li>
-                                      )}
-                                    </ul>
-                                  </>
-                                )}
-                                {mediaUploadResult.failed > 0 && (
-                                  <p className={`text-xs font-medium ${files > 0 ? "text-[#B91C1C] mt-1" : "text-sm font-semibold text-[#B91C1C]"}`}>
-                                    {mediaUploadResult.failed} {mediaUploadResult.failed === 1 ? "item" : "items"} could not be uploaded and {mediaUploadResult.failed === 1 ? "was" : "were"} not added.
-                                  </p>
-                                )}
-                                {files > 0 && (
-                                  <button onClick={viewMediaEvidence} className="mt-2 text-xs font-medium text-green-700 underline hover:text-green-900 transition-colors">
-                                    View in Media evidence tab →
-                                  </button>
-                                )}
-                              </div>
-                              <button onClick={() => setMediaUploadResult(null)} aria-label="Dismiss" className="text-green-400 hover:text-green-600 transition-colors">
-                                <X className="w-4 h-4" strokeWidth={1.75} />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      {showUploadSuccess && (
-                        <div className="mb-4 bg-green-50 border border-green-200 rounded-xl p-4">
-                          <div className="flex items-start gap-3">
-                            <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" strokeWidth={1.75} />
-                            <div className="flex-1">
-                              <p className="text-sm font-semibold text-green-800 mb-1">
-                                {uploadedFileNames.length} file{uploadedFileNames.length > 1 ? "s" : ""} uploaded successfully
-                              </p>
-                              <ul className="space-y-0.5">
-                                {uploadedFileNames.map((name) => (
-                                  <li key={name} className="text-xs text-green-700 font-mono">{name}</li>
-                                ))}
-                              </ul>
-                              <button
-                                onClick={() => focusSection("documents")}
-                                className="mt-2 text-xs font-medium text-green-700 underline hover:text-green-900 transition-colors"
-                              >
-                                View in Documents tab →
-                              </button>
-                            </div>
-                            <button
-                              onClick={() => setShowUploadSuccess(false)}
-                              className="text-green-400 hover:text-green-600 transition-colors"
-                            >
-                              <X className="w-4 h-4" strokeWidth={1.75} />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-          </div>
-
-
-          <NextStepBox
-            text="Review and verify the collected documents, then continue to evidence analysis."
-            ctaLabel="Proceed to Documents"
-            onClick={() => setActiveTab("documents")}
-          />
-          </>
-          )}
-
-          {/* ── Documents ── */}
-          {activeTab === "documents" && (<>
           <div id="documents-section" className="lg-card overflow-hidden scroll-mt-[150px]">
             <div className="w-full flex items-center justify-between gap-4 px-6 py-5">
               <div className="flex items-center gap-3">
@@ -2853,7 +1753,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                             <p className="text-sm font-medium text-ink mb-1">No evidence has been received yet.</p>
                             <p className="text-xs text-[#5B6B78] mb-4">Upload documents manually or wait for the plaintiff to complete the intake request.</p>
                             <button
-                              onClick={() => fileInputRef.current?.click()}
+                              onClick={() => docInputRef.current?.click()}
                               className="px-4 py-2 bg-brand hover:bg-deep text-white rounded-lg text-sm font-medium transition-colors"
                             >
                               Upload Documents
@@ -2998,11 +1898,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
             ctaLabel="Proceed to Analysis"
             onClick={onContinue}
           />
-          </>
-          )}
-
-          </div>{/* end right workspace */}
-        </div>{/* end section 2 — main workspace */}
+        </div>{/* end section 2 — documents */}
       </div>{/* end page container */}
 
       {/* Intake Form Modal */}

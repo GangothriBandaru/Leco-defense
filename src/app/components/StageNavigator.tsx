@@ -7,7 +7,7 @@ interface StageNavigatorProps {
 }
 
 const stages = [
-  { name: "Client Intake", label: "Collection", icon: Inbox, description: "Documents Collected" },
+  { name: "Client Intake", label: "Case Discovery", icon: Inbox, description: "Documents Collected" },
   { name: "Analysis", label: "Analysis", icon: ScanSearch, description: "Evidence Analyzed" },
   { name: "Valuation", label: "Valuation", icon: DollarSign, description: "Damages Computed" },
   { name: "Case Ready", label: "Case Ready", icon: CheckCircle, description: "Ready For Review" },
