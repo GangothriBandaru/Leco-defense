@@ -23,9 +23,9 @@ export function validateCaseDetails(d: CaseDetails): Errors {
   if (!v("insuredName")) e.insuredName = "Insured name is required.";
   if (!v("insuredType")) e.insuredType = "Choose the insured type.";
   if (!v("plaintiffName")) e.plaintiffName = "Plaintiff name is required.";
-  if (!v("caseStatus")) e.caseStatus = "Choose pre-suit or suit.";
-  for (const k of ["insuredEmail", "counselEmail"] as K[]) if (v(k) && !EMAIL.test(v(k))) e[k] = "Enter a valid email address.";
-  for (const k of ["insuredPhone", "counselPhone"] as K[]) if (v(k) && !phoneOk(v(k))) e[k] = "Enter a valid phone number.";
+  if (!v("caseStatus")) e.caseStatus = "Answer whether a suit has been filed.";
+  for (const k of ["insuredEmail", "plaintiffEmail", "counselEmail"] as K[]) if (v(k) && !EMAIL.test(v(k))) e[k] = "Enter a valid email address.";
+  for (const k of ["insuredPhone", "plaintiffPhone", "counselPhone"] as K[]) if (v(k) && !phoneOk(v(k))) e[k] = "Enter a valid phone number.";
   if (v("demandAmount") && !moneyOk(v("demandAmount"))) e.demandAmount = "Enter an amount, e.g. 250,000.";
   if (v("incidentDate") && v("incidentDate") > today()) e.incidentDate = "The incident date can't be in the future.";
   if (v("demandDate") && v("incidentDate") && v("demandDate") < v("incidentDate")) e.demandDate = "The demand can't predate the incident.";
@@ -109,92 +109,103 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, documents
 
   return (
     <div className="space-y-5 min-w-0">
-      <Section letter="A" title="Insured & Insurance" sub="Who we defend and the coverage behind them.">
-        <Group title="Insured">
+      <Section letter="A" title="Insured Details" sub="Who we defend.">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {text("insuredName", org ? "Organization name" : "Insured name", { required: true, placeholder: org ? "e.g. Logistics Co." : "Full legal name" })}
           {select("insuredType", "Insured type", INSURED_TYPES, { required: true })}
-          {org && text("insuredContact", "Contact person", { placeholder: "Name and title" })}
-          {text("insuredEmail", org ? "Contact email" : "Email", { type: "email", placeholder: "name@example.com" })}
-          {text("insuredPhone", org ? "Contact phone" : "Phone", { type: "tel", placeholder: "+1 (555) 000-0000" })}
-          {text("insuredAddress", "Address", { placeholder: "Street, city, ZIP", full: !org })}
+          {org && text("insuredContact", "Contact person", { placeholder: "Name and title", full: true })}
+          {text("insuredEmail", "Contact email", { type: "email", placeholder: "name@example.com" })}
+          {text("insuredPhone", "Phone number", { type: "tel", placeholder: "+1 (555) 000-0000" })}
+          {text("insuredAddress", "Address", { placeholder: "Street, city, ZIP", full: true })}
           {text("insuredState", "State", { placeholder: "e.g. Illinois" })}
           {text("insuredCountry", "Country", { placeholder: "e.g. United States" })}
-          {text("insuredJurisdiction", "Insured's jurisdiction", { placeholder: "e.g. Cook County, IL", full: true })}
-        </Group>
-        <Group title="Insurance">
-          {text("insurerName", "Insurance carrier", { placeholder: "e.g. Sentinel Casualty Insurance" })}
+          {text("insuredJurisdiction", "Jurisdiction", { placeholder: "Where the insured is based, e.g. Cook County, IL", full: true })}
+        </div>
+      </Section>
+
+      <Section letter="B" title="Insurance and Policy Information" sub="The coverage behind the insured.">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {text("insurerName", "Insurance company", { placeholder: "e.g. Sentinel Casualty Insurance" })}
           {text("policyNumber", "Policy number", { placeholder: "e.g. CGL-0000-00" })}
           {text("policyName", "Policy type", { placeholder: "e.g. Commercial General Liability" })}
           {text("policyLimits", "Policy limits", { placeholder: "e.g. $1,000,000 per occurrence / $2,000,000 aggregate" })}
           {text("insurerJurisdiction", "Insurer jurisdiction", { placeholder: "e.g. Illinois" })}
-          {area("coverageNotes", "Coverage notes", "Reservation of rights, exclusions, other insurance")}
-        </Group>
+          {area("coverageNotes", "Additional policy details", "Reservation of rights, exclusions, other insurance")}
+        </div>
       </Section>
 
-      <Section letter="B" title="Plaintiff & Counsel" sub="Keep the plaintiff's own details apart from their lawyer's.">
+      <Section letter="C" title="Plaintiff and Counsel Details" sub="Keep the plaintiff's own details apart from their lawyer's.">
         <Group title="Plaintiff">
           {text("plaintiffName", "Plaintiff name", { required: true, placeholder: "Full legal name" })}
-          {text("plaintiffLocation", "Location", { placeholder: "City" })}
+          {text("plaintiffLocation", "Location", { placeholder: "City where the plaintiff lives" })}
+          {text("plaintiffEmail", "Email", { type: "email", placeholder: "name@example.com" })}
+          {text("plaintiffPhone", "Phone number", { type: "tel", placeholder: "+1 (555) 000-0000" })}
           {text("plaintiffState", "State", { placeholder: "e.g. Illinois" })}
           {text("plaintiffCounty", "County", { placeholder: "e.g. Cook County" })}
-          {text("plaintiffJurisdiction", "Plaintiff's jurisdiction", { placeholder: "e.g. Cook County, IL", full: true })}
+          {text("plaintiffJurisdiction", "Plaintiff jurisdiction", { placeholder: "e.g. Cook County, IL", full: true })}
         </Group>
-        <Group title="Plaintiff's legal representation">
+        <Group title="Plaintiff's counsel">
           {text("counselName", "Counsel name", { placeholder: "Attorney of record" })}
           {text("counselFirm", "Law firm", { placeholder: "Firm name" })}
           {text("counselEmail", "Counsel email", { type: "email", placeholder: "name@firm.com" })}
-          {text("counselPhone", "Counsel phone", { type: "tel", placeholder: "+1 (555) 000-0000" })}
+          {text("counselPhone", "Counsel phone number", { type: "tel", placeholder: "+1 (555) 000-0000" })}
           {text("counselAddress", "Counsel address", { placeholder: "Street, city, ZIP", full: true })}
         </Group>
       </Section>
 
-      <Section letter="C" title="Legal & Incident Details" sub="What happened, where the case sits, and the deadlines that follow.">
+      <Section letter="D" title="Legal and Incident Details" sub="What happened, where the case sits, and the deadlines that follow.">
         <Group title="Incident">
           {text("incidentType", "Incident type", { placeholder: "e.g. Fall, vehicle collision" })}
           {select("caseType", "Case type", CASE_TYPES)}
           {text("incidentDate", "Incident date", { type: "date" })}
-          {text("incidentLocation", "Incident location", { placeholder: "Address or place" })}
-          {text("incidentState", "State", { placeholder: "e.g. Illinois" })}
-          {text("incidentCounty", "County", { placeholder: "e.g. Cook County" })}
-          {text("jurisdictionalLimits", "Court or jurisdictional limits", { placeholder: "e.g. Law Division, over $30,000", full: true })}
+          {text("incidentLocation", "Incident location", { placeholder: "Where it happened" })}
+          {text("incidentState", "Incident state", { placeholder: "e.g. Illinois" })}
+          {text("incidentCounty", "Incident county", { placeholder: "e.g. Cook County" })}
+          {text("jurisdictionalLimits", "Incident jurisdiction or court limits", { placeholder: "e.g. Law Division, over $30,000", full: true })}
         </Group>
         <div className="space-y-4">
           <h3 className="card-title">Suit</h3>
-          <fieldset>
-            <legend className="block text-sm font-semibold text-[#0F1E2B] mb-2">Case status <span className="text-red-500">*</span></legend>
-            <div className="grid grid-cols-2 gap-1.5 max-w-sm rounded-xl border border-line bg-white p-1" role="radiogroup" aria-label="Case status">
-              {[["Pre-suit", "Pre-suit"], ["Suit", "Suit filed"]].map(([v, l]) => (
-                <label key={v} className={`text-center px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all focus-within:ring-2 focus-within:ring-brand ${draft.caseStatus === v ? "bg-brand text-white shadow-sm" : "text-[#5B6B78] hover:text-ink hover:bg-wash"}`}>
-                  <input type="radio" name="cd-caseStatus" value={v} checked={draft.caseStatus === v} onChange={set("caseStatus")} className="sr-only" />{l}
-                </label>
-              ))}
+          <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
+            <fieldset>
+              <legend className="block text-sm font-semibold text-[#0F1E2B] mb-2">Suit filed? <span className="text-red-500">*</span></legend>
+              <div className="grid grid-cols-2 gap-1.5 w-56 rounded-xl border border-line bg-white p-1" role="radiogroup" aria-label="Suit filed?">
+                {[["Suit", "Yes"], ["Pre-suit", "No"]].map(([v, l]) => (
+                  <label key={v} className={`text-center px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all focus-within:ring-2 focus-within:ring-brand ${draft.caseStatus === v ? "bg-brand text-white shadow-sm" : "text-[#5B6B78] hover:text-ink hover:bg-wash"}`}>
+                    <input type="radio" name="cd-caseStatus" value={v} checked={draft.caseStatus === v} onChange={set("caseStatus")} className="sr-only" />{l}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <div>
+              <div className="block text-sm font-semibold text-[#0F1E2B] mb-2">Case status</div>
+              <p className="h-[42px] flex items-center text-sm" aria-live="polite">{draft.caseStatus ? <span className="pill pill-neutral">{draft.caseStatus}</span> : <span className="text-[#8A98A3]">Set by the answer to Suit filed?</span>}</p>
             </div>
-            {err("caseStatus") && <p role="alert" className="text-xs text-[#B91C1C] mt-1.5">{err("caseStatus")}</p>}
-          </fieldset>
+          </div>
+          {err("caseStatus") && <p role="alert" className="text-xs text-[#B91C1C]">{err("caseStatus")}</p>}
           {suit ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {text("suitFiledDate", "Suit filed date", { type: "date", required: true })}
-              {text("courtName", "Court", { required: true, placeholder: "e.g. Circuit Court of Cook County" })}
+              {text("courtName", "Court name", { required: true, placeholder: "e.g. Circuit Court of Cook County" })}
               {text("courtLocation", "Court location", { placeholder: "Courthouse address or city" })}
+              {text("suitJurisdiction", "Suit jurisdiction", { placeholder: "e.g. Law Division, Cook County, IL" })}
               {text("courtState", "Court state", { placeholder: "e.g. Illinois" })}
               {text("courtCounty", "Court county", { placeholder: "e.g. Cook County" })}
               {select("jurisdictionVerified", "Jurisdiction verification", VERIFY, { placeholder: "Not checked" })}
             </div>
           ) : (
-            <p className="text-sm text-[#5B6B78]">{draft.caseStatus === "Pre-suit" ? "No suit filed. Court details and the answer deadline apply once it is." : "Choose the case status to see the suit fields."}</p>
+            <p className="text-sm text-[#5B6B78]">{draft.caseStatus === "Pre-suit" ? "No suit filed. Court details and the answer deadline apply once it is." : "Answer Suit filed? to see the suit fields."}</p>
           )}
         </div>
         <Group title="Deadlines & governing law">
           {text("solDate", "Statute of limitations deadline", { type: "date" })}
           {select("solVerified", "SOL verification", VERIFY, { placeholder: "Not checked" })}
-          {suit && text("answerDueDate", "Answer due", { type: "date" })}
+          {suit && text("answerDueDate", "Answer due date", { type: "date" })}
           {suit && select("answerVerified", "Answer due verification", VERIFY, { placeholder: "Not checked" })}
           {text("governingLaw", "Governing law", { placeholder: "e.g. Illinois law" })}
-          {text("caseJurisdiction", "Governing jurisdiction", { placeholder: "State, county and court" })}
+          {text("caseJurisdiction", "Governing state, county or court", { placeholder: "e.g. Cook County, IL" })}
         </Group>
       </Section>
-
-      <Section letter="D" title="Demands & Exposure" sub="What the plaintiff is asking for, against what is available.">
+      <Section letter="E" title="Demands & Exposure" sub="What the plaintiff is asking for, against what is available.">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {text("demandAmount", "Demand amount (USD)", { placeholder: "e.g. 250,000" })}
           {text("demandDate", "Demand date", { type: "date" })}

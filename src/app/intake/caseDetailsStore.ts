@@ -31,6 +31,8 @@ export interface CaseDetails {
   coverageNotes?: string;
   // Plaintiff & counsel
   plaintiffName?: string;
+  plaintiffEmail?: string;
+  plaintiffPhone?: string;
   plaintiffLocation?: string;
   plaintiffState?: string;
   plaintiffCounty?: string;
@@ -53,6 +55,7 @@ export interface CaseDetails {
   courtLocation?: string;
   courtState?: string;
   courtCounty?: string;
+  suitJurisdiction?: string;
   jurisdictionVerified?: string;
   solDate?: string;
   solVerified?: string;

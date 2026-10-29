@@ -5,8 +5,8 @@ import { StageNavigator } from "../components/StageNavigator";
 import type { CaseDocument } from "../types/case";
 import { resolveCasePolicy } from "../insurance/casePolicy";
 import { type CaseDetails, saveCaseDetails, useCaseDetails } from "../intake/caseDetailsStore";
-import { resolveCaseFacts } from "../conflict/caseFacts";
-import { type Party, useConflictRecord, partyState, overallState, OVERALL_META } from "../conflict/conflictStore";
+import { resolveCaseFacts, join } from "../conflict/caseFacts";
+import { type Party, useConflictRecord, partyState, overallState } from "../conflict/conflictStore";
 import { CaseIntelligenceSummary } from "../conflict/CaseIntelligenceSummary";
 import { ConflictSearch } from "../conflict/ConflictSearch";
 import { CaseDetailsForm, validateCaseDetails } from "../conflict/CaseDetailsForm";
@@ -16,6 +16,11 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "conflict", label: "Conflict Check" },
   { key: "details", label: "Case Details" },
 ];
+
+const FIELD_LABEL: Record<string, string> = {
+  insuredName: "insured name", insuredType: "insured type", plaintiffName: "plaintiff name", caseStatus: "whether a suit has been filed",
+  suitFiledDate: "suit filed date", courtName: "court name",
+};
 
 const same = (a: CaseDetails, b: CaseDetails) => {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof CaseDetails>;
@@ -65,14 +70,37 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
 
   const record = useConflictRecord(caseId);
   const parties: Party[] = [
-    { key: "insured", role: "insured", label: "Insured", name: facts.insuredName ?? "" },
-    { key: "plaintiff", role: "plaintiff", label: "Plaintiff", name: facts.plaintiffName ?? "" },
-    { key: "counsel", role: "counsel", label: "Plaintiff's counsel", name: facts.counselName ?? "" },
-    { key: "firm", role: "firm", label: "Plaintiff's law firm", name: facts.counselFirm ?? "" },
-    { key: "carrier", role: "carrier", label: "Insurance carrier", name: facts.insurerName ?? "" },
-    ...record.others.map((o): Party => ({ key: `other:${o.id}`, role: "other", label: o.role, name: o.name })),
+    { key: "insured", role: "insured", label: "Insured", name: facts.insuredName ?? "", location: join(facts.insuredState, facts.insuredCountry) || undefined },
+    { key: "plaintiff", role: "plaintiff", label: "Plaintiff", name: facts.plaintiffName ?? "", location: join(facts.plaintiffLocation, facts.plaintiffState) || undefined },
+    { key: "counsel", role: "counsel", label: "Plaintiff's counsel", name: facts.counselName ?? "", location: facts.counselAddress },
+    { key: "firm", role: "firm", label: "Plaintiff's law firm", name: facts.counselFirm ?? "", location: facts.counselAddress },
+    { key: "carrier", role: "carrier", label: "Insurance carrier", name: facts.insurerName ?? "", location: facts.insurerJurisdiction },
+    ...record.others.map((o): Party => ({ key: `other:${o.id}`, role: "other", label: o.role, name: o.name, details: o.details })),
   ];
-  const overall = overallState(parties.map((p) => partyState(p, record.checks[p.key])));
+  const states = parties.map((p) => partyState(p, record.checks[p.key]));
+  const overall = overallState(states);
+
+  // What stops the move to Analysis: the conflict gate, and the required case details as saved.
+  const savedErrors = validateCaseDetails(facts);
+  const count = (pred: (s: (typeof states)[number]) => boolean) => states.filter(pred).length;
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const blockers = [
+    overall === "conflict" && "A conflict is confirmed. The matter can't be opened.",
+    count((s) => s === "missing") > 0 && `Add the ${parties.filter((_, i) => states[i] === "missing").map((p) => p.label.toLowerCase()).join(" and ")} name${count((s) => s === "missing") === 1 ? "" : "s"} in Case Details so ${count((s) => s === "missing") === 1 ? "it" : "they"} can be searched.`,
+    count((s) => s === "pending") > 0 && `Record the conflict search for ${plural(count((s) => s === "pending"), "party", "parties")}.`,
+    count((s) => s === "review") > 0 && `Resolve ${plural(count((s) => s === "review"), "possible match", "possible matches")}.`,
+    count((s) => s === "escalated") > 0 && `Record general counsel's decision on ${plural(count((s) => s === "escalated"), "escalated match", "escalated matches")}.`,
+    Object.keys(savedErrors).length > 0 && `Save the required case details: ${Object.keys(savedErrors).map((k) => FIELD_LABEL[k] ?? k).join(", ")}.`,
+  ].filter(Boolean) as string[];
+
+  const goToDetails = () => {
+    setTab("details");
+    window.setTimeout(() => {
+      const el = document.getElementById(!facts.counselName ? "cd-counselName" : "cd-counselFirm");
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      el?.focus({ preventScroll: true });
+    }, 30);
+  };
 
   return (
     <div className="min-h-screen bg-wash">
@@ -98,45 +126,41 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
           <span className="text-[#5B6B78]">Stage 2 -</span> <span className="text-ink">Conflict Check &amp; Case Details</span>
         </h1>
 
-        <div role="tablist" aria-label="Stage 2" className="lg-card p-1.5 flex items-center gap-1.5"
-          onKeyDown={(e) => {
-            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-            const next = TABS[(TABS.findIndex((t) => t.key === tab) + 1) % TABS.length].key;
-            setTab(next);
-            window.setTimeout(() => document.getElementById(`s2-tab-${next}`)?.focus(), 0);
-          }}>
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              id={`s2-tab-${t.key}`}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.key}
-              aria-controls={`s2-panel-${t.key}`}
-              tabIndex={tab === t.key ? 0 : -1}
-              onClick={() => setTab(t.key)}
-              className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
-                tab === t.key ? "bg-brand text-white shadow-sm" : "text-[#5B6B78] hover:text-ink hover:bg-wash"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6 items-start">
+          {/* The summary stays put; only the right-hand tab content changes. */}
           <div className="min-w-0">
-            <CaseIntelligenceSummary
-              d={facts}
-              dirty={dirty}
-              conflictClear={overall === "clear"}
-              conflictLabel={OVERALL_META[overall][0]}
-              onProceed={onProceedToAnalysis}
-            />
+            <CaseIntelligenceSummary d={facts} dirty={dirty} blockers={blockers} onProceed={onProceedToAnalysis} />
           </div>
-          <div className="min-w-0">
+
+          <div className="min-w-0 space-y-4">
+            <div role="tablist" aria-label="Stage 2" className="lg-card p-1.5 flex items-center gap-1.5"
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+                const next = TABS[(TABS.findIndex((t) => t.key === tab) + 1) % TABS.length].key;
+                setTab(next);
+                window.setTimeout(() => document.getElementById(`s2-tab-${next}`)?.focus(), 0);
+              }}>
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  id={`s2-tab-${t.key}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === t.key}
+                  aria-controls={`s2-panel-${t.key}`}
+                  tabIndex={tab === t.key ? 0 : -1}
+                  onClick={() => setTab(t.key)}
+                  className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
+                    tab === t.key ? "bg-brand text-white shadow-sm" : "text-[#5B6B78] hover:text-ink hover:bg-wash"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
             <div id="s2-panel-conflict" role="tabpanel" aria-labelledby="s2-tab-conflict" hidden={tab !== "conflict"}>
-              <ConflictSearch caseId={caseId} parties={parties} record={record} />
+              <ConflictSearch caseId={caseId} parties={parties} record={record} caseType={facts.caseType} onAddNames={goToDetails} />
             </div>
             <div id="s2-panel-details" role="tabpanel" aria-labelledby="s2-tab-details" hidden={tab !== "details"}>
               <CaseDetailsForm
