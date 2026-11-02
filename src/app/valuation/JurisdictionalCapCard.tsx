@@ -28,48 +28,44 @@ export function JurisdictionalCapCard({ caseData, documents }: { caseData: any; 
   const group = (icon: typeof MapPin, label: string, children: React.ReactNode) => {
     const Icon = icon;
     return (
-      <div className="flex items-start gap-2.5 min-w-0 flex-1 basis-[200px]">
-        <span className="w-8 h-8 rounded-lg bg-tint text-deep inline-flex items-center justify-center shrink-0"><Icon className="w-4 h-4" strokeWidth={1.75} /></span>
+      <div className="flex items-start gap-2 min-w-0 @lg:px-3 @lg:first:pl-0 @lg:border-l @lg:first:border-l-0 border-line">
+        <span className="w-6 h-6 rounded-md bg-tint text-deep inline-flex items-center justify-center shrink-0"><Icon className="w-3.5 h-3.5" strokeWidth={1.75} /></span>
         <div className="min-w-0">
-          <div className="eyebrow mb-0.5">{label}</div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-wide text-[#5B6B78] leading-4">{label}</div>
           {children}
         </div>
       </div>
     );
   };
-  const muted = (t: string) => <span className="text-[#8A98A3]">{t}</span>;
+  const value = "text-[12.5px] leading-[18px] font-semibold text-ink break-words";
+  const sub = "text-[11px] leading-4 text-[#5B6B78] break-words";
 
   return (
-    <section aria-labelledby="noneconomic-cap" className="rounded-xl border border-line bg-white p-4 space-y-3">
-      <div>
-        <h4 id="noneconomic-cap" className="card-title">Jurisdictional Non-Economic Damages Limit</h4>
-        <p className="secondary-text mt-0.5">Applicable state law may limit recoverable non-economic damages. Review the jurisdiction and applicable statutory cap before finalizing the valuation.</p>
-      </div>
-      <div className="flex flex-wrap gap-x-6 gap-y-3 pt-1">
+    <section aria-labelledby="noneconomic-cap" className="@container rounded-xl border border-line bg-white px-4 py-3">
+      <h4 id="noneconomic-cap" className="text-sm font-semibold text-ink leading-5">Jurisdictional Non-Economic Damages Limit</h4>
+      <p className="text-xs text-[#5B6B78] leading-4 mt-0.5">State law may limit recoverable non-economic damages. Informational only; it doesn't change the valuation above.</p>
+      <div className="grid grid-cols-1 @xs:grid-cols-2 @lg:grid-cols-3 gap-x-4 @lg:gap-x-0 gap-y-2.5 mt-2.5">
         {group(MapPin, "Jurisdiction", <>
-          <p className="text-sm font-semibold text-ink break-words">{place ?? muted("Not provided")}</p>
-          {court && <p className="text-xs text-[#5B6B78] break-words">{court}</p>}
+          <p className={value}>{place ?? <span className="text-[#8A98A3] font-normal">Not provided</span>}</p>
+          {court && <p className={sub}>{court}</p>}
         </>)}
         {group(Scale, "Maximum non-economic damages", cap ? <>
-          <p className="text-sm font-semibold text-ink tabular-nums">{usd(cap.amount)}</p>
-          <p className="text-xs text-[#5B6B78]">{cap.appliesTo}</p>
+          <p className={`${value} tabular-nums`}>{usd(cap.amount)}</p>
+          <p className={sub}>{cap.appliesTo}</p>
         </> : <>
-          <p className="text-sm font-semibold text-ink">No applicable cap confirmed</p>
-          <p className="text-xs text-[#5B6B78]">
-            <span className="pill pill-progress mr-1">Not verified</span>Attorney review required{claim ? ` for ${claim}` : ""}.
-          </p>
+          <p className={value}>No applicable cap confirmed{" "}
+          <span title={`Attorney review required${claim ? ` for ${claim}` : ""}.`}
+            className="inline-flex items-center align-[1px] whitespace-nowrap rounded-full border border-[#FDE6C8] bg-[#FFF7ED] text-[#B45309] text-[10.5px] font-semibold leading-4 px-1.5">Not verified</span></p>
         </>)}
         {group(BookOpen, "Legal reference", cap ? <>
-          <p className="text-sm font-semibold text-ink break-words">{cap.authority}</p>
-          <p className="text-xs text-[#5B6B78]">Verified {cap.verifiedOn}{cap.url && <> · <a href={cap.url} target="_blank" rel="noreferrer" className="font-semibold text-deep hover:text-ink">View Source</a></>}</p>
+          <p className={value}>{cap.authority}</p>
+          <p className={sub}>Verified {cap.verifiedOn}{cap.url && <> · <a href={cap.url} target="_blank" rel="noreferrer" className="font-semibold text-deep hover:text-ink">View Source</a></>}</p>
         </> : <>
-          <p className="text-sm text-ink">{muted("No verified legal source on file")}</p>
+          <p className="text-[12.5px] leading-[18px] text-[#8A98A3] break-words">No verified legal source on file</p>
         </>)}
       </div>
       {facts.policyLimits && (
-        <p className="text-xs text-[#5B6B78] border-t border-line pt-2.5">
-          The policy limit ({facts.policyLimits}) is the insurance coverage limit, not a statutory cap. This card doesn't change the valuation above.
-        </p>
+        <p className="text-[11px] leading-4 text-[#8A98A3] mt-2">Policy limit ({facts.policyLimits}) is insurance coverage, not a statutory cap.</p>
       )}
     </section>
   );
