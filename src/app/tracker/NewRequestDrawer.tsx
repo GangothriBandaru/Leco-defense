@@ -7,8 +7,11 @@ import { CatIcon, Avatar, NotConnected } from "./TrackerShared";
 interface Form {
   cat: string; type: string; othertype: string; to: string; docs: string[]; other: string;
   range: string; method: string; channel: string; owner: string; cost: string; auto: boolean;
-  priority: "High" | "Medium" | "Low"; notes: string;
+  priority: "High" | "Normal" | "Low"; notes: string;
+  /** yyyy-mm-dd; empty means the method's usual response time. */
+  due: string;
 }
+const dayInput = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 const input = "w-full bg-white border border-line rounded-lg px-3.5 py-2.5 text-sm text-ink placeholder:text-[#8A98A3] focus:outline-none focus:border-brand";
 const chip = (on: boolean) => `inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${on ? "border-brand bg-tint text-deep" : "border-line bg-white text-ink hover:border-[#CBD7DE]"}`;
@@ -29,13 +32,14 @@ export function NewRequestDrawer({ ctx, onClose, onCreated }: { ctx: CaseCtx; on
   const [err, setErr] = useState("");
   const [f, setF] = useState<Form>({
     cat: TAX[0][0], type: "", othertype: "", to: "", docs: TAX[0][2].slice(0, 2), other: "",
-    range: ranges[0], method: "Subpoena", channel: CHANNELS[0], owner: OWNERS[0].n, cost: "0", auto: true,
-    priority: "Medium", notes: "",
+    range: ranges[0], method: "Authorization", channel: CHANNELS[0], owner: OWNERS[0].n, cost: "0", auto: true,
+    priority: "Normal", notes: "", due: "",
   });
   const set = (p: Partial<Form>) => { setErr(""); setF((x) => ({ ...x, ...p })); };
   const tax = taxOf(f.cat);
   const type = f.type || tax[1][0];
-  const due = fmtDate(iso(addDays(today(), METHODS[f.method] ?? 14)));
+  const dueDay = f.due || dayInput(addDays(today(), METHODS[f.method] ?? 14));
+  const due = fmtDate(iso(new Date(dueDay + "T00:00:00")));
   const needsApproval = (+f.cost || 0) > APPROVAL_THRESHOLD;
 
   useEffect(() => {
@@ -54,13 +58,14 @@ export function NewRequestDrawer({ ctx, onClose, onCreated }: { ctx: CaseCtx; on
   const submit = (mode: "draft" | "send") => {
     if (!f.to.trim()) { setStep(1); return setErr("Add who you're requesting from."); }
     if (mode === "send" && !f.docs.length && !f.other.trim()) { setStep(2); return setErr("Pick at least one document or describe the records."); }
+    if (dueDay < dayInput(today())) return setErr("The due date can't be in the past.");
     const id = createRequest(ctx, {
       cat: f.cat, type: type === "Other" ? f.othertype.trim() || "Other" : type, to: f.to.trim(),
       docs: [...f.docs, ...(f.other.trim() ? [f.other.trim()] : [])], range: f.range.trim() || ranges[0],
       method: f.method, channel: f.channel, owner: f.owner, cost: Math.max(0, +f.cost || 0), auto: f.auto,
-      priority: f.priority, notes: f.notes.trim() || undefined,
+      priority: f.priority, notes: f.notes.trim() || undefined, due: iso(new Date(dueDay + "T00:00:00")),
     }, mode);
-    onCreated(id, mode === "draft" ? "Draft saved" : needsApproval ? "Approval request recorded" : "Request recorded as sent. Email isn't connected, so send the letter yourself.");
+    onCreated(id, mode === "draft" ? "Draft saved." : needsApproval ? "Approval request recorded" : "Request sent successfully.");
   };
 
   const sug = suggestions(ctx);
@@ -150,14 +155,16 @@ export function NewRequestDrawer({ ctx, onClose, onCreated }: { ctx: CaseCtx; on
       <section className="grid sm:grid-cols-2 gap-4">
         <div className="space-y-2.5">
           <span className="text-sm font-semibold text-ink">Priority</span>
-          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Priority">{(["High", "Medium", "Low"] as const).map((x) => <button key={x} type="button" role="radio" aria-checked={x === f.priority} aria-pressed={x === f.priority} onClick={() => set({ priority: x })} className={chip(x === f.priority)}>{x}</button>)}</div>
+          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Priority">{(["High", "Normal", "Low"] as const).map((x) => <button key={x} type="button" role="radio" aria-checked={x === f.priority} aria-pressed={x === f.priority} onClick={() => set({ priority: x })} className={chip(x === f.priority)}>{x}</button>)}</div>
         </div>
         <label className="space-y-2.5 block"><span className="text-sm font-semibold text-ink">Internal notes / instructions</span>
           <textarea className={`${input} min-h-[64px]`} value={f.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="For the team only; not part of the letter" />
         </label>
       </section>
       <div className="flex flex-wrap items-center justify-between gap-3 bg-wash border border-line rounded-xl px-3.5 py-3 text-sm">
-        <span className="inline-flex items-center gap-1.5 text-ink"><Clock className="w-4 h-4 text-deep" />Response due <b>{due}</b></span>
+        <label className="inline-flex items-center gap-2 text-ink"><Clock className="w-4 h-4 text-deep" />Due date
+          <input type="date" value={dueDay} min={dayInput(today())} onChange={(e) => set({ due: e.target.value })} className="bg-white border border-line rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand" />
+        </label>
         <label className="inline-flex items-center gap-2 cursor-pointer text-ink">
           Automatic reminders
           <input type="checkbox" role="switch" checked={f.auto} onChange={(e) => set({ auto: e.target.checked })} className="w-4 h-4 accent-[#3FB5D7]" />

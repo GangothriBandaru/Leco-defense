@@ -2,8 +2,8 @@ import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import {
   type CaseCtx, type DocRequest, type MailMsg, type MailDir, type ReqFile, type Tone,
-  APPROVAL_THRESHOLD, METHODS, ESC, addDays, iso, today, fmtDate, isOver, ownerEmail,
-  letterOf, reminderText, escalationText, approvalRequestText, subjectOf, sentStatus, reminderCount,
+  APPROVAL_THRESHOLD, METHODS, addDays, iso, today, fmtDate, fmtTime, isOver, isDone, ownerEmail,
+  letterOf, reminderText, approvalRequestText, subjectOf, sentStatus, reminderCount,
 } from "./trackerData";
 
 // ── Document requests and case mail, per case ────────────────────────────────
@@ -11,7 +11,7 @@ import {
 // survive leaving the case or a refresh. Email is not connected: messages here
 // are records of what the firm sent or noted, and nothing is delivered.
 
-export interface CaseState { requests: DocRequest[]; mail: MailMsg[]; seq: number; mseq: number; refreshedAt?: string; seeded?: boolean }
+export interface CaseState { requests: DocRequest[]; mail: MailMsg[]; seq: number; mseq: number; refreshedAt?: string; seeded?: boolean; demoVersion?: number }
 const STORAGE_KEY = "leco.docTracker.v1";
 const EMPTY: CaseState = { requests: [], mail: [], seq: 0, mseq: 0 };
 
@@ -81,17 +81,19 @@ function addMail(s: CaseState, ctx: CaseCtx, r: DocRequest | null, dir: MailDir,
 
 function goOut(s: CaseState, ctx: CaseCtx, r: DocRequest) {
   r.status = sentStatus(r.method);
-  r.sent = iso(today());
+  r.sent = now();
   r.due = r.due ?? iso(addDays(today(), METHODS[r.method] ?? 14));
   s.mail = s.mail.filter((m) => !(m.rid === r.id && m.dir === "draft"));
   addMail(s, ctx, r, "out", "Request", letterOf(r, ctx));
 }
 
-// ── Actions ──
+/// ── Actions ──
 export interface NewRequestInput {
   cat: string; type: string; to: string; docs: string[]; range: string;
   method: string; channel: string; owner: string; cost: number; auto: boolean;
-  priority?: DocRequest["priority"]; notes?: string;
+  priority?: DocRequest["priority"]; notes?: string; title?: string;
+  /** ISO date; defaults to the method's usual response time. */
+  due?: string;
 }
 
 export function createRequest(ctx: CaseCtx, input: NewRequestInput, mode: "draft" | "send"): string {
@@ -102,7 +104,7 @@ export function createRequest(ctx: CaseCtx, input: NewRequestInput, mode: "draft
     const r: DocRequest = {
       id, ...input, contact: "", pages: 0, files: [], reviewed: false, log: [], createdAt: now(),
       status: mode === "draft" ? "Draft" : needsApproval ? "Awaiting approval" : "Sent",
-      due: iso(addDays(today(), METHODS[input.method] ?? 14)),
+      due: input.due || iso(addDays(today(), METHODS[input.method] ?? 14)),
     };
     s.requests.push(r);
     if (mode === "draft") {
@@ -112,7 +114,8 @@ export function createRequest(ctx: CaseCtx, input: NewRequestInput, mode: "draft
       log(r, `Carrier approval requested (${fmtMoney(r.cost)} is over the ${fmtMoney(APPROVAL_THRESHOLD)} threshold)`);
       addMail(s, ctx, r, "out", "Approval request", approvalRequestText(r), { toN: ctx.insurer ? `${ctx.insurer} (claims)` : "Carrier claims contact", toE: "" });
     } else {
-      log(r, `Sent by ${r.channel.toLowerCase()}`);
+      log(r, "Request created");
+      log(r, `Request sent by ${r.channel.toLowerCase()}`);
       goOut(s, ctx, r);
     }
   });
@@ -130,9 +133,26 @@ export function sendDraft(ctx: CaseCtx, id: string) {
       addMail(s, ctx, r, "out", "Approval request", approvalRequestText(r), { toN: ctx.insurer ? `${ctx.insurer} (claims)` : "Carrier claims contact", toE: "" });
       return;
     }
-    log(r, `Sent by ${r.channel.toLowerCase()}`);
+    log(r, `Request sent by ${r.channel.toLowerCase()}`);
     goOut(s, ctx, r);
-  }, "Request recorded as sent");
+  }, "Request sent successfully.");
+}
+
+/** Saves edits to a draft; its letter in Drafts is rewritten to match. */
+export function updateDraft(ctx: CaseCtx, id: string, patch: Partial<Pick<DocRequest, "title" | "to" | "docs" | "range" | "due" | "priority" | "notes">>) {
+  mutate(ctx.caseId, (s) => {
+    const r = find(s, id);
+    Object.assign(r, patch);
+    log(r, "Draft edited");
+    s.mail.forEach((m) => { if (m.rid === r.id && m.dir === "draft") { m.toN = r.to; m.subject = subjectOf(r, ctx); m.body = letterOf(r, ctx); m.at = now(); } });
+  }, "Changes saved.");
+}
+
+export function deleteDraft(ctx: CaseCtx, id: string) {
+  mutate(ctx.caseId, (s) => {
+    s.requests = s.requests.filter((r) => r.id !== id);
+    s.mail = s.mail.filter((m) => m.rid !== id);
+  }, "Draft deleted.");
 }
 
 export function recordApproval(ctx: CaseCtx, id: string) {
@@ -142,24 +162,19 @@ export function recordApproval(ctx: CaseCtx, id: string) {
     addMail(s, ctx, r, "in", "Approval", `Carrier approval for ${r.to} (${fmtMoney(r.cost)}), recorded by ${r.owner}.`, {
       fromN: ctx.insurer ? `${ctx.insurer} (claims)` : "Carrier claims contact", fromE: "", unread: false,
     });
-    log(r, `Sent by ${r.channel.toLowerCase()}`);
+    log(r, `Request sent by ${r.channel.toLowerCase()}`);
     goOut(s, ctx, r);
   }, "Approval recorded and request sent");
 }
 
-export function sendReminder(ctx: CaseCtx, id: string, channel: string, tone: Tone, text: string, when: "now" | "later") {
+/** Records a reminder in the request's thread. Email isn't connected, so nothing is delivered. */
+export function sendReminder(ctx: CaseCtx, id: string, text: string) {
   mutate(ctx.caseId, (s) => {
     const r = find(s, id);
-    if (when === "later") {
-      const at = addDays(today(), 1);
-      log(r, `Reminder scheduled for ${fmtDate(iso(at))}, 9:00 AM (${tone.toLowerCase()})`);
-      r.next = iso(at);
-      return;
-    }
-    log(r, `Reminder sent by ${channel.toLowerCase()} (${tone.toLowerCase()})`);
-    addMail(s, ctx, r, "out", "Reminder", text || reminderText(r, tone, ctx));
+    log(r, `Reminder sent to ${r.to}`);
+    addMail(s, ctx, r, "out", "Reminder", text, { subject: `Follow-up: ${subjectOf(r, ctx)}`, unread: false });
     r.next = iso(addDays(today(), 7));
-  }, when === "later" ? "Reminder scheduled for tomorrow, 9:00 AM" : "Reminder recorded");
+  }, "Reminder sent successfully.");
 }
 
 export function remindMany(ctx: CaseCtx, ids: string[]) {
@@ -167,70 +182,65 @@ export function remindMany(ctx: CaseCtx, ids: string[]) {
     ids.forEach((id) => {
       const r = find(s, id);
       const tone: Tone = isOver(r) ? (reminderCount(r) >= 2 ? "Final notice" : "Firm") : "Friendly";
-      log(r, `Reminder sent by ${r.channel.toLowerCase()} (${tone.toLowerCase()})`);
-      addMail(s, ctx, r, "out", "Reminder", reminderText(r, tone, ctx));
+      log(r, `Reminder sent to ${r.to}`);
+      addMail(s, ctx, r, "out", "Reminder", reminderText(r, tone, ctx), { subject: `Follow-up: ${subjectOf(r, ctx)}`, unread: false });
       r.next = iso(addDays(today(), 7));
     });
-  }, `${ids.length} reminder${ids.length === 1 ? "" : "s"} recorded`);
-}
-
-export function escalate(ctx: CaseCtx, id: string) {
-  mutate(ctx.caseId, (s) => {
-    const r = find(s, id);
-    r.status = "Escalated";
-    log(r, `Escalated: ${(ESC[r.method] ?? "escalate").toLowerCase()}, drafted for attorney review`);
-    addMail(s, ctx, r, "out", "Escalation", escalationText(r));
-  }, "Escalation drafted for attorney review");
+  }, `${ids.length} reminder${ids.length === 1 ? "" : "s"} sent`);
 }
 
 export function markAcknowledged(ctx: CaseCtx, id: string) {
   mutate(ctx.caseId, (s) => {
     const r = find(s, id);
     r.status = "Acknowledged";
-    log(r, "Recipient acknowledged the request");
-    // Filed under Acknowledgments as a record the attorney entered, not an email.
-    addMail(s, ctx, r, "in", "Acknowledgment", `Recorded by ${r.owner}: ${r.to} acknowledged this request. Email isn't connected, so this is a note of the acknowledgment, not the message itself.`, { unread: false });
-  }, "Marked acknowledged");
+    log(r, "Marked acknowledged");
+    // The recipient's own confirmation, when it's in the mailbox, is the record; otherwise note it.
+    if (!s.mail.some((m) => m.rid === r.id && m.kind === "Acknowledgment"))
+      addMail(s, ctx, r, "in", "Acknowledgment", `Recorded by ${r.owner}: ${r.to} acknowledged this request. Email isn't connected, so this is a note of the acknowledgment, not the message itself.`, { unread: false });
+  }, "Request marked acknowledged.");
 }
 
-export function markReceived(ctx: CaseCtx, id: string, pages: number, files: ReqFile[], none: boolean) {
+function receive(s: CaseState, ctx: CaseCtx, r: DocRequest, files: ReqFile[]) {
+  r.status = "Received";
+  r.received = now();
+  r.files = [...r.files, ...files];
+  log(r, `Documents received${files.length ? `: ${files.length} file${files.length === 1 ? "" : "s"} attached` : ""}`);
+  addMail(s, ctx, r, "in", "Response", `Recorded by ${r.owner}: documents received from ${r.to}. Email isn't connected, so this is a note of the receipt, not the message itself.`,
+    { unread: false, att: files.map((f) => ({ name: f.name, pages: f.pages })) });
+}
+
+export function markReceived(ctx: CaseCtx, id: string) {
+  mutate(ctx.caseId, (s) => receive(s, ctx, find(s, id), []), "Documents marked as received.");
+}
+
+/** Attaches files; a request still waiting on them becomes Received. */
+export function addDocuments(ctx: CaseCtx, id: string, files: ReqFile[]) {
+  const open = !isDone(find(get(ctx.caseId), id));
   mutate(ctx.caseId, (s) => {
     const r = find(s, id);
-    if (none) {
-      r.status = "No records";
-      log(r, "Recipient certified that no records exist");
-      return;
-    }
-    r.status = "Received";
-    r.pages = pages;
+    if (open) return receive(s, ctx, r, files);
     r.files = [...r.files, ...files];
-    log(r, `Records received: ${pages} page${pages === 1 ? "" : "s"}${files.length ? `, ${files.length} file${files.length === 1 ? "" : "s"} attached` : ""}`);
-    // Filed under Records received, with the files attached.
-    addMail(s, ctx, r, "in", "Response", `Recorded by ${r.owner}: ${pages} page${pages === 1 ? "" : "s"} received from ${r.to}. Email isn't connected, so this is a note of the receipt, not the message itself.`,
-      { unread: false, att: files.map((f) => ({ name: f.name, pages: f.pages })) });
-  }, none ? "Marked no records" : "Marked received");
+    log(r, `${files.length} document${files.length === 1 ? "" : "s"} uploaded`);
+  }, open ? "Documents uploaded and marked as received." : `${files.length} document${files.length === 1 ? "" : "s"} uploaded.`);
 }
 
 export function markReviewed(ctx: CaseCtx, id: string) {
-  mutate(ctx.caseId, (s) => { const r = find(s, id); r.reviewed = true; log(r, "Reviewed"); }, "Marked reviewed");
+  mutate(ctx.caseId, (s) => { const r = find(s, id); r.reviewed = true; r.reviewedAt = now(); log(r, "Reviewed"); }, "Documents marked as reviewed.");
 }
 
 export function reassign(ctx: CaseCtx, ids: string[], owner: string) {
   mutate(ctx.caseId, (s) => ids.forEach((id) => { const r = find(s, id); r.owner = owner; log(r, `Reassigned to ${owner}`); }),
-    ids.length === 1 ? `Assigned to ${owner}` : `${ids.length} requests assigned to ${owner}`);
+    ids.length === 1 ? "Request reassigned successfully." : `${ids.length} requests assigned to ${owner}`);
 }
 
-export function extendDue(ctx: CaseCtx, id: string, days: number) {
-  mutate(ctx.caseId, (s) => {
-    const r = find(s, id);
-    const nd = iso(addDays(r.due ? new Date(r.due) : today(), days));
-    r.due = nd;
-    log(r, `Due date extended to ${fmtDate(nd)}`);
-  }, "Due date extended");
+/** Sets a new due date (ISO). */
+export function setDue(ctx: CaseCtx, id: string, due: string) {
+  mutate(ctx.caseId, (s) => { const r = find(s, id); r.due = due; log(r, `Due date changed to ${fmtDate(due)}`); }, "Due date updated successfully.");
 }
 
-export function snooze(ctx: CaseCtx, id: string, days: number) {
-  mutate(ctx.caseId, (s) => { const r = find(s, id); const nd = iso(addDays(today(), days)); r.next = nd; log(r, `Follow-up snoozed until ${fmtDate(nd)}`); }, "Follow-up snoozed");
+/** Schedules the next follow-up (ISO date and time); the due date stays the same. */
+export function scheduleFollowUp(ctx: CaseCtx, id: string, at: string) {
+  mutate(ctx.caseId, (s) => { const r = find(s, id); r.next = at; log(r, `Follow-up reminder scheduled for ${fmtDate(at)}, ${fmtTime(at)}`); }, "Follow-up reminder scheduled.");
 }
 
 export function setAuto(ctx: CaseCtx, id: string, on: boolean) {
@@ -254,15 +264,20 @@ export function sendReply(ctx: CaseCtx, src: MailMsg, fwd: boolean, to: { n: str
   }, fwd ? "Forward recorded" : "Reply recorded");
 }
 
-/** Loads sample requests and correspondence for a demo case, once: only when
- *  the case has no tracker records of its own, so nothing is ever replaced
- *  and a refresh never adds them again. */
-export function ensureDemo(ctx: CaseCtx, build: (ctx: CaseCtx) => CaseState | undefined) {
+/** Loads sample requests and correspondence for a demo case: once into an
+ *  empty tracker, or in place of an older sample set. Records the user made
+ *  themselves are never replaced. */
+export function ensureDemo(ctx: CaseCtx, build: (ctx: CaseCtx) => (CaseState & { demoVersion: number }) | undefined) {
   const cur = db[ctx.caseId];
-  if (cur && (cur.seeded || cur.requests.length || cur.mail.length)) return;
   const seed = build(ctx);
   if (!seed) return;
-  db = { ...db, [ctx.caseId]: { ...seed, seeded: true } };
+  if (cur && (cur.seeded || cur.requests.length || cur.mail.length)) {
+    if (!cur.seeded || cur.demoVersion === seed.demoVersion) return;
+    const own = cur.requests.filter((r) => !r.demo), ownMail = cur.mail.filter((m) => !m.demo);
+    db = { ...db, [ctx.caseId]: { ...cur, requests: [...seed.requests, ...own], mail: [...seed.mail, ...ownMail], seq: Math.max(cur.seq, seed.seq), mseq: Math.max(cur.mseq, seed.mseq), demoVersion: seed.demoVersion } };
+  } else {
+    db = { ...db, [ctx.caseId]: { ...seed, seeded: true } };
+  }
   save();
   emit();
 }

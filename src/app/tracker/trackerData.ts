@@ -1,17 +1,19 @@
 // ── Document Tracker: request and mail model, and the workflow rules ────────
-// Categories, request methods, response times and escalation steps follow the
-// PI Defense Workbench reference. Everything case-specific (names, parties,
+// Categories, request methods and response times follow the PI Defense
+// Workbench reference. Everything case-specific (names, parties,
 // dates, counts) comes from the open case and the requests made on it.
 
 export type ReqStatus =
   | "Draft" | "Awaiting approval" | "Sent" | "Acknowledged" | "In progress"
   | "Waiting on plaintiff" | "Partially received" | "Escalated" | "Received" | "No records";
 
-export interface ReqFile { name: string; pages: number; storageKey?: string; size?: number }
+export interface ReqFile { name: string; pages: number; storageKey?: string; size?: number; /** Generated sample file, not an upload. */ demo?: boolean }
 export interface LogEntry { at: string; text: string }
 
 export interface DocRequest {
   id: string;
+  /** What is being requested, e.g. "Complete Medical Records"; falls back to the type. */
+  title?: string;
   cat: string;
   type: string;
   to: string;
@@ -22,6 +24,8 @@ export interface DocRequest {
   /** ISO dates. */
   sent?: string;
   due?: string;
+  received?: string;
+  reviewedAt?: string;
   status: ReqStatus;
   pages: number;
   cost: number;
@@ -34,7 +38,7 @@ export interface DocRequest {
   /** When the next follow-up is due — set by a reminder or a snooze. */
   next?: string;
   createdAt: string;
-  priority?: "High" | "Medium" | "Low";
+  priority?: "High" | "Normal" | "Medium" | "Low";
   /** Internal notes — never part of the letter. */
   notes?: string;
   /** Sample record for a demo case, not real case work. */
@@ -96,10 +100,6 @@ export const TYPICAL: Record<string, number> = {
   "Authorization": 12, "Subpoena": 10, "FOIA request": 7, "Discovery request": 21, "Request to adjuster": 5, "Vendor order": 7,
 };
 export const CHANNELS = ["Retrieval vendor portal", "Email", "Fax", "Certified mail", "Process server"];
-export const ESC: Record<string, string> = {
-  "Authorization": "Convert to subpoena", "Subpoena": "Draft motion to compel", "FOIA request": "Send FOIA deadline notice",
-  "Discovery request": "Send meet-and-confer letter", "Request to adjuster": "Escalate to claims supervisor", "Vendor order": "Escalate to vendor account manager",
-};
 /** Costs above this need the carrier's approval before the request goes out. */
 export const APPROVAL_THRESHOLD = 500;
 
@@ -107,9 +107,11 @@ export const APPROVAL_THRESHOLD = 500;
 export const OWNERS: { n: string; e: string }[] = [
   { n: "Jennifer Davis", e: "j.davis@lexguard.law" },
   { n: "Michael Chen", e: "" },
+  { n: "Sarah Patel", e: "" },
 ];
 export const FIRM = "LexGuard Injury Intel";
 export const ownerEmail = (n: string) => OWNERS.find((o) => o.n === n)?.e ?? "";
+export const titleOf = (r: DocRequest) => r.title || r.type;
 
 // ── Dates ──
 const DAY = 86400000;
@@ -153,17 +155,19 @@ export const TONE_PILL: Record<string, string> = {
   crit: "pill pill-risk", warn: "pill pill-progress", ok: "pill pill-complete", acc: "pill pill-neutral",
   "": "pill bg-[#F1F3F5] text-[#5B6B78] border-line",
 };
+/** Every request shows one of six plain statuses, whatever its stored state. */
+export type SimpleStatus = "Draft" | "Sent" | "Acknowledged" | "Received" | "Reviewed" | "Overdue";
+export function simpleStatus(r: DocRequest): SimpleStatus {
+  if (isOver(r)) return "Overdue";
+  if (isDone(r)) return r.reviewed ? "Reviewed" : "Received";
+  if (r.status === "Draft" || r.status === "Awaiting approval") return "Draft";
+  if (["Acknowledged", "In progress", "Partially received"].includes(r.status)) return "Acknowledged";
+  return "Sent";
+}
+const STATUS_TONE: Record<SimpleStatus, string> = { Overdue: "crit", Draft: "", Sent: "acc", Acknowledged: "acc", Received: "warn", Reviewed: "ok" };
 export function statusLabel(r: DocRequest): [string, string] {
-  if (isOver(r)) return ["Overdue", "crit"];
-  if (r.status === "Received" && !r.reviewed) return ["To review", "acc"];
-  if (r.status === "Received") return ["Received", "ok"];
-  if (r.status === "No records") return ["No records", "ok"];
-  if (r.status === "Partially received") return ["Partially returned", "warn"];
-  if (r.status === "Waiting on plaintiff") return ["Waiting on plaintiff", "warn"];
-  if (r.status === "Awaiting approval") return ["Needs approval", "warn"];
-  if (r.status === "Draft") return ["Draft", ""];
-  if (r.status === "Escalated") return ["Escalated", "crit"];
-  return [r.status, "acc"];
+  const st = simpleStatus(r);
+  return [st, STATUS_TONE[st]];
 }
 
 export const BUCKETS = ["Overdue", "Act now", "Due this week", "Later", "Done"] as const;
@@ -196,10 +200,9 @@ export function needsAction(r: DocRequest): NeedKind | null {
 
 export type ListFilter = "action" | "open" | "waiting" | "received" | "all" | "overdue" | "week" | "review";
 export const FILTERS: { key: ListFilter; label: string; note: string }[] = [
-  { key: "action", label: "Needs action", note: "Overdue, approvals, drafts, records to review" },
-  { key: "open", label: "In progress", note: "With providers, agencies and the carrier" },
-  { key: "waiting", label: "Waiting on plaintiff", note: "Discovery answers and signed forms" },
-  { key: "received", label: "Received", note: "Records in hand" },
+  { key: "action", label: "Needs action", note: "Overdue, drafts, documents to review" },
+  { key: "open", label: "Awaiting response", note: "Sent or acknowledged, not yet received" },
+  { key: "received", label: "Received", note: "Documents in hand" },
   { key: "all", label: "All requests", note: "Everything on this case" },
 ];
 export const FOCUS_LABEL: Partial<Record<ListFilter, string>> = { overdue: "Overdue", week: "Due in the next 7 days", review: "Received, not reviewed" };
@@ -210,13 +213,13 @@ export function inFilter(r: DocRequest, f: ListFilter) {
     case "overdue": return isOver(r);
     case "week": { const n = daysTo(r); return !isDone(r) && n !== null && n >= 0 && n <= 7; }
     case "review": return r.status === "Received" && !r.reviewed;
-    case "open": return !isDone(r) && !isWaiting(r);
+    case "open": return !isDone(r) && r.status !== "Draft" && r.status !== "Awaiting approval";
     case "waiting": return isWaiting(r);
     case "received": return isDone(r);
   }
 }
 
-export const reminderCount = (r: DocRequest) => r.log.filter((l) => /^Reminder sent|^Reminder scheduled/.test(l.text)).length;
+export const reminderCount = (r: DocRequest) => r.log.filter((l) => /^Reminder sent/.test(l.text)).length;
 export function nextReminder(r: DocRequest): string {
   if (r.next) return fmtDate(r.next);
   if (!r.due) return "after the request is sent";
@@ -231,7 +234,7 @@ export const sentStatus = (method: string): ReqStatus => method === "Discovery r
 
 // ── Letters and messages ──
 export const subjectOf = (r: DocRequest, ctx: CaseCtx) =>
-  `${r.method === "Discovery request" ? "Discovery" : r.method === "FOIA request" ? "FOIA request" : r.method === "Subpoena" ? "Subpoena duces tecum" : "Records request"}: ${r.type} · ${ctx.caseName}`;
+  `${r.method === "Discovery request" ? "Discovery" : r.method === "FOIA request" ? "FOIA request" : r.method === "Subpoena" ? "Subpoena duces tecum" : "Records request"}: ${titleOf(r)} · ${ctx.caseName}`;
 
 export function letterOf(r: DocRequest, ctx: CaseCtx): string {
   const intro: Record<string, string> = {
@@ -251,12 +254,8 @@ export function reminderText(r: DocRequest, tone: Tone, ctx: CaseCtx): string {
   const what = r.docs.join(", ").toLowerCase(), sent = r.sent ? ` of ${fmtDate(r.sent)}` : "", n = daysTo(r) ?? 0;
   const ref = `Ref: ${ctx.caseName}${ctx.caseId ? `, ${ctx.caseId}` : ""}.`, sig = `${r.owner}, ${FIRM}`;
   if (tone === "Firm") return `We have not yet received the ${what} requested in our ${r.method.toLowerCase()}${sent}${r.due ? `, which ${n < 0 ? "were" : "are"} due ${fmtDate(r.due)}` : ""}. Please produce them within 5 business days, or call us to discuss timing.\n\n${ref}\n\n${sig}`;
-  if (tone === "Final notice") return `Final notice: the ${what} requested in our ${r.method.toLowerCase()}${sent} remain outstanding${n < 0 ? `, ${-n} days past the ${fmtDate(r.due)} deadline` : ""}. If we do not receive them by ${fmtDate(iso(addDays(today(), 5)))}, we will ${(ESC[r.method] ?? "escalate").toLowerCase()} without further notice.\n\n${ref}\n\n${sig}`;
+  if (tone === "Final notice") return `The ${what} requested in our ${r.method.toLowerCase()}${sent} are still outstanding${n < 0 ? `, ${-n} days past the ${fmtDate(r.due)} due date` : ""}. Please send them by ${fmtDate(iso(addDays(today(), 5)))}, or let us know if anything is holding them up.\n\n${ref}\n\n${sig}`;
   return `Hello, following up on our ${r.method.toLowerCase()}${sent} for ${what} (${r.range}). ${r.due ? (n < 0 ? `It was due ${fmtDate(r.due)}.` : `It is due ${fmtDate(r.due)}.`) : ""} Please send the records or let us know when to expect them.\n\n${ref}\n\nThank you,\n${sig}`;
-}
-
-export function escalationText(r: DocRequest): string {
-  return `Hello,\n\nWe have not received a response to our ${r.method.toLowerCase()}${r.sent ? ` of ${fmtDate(r.sent)}` : ""}. Please be advised that we are preparing to ${(ESC[r.method] ?? "escalate").toLowerCase()}. If the records are produced within 5 business days, no further action will be needed.\n\nRegards,\n${r.owner}, ${FIRM}`;
 }
 
 export function approvalRequestText(r: DocRequest): string {

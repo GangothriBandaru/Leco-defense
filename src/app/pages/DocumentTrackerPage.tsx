@@ -69,7 +69,7 @@ export function DocumentTrackerPage({ caseData, documents, stage, backLabel, onB
 
         {hasDemo && (
           <p role="note" className="rounded-lg border border-[#FDE6C8] bg-[#FFF7ED] px-3.5 py-2.5 text-sm text-ink">
-            <b className="font-semibold">Sample data.</b> This demo case is loaded with sample requests and correspondence, marked Sample. They were never sent or received, and you can update them like any other record.
+            <b className="font-semibold">Demo records.</b> The requests and messages on this demo case are sample records stored in this browser. Nothing was actually sent or received, and email isn't connected.
           </p>
         )}
         <div role="tablist" aria-label="Document Tracker" className="grid grid-cols-2 gap-1 bg-track rounded-xl p-1 max-w-[640px]">
