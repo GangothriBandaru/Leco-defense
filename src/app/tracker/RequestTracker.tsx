@@ -28,7 +28,7 @@ function nextStep(r: DocRequest): { title: string; text: string; actions: [NextA
   const last = r.log[r.log.length - 1]?.text ?? "No activity yet";
   if (r.status === "Draft") return { title: "Ready to send", text: "Review the request and send it to the recipient.", actions: [["send", "Send request"]], tone: "" };
   if (r.status === "Awaiting approval") return { title: "Waiting for carrier approval", text: `${money(r.cost)} is over the ${money(APPROVAL_THRESHOLD)} pre-approval threshold. Record the carrier's approval to send it.`, actions: [["approve", "Record approval"]], tone: "warn" };
-  if (isOver(r)) return { title: `No response, ${-n} day${n === -1 ? "" : "s"} past due`, text: `Last activity: ${last}. Send a reminder now, or escalate.`, actions: [["remind", "Send reminder"], ["escalate", ESC[r.method] ?? "Escalate"]], tone: "crit" };
+  if (isOver(r)) return { title: `No response, ${-n} day${n === -1 ? "" : "s"} past due`, text: `Last activity: ${last}. Send a reminder now.`, actions: [["remind", "Send reminder"], ["received", "Mark received"]], tone: "crit" };
   if (isWaiting(r)) return { title: "Waiting on plaintiff's counsel", text: `Due ${fmtDate(r.due)}. ${last}.`, actions: [["remind", "Remind plaintiff's counsel"], ["received", "Mark received"]], tone: "warn" };
   if (r.status === "Received" && !r.reviewed) return { title: "Records received", text: `${r.pages} page${r.pages === 1 ? "" : "s"} received. Review them, then mark the request reviewed.`, actions: [["review", "Mark reviewed"]], tone: "acc" };
   if (isDone(r)) return { title: "Complete", text: r.status === "No records" ? "The recipient certified that no records exist." : `${r.pages} pages received and reviewed.`, actions: [], tone: "ok" };
@@ -40,12 +40,13 @@ function nextStep(r: DocRequest): { title: string; text: string; actions: [NextA
 const NEXT_BG: Record<string, string> = { crit: "bg-[#FEF2F2] border-[#FBD5D5]", warn: "bg-[#FFF7ED] border-[#FDE6C8]", acc: "bg-tint border-[#CDEBF5]", ok: "bg-[#ECFDF3] border-[#D1FADF]", "": "bg-wash border-line" };
 
 function Stepper({ r }: { r: DocRequest }) {
-  const ix = stageIx(r), over = isOver(r), done = isDone(r);
-  const dates = [r.createdAt, r.sent, r.log.find((l) => /acknowledged/i.test(l.text))?.at, r.log.find((l) => /^Records received|no records/i.test(l.text))?.at, r.log.find((l) => l.text === "Reviewed")?.at];
+  const ix = stageIx(r), over = isOver(r);
+  const dates = [r.createdAt, r.sent, r.log.find((l) => /acknowledged/i.test(l.text))?.at, r.log.find((l) => /^(Records|Documents) received|no records/i.test(l.text))?.at, r.log.find((l) => l.text === "Reviewed")?.at];
   return (
     <ol className="grid grid-cols-5">
       {STAGES.map((s, i) => {
-        const complete = i < ix || (done && i === ix), cur = i === ix && !complete;
+        // A step is complete once it has happened; the next one is current.
+        const complete = i <= ix, cur = i === ix + 1;
         return (
           <li key={s} className="relative flex flex-col items-center text-center gap-1 min-w-0">
             {i > 0 && <span className={`absolute top-[10px] right-1/2 w-full h-[2px] ${i <= ix ? "bg-brand" : "bg-line"}`} />}
@@ -80,7 +81,7 @@ function Ladder({ r }: { r: DocRequest }) {
   const n = r.status === "Escalated" ? 4 : Math.min(reminderCount(r) + 1, 3);
   return (
     <ol className="flex flex-wrap gap-x-3 gap-y-1 mt-2.5">
-      {["Requested", "Reminder 1", "Reminder 2", "Escalate"].map((s, i) => (
+      {["Requested", "Reminder 1", "Reminder 2"].map((s, i) => (
         <li key={s} className={`inline-flex items-center gap-1.5 text-[11px] ${i < n ? "text-ink font-semibold" : i === n && isOver(r) ? "text-[#B91C1C] font-bold" : "text-[#8A98A3]"}`}>
           <i className={`w-2 h-2 rounded-full border ${i < n ? "bg-ink border-ink" : i === n && isOver(r) ? "border-[#B91C1C] ring-2 ring-[#FEF2F2]" : "border-[#8A98A3]"}`} />{s}
         </li>

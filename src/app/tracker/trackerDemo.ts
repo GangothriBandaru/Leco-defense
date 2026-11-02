@@ -7,7 +7,7 @@ import type { CaseState } from "./trackerStore";
 // Bump DEMO_VERSION when the set changes so an older sample set is replaced.
 
 const DEMO_CASES = new Set(["PI-2024-001"]);
-export const DEMO_VERSION = 2;
+export const DEMO_VERSION = 3;
 /** Local time on a 2026 date; month is 1-based. */
 const on = (m: number, d: number, h = 9, min = 0) => new Date(2026, m - 1, d, h, min).toISOString();
 
@@ -25,11 +25,11 @@ export function buildDemoTracker(ctx: CaseCtx): (CaseState & { demoVersion: numb
       ...base, id: "R01", title: "Complete Medical Records", cat: "Medical records", type: "Physician and specialist",
       to: "Fairfax Spine & Pain", docs: ["Complete medical chart", "Office and progress notes"],
       method: "Authorization", channel: "Retrieval vendor portal", status: "Sent", priority: "High", owner: JD, contact: FAIRFAX.e,
-      createdAt: on(10, 12, 16), sent: on(10, 13, 10), due: on(11, 5, 0),
+      createdAt: on(10, 12, 16), sent: on(10, 12, 16, 30), due: on(11, 5, 0),
       notes: "Request sent to the provider. Awaiting the requested medical records.",
       log: [
         { at: on(10, 12, 16), text: "Request created" },
-        { at: on(10, 13, 10), text: "Request sent by retrieval vendor portal" },
+        { at: on(10, 12, 16, 30), text: "Request sent by retrieval vendor portal" },
         { at: on(10, 15, 11, 20), text: "Confirmation of receipt received from Fairfax Spine & Pain" },
       ],
     },
@@ -85,7 +85,7 @@ export function buildDemoTracker(ctx: CaseCtx): (CaseState & { demoVersion: numb
 
   // Sent
   out(R.R04, "out", on(10, 7, 10, 15));
-  out(R.R01, "out", on(10, 13, 10));
+  out(R.R01, "out", on(10, 12, 16, 30));
   out(R.R03, "out", on(10, 20, 9, 30));
   // Drafts
   out(R.R02, "draft", on(10, 30, 15));

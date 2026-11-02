@@ -254,7 +254,7 @@ export function reminderText(r: DocRequest, tone: Tone, ctx: CaseCtx): string {
   const what = r.docs.join(", ").toLowerCase(), sent = r.sent ? ` of ${fmtDate(r.sent)}` : "", n = daysTo(r) ?? 0;
   const ref = `Ref: ${ctx.caseName}${ctx.caseId ? `, ${ctx.caseId}` : ""}.`, sig = `${r.owner}, ${FIRM}`;
   if (tone === "Firm") return `We have not yet received the ${what} requested in our ${r.method.toLowerCase()}${sent}${r.due ? `, which ${n < 0 ? "were" : "are"} due ${fmtDate(r.due)}` : ""}. Please produce them within 5 business days, or call us to discuss timing.\n\n${ref}\n\n${sig}`;
-  if (tone === "Final notice") return `Final notice: the ${what} requested in our ${r.method.toLowerCase()}${sent} remain outstanding${n < 0 ? `, ${-n} days past the ${fmtDate(r.due)} deadline` : ""}. If we do not receive them by ${fmtDate(iso(addDays(today(), 5)))}, we will ${(ESC[r.method] ?? "escalate").toLowerCase()} without further notice.\n\n${ref}\n\n${sig}`;
+  if (tone === "Final notice") return `The ${what} requested in our ${r.method.toLowerCase()}${sent} remain outstanding${n < 0 ? `, ${-n} days past the ${fmtDate(r.due)} deadline` : ""}. Please send them by ${fmtDate(iso(addDays(today(), 5)))}, or let us know if anything is holding them up.\n\n${ref}\n\n${sig}`;
   return `Hello, following up on our ${r.method.toLowerCase()}${sent} for ${what} (${r.range}). ${r.due ? (n < 0 ? `It was due ${fmtDate(r.due)}.` : `It is due ${fmtDate(r.due)}.`) : ""} Please send the records or let us know when to expect them.\n\n${ref}\n\nThank you,\n${sig}`;
 }
 
