@@ -1,4 +1,4 @@
-import { Search, X } from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
 
 // ── Filters for the Case Timeline Overview ───────────────────────────────────
 // Every value is read off the event itself: an attorney-set type, or its title
@@ -69,7 +69,9 @@ export function statusesOf(ev: FilterableEvent): Set<(typeof STATUSES)[number]> 
 
 export interface TimelineFilter { category: string; range: string; from: string; to: string; source: string; status: string; q: string }
 export const NO_FILTER: TimelineFilter = { category: "", range: "All Dates", from: "", to: "", source: "", status: "", q: "" };
-export const filterActive = (f: TimelineFilter) => !!(f.category || f.source || f.status || f.q.trim() || f.range !== "All Dates");
+export const filterActive = (f: TimelineFilter) => activeFilterCount(f) > 0;
+export const activeFilterCount = (f: TimelineFilter) =>
+  [f.category, f.source, f.status, f.q.trim(), f.range !== "All Dates"].filter(Boolean).length;
 
 const isoToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const isoDaysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
@@ -94,17 +96,32 @@ export function applyTimelineFilter<T extends FilterableEvent>(events: T[], f: T
 
 const sel = "h-9 w-full bg-white border border-line rounded-lg px-2.5 text-sm text-ink focus:outline-none focus:border-brand";
 
-export function TimelineFilterBar<T extends FilterableEvent>({ events, value, onChange }: { events: T[]; value: TimelineFilter; onChange: (f: TimelineFilter) => void }) {
+/** Opens and closes the filter panel; the count shows filters that stay applied while it's closed. */
+export function TimelineFiltersButton({ open, value, onToggle }: { open: boolean; value: TimelineFilter; onToggle: () => void }) {
+  const n = activeFilterCount(value);
+  return (
+    <button type="button" onClick={onToggle} aria-expanded={open} aria-controls="timeline-filters"
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors shrink-0 ${open || n ? "border-brand bg-tint text-deep" : "border-line bg-white text-ink hover:border-brand hover:text-deep"}`}>
+      <SlidersHorizontal className="w-3.5 h-3.5" strokeWidth={2} /> Filters
+      {n > 0 && <span className="min-w-[18px] h-[18px] inline-flex items-center justify-center rounded-full bg-brand text-white text-[10.5px] tabular-nums px-1">{n}</span>}
+    </button>
+  );
+}
+
+export function TimelineFilterBar<T extends FilterableEvent>({ events, value, onChange, open }: { events: T[]; value: TimelineFilter; onChange: (f: TimelineFilter) => void; open: boolean }) {
   const set = (k: keyof TimelineFilter) => (e: { target: { value: string } }) => onChange({ ...value, [k]: e.target.value });
   const count = (pred: (ev: T) => boolean) => events.filter(pred).length;
   const field = (id: string, label: string, control: React.ReactNode) => (
-    <label htmlFor={id} className="block min-w-[150px] flex-1 sm:flex-none sm:w-44">
+    <label htmlFor={id} className="block min-w-0 xl:w-44">
       <span className="eyebrow block mb-1">{label}</span>{control}
     </label>
   );
   return (
-    <div role="group" aria-label="Filter timeline events" className="rounded-xl border border-line bg-offwhite p-3 mb-5">
-      <div className="flex flex-wrap items-end gap-x-3 gap-y-2.5">
+    // Collapsed, the panel takes no space; the values stay applied.
+    <div id="timeline-filters" className={`grid transition-[grid-template-rows,opacity,visibility] duration-200 ease-out ${open ? "grid-rows-[1fr] opacity-100 visible" : "grid-rows-[0fr] opacity-0 invisible"}`}>
+    <div className="min-h-0 overflow-hidden">
+    <div role="group" aria-label="Filter timeline events" className="rounded-xl border border-line bg-white p-3 mb-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:flex xl:flex-wrap xl:items-end gap-x-3 gap-y-2.5">
         {field("tf-category", "Event category", (
           <select id="tf-category" className={sel} value={value.category} onChange={set("category")}>
             <option value="">All Events</option>
@@ -132,7 +149,7 @@ export function TimelineFilterBar<T extends FilterableEvent>({ events, value, on
             {STATUSES.map((s) => <option key={s} value={s}>{s} ({count((ev) => statusesOf(ev).has(s))})</option>)}
           </select>
         ))}
-        <label htmlFor="tf-q" className="block flex-1 min-w-[200px]">
+        <label htmlFor="tf-q" className="block sm:col-span-2 xl:flex-1 xl:min-w-[200px]">
           <span className="eyebrow block mb-1">Search</span>
           <span className="flex items-center gap-2 h-9 bg-white border border-line rounded-lg px-2.5 focus-within:border-brand">
             <Search className="w-4 h-4 text-[#8A98A3] shrink-0" />
@@ -140,11 +157,13 @@ export function TimelineFilterBar<T extends FilterableEvent>({ events, value, on
           </span>
         </label>
         {filterActive(value) && (
-          <button type="button" onClick={() => onChange(NO_FILTER)} className="h-9 inline-flex items-center gap-1 px-2.5 rounded-lg text-sm font-semibold text-deep hover:bg-tint">
-            <X className="w-3.5 h-3.5" /> Clear all
+          <button type="button" onClick={() => onChange(NO_FILTER)} className="h-9 justify-self-start inline-flex items-center gap-1 px-2.5 rounded-lg text-sm font-semibold text-deep hover:bg-tint">
+            <X className="w-3.5 h-3.5" /> Clear filters
           </button>
         )}
       </div>
+    </div>
+    </div>
     </div>
   );
 }

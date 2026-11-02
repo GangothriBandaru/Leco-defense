@@ -17,7 +17,7 @@ import { useCaseDetails } from "../intake/caseDetailsStore";
 import { resolveCasePolicy } from "../insurance/casePolicy";
 import { resolveCaseFacts } from "../conflict/caseFacts";
 import { useTracker } from "../tracker/trackerStore";
-import { TimelineFilterBar, applyTimelineFilter, filterActive, NO_FILTER, type TimelineFilter } from "../timeline/timelineFilters";
+import { TimelineFilterBar, TimelineFiltersButton, applyTimelineFilter, filterActive, NO_FILTER, type TimelineFilter } from "../timeline/timelineFilters";
 import { INSURANCE_ANALYSIS } from "../insurance/insuranceData";
 import { Button } from "../components/ui/button";
 import { DocActions, DocumentWorkspaceModal, RowMenu, RowActionGroup } from "../components/DocumentWorkspace";
@@ -394,6 +394,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
   const [drawerEventIndex, setDrawerEventIndex] = useState<number | null>(null);
   // Case Timeline Overview filters; the events themselves are never changed.
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>(NO_FILTER);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // Discovered Signals: active tab + whether each tab is expanded past the first 3
   const [signalTab, setSignalTab] = useState<"liability" | "injury" | "violations">("liability");
   const [signalExpanded, setSignalExpanded] = useState<{ liability: boolean; injury: boolean }>({ liability: false, injury: false });
@@ -773,29 +774,31 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                 </p>
                 {eventError && <p role="alert" className="text-xs text-[#B91C1C] mt-1">{eventError}</p>}
               </div>
+              <div className="flex items-center gap-2 shrink-0">
+              {events.length > 0 && <TimelineFiltersButton open={filtersOpen} value={timelineFilter} onToggle={() => setFiltersOpen((o) => !o)} />}
               <button
                 onClick={() => { setEventError(null); setEventForm({ mode: "add" }); }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-deep text-white rounded-lg text-xs font-semibold transition-all shrink-0"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-brand bg-brand hover:bg-deep hover:border-deep text-white rounded-lg text-xs font-semibold transition-all shrink-0"
               >
                 <Plus className="w-3.5 h-3.5" strokeWidth={2} /> Add Event
               </button>
+              </div>
             </div>
 
-            {events.length > 0 && <TimelineFilterBar events={events} value={timelineFilter} onChange={setTimelineFilter} />}
+            {events.length > 0 && <TimelineFilterBar events={events} value={timelineFilter} onChange={setTimelineFilter} open={filtersOpen} />}
             {(() => {
             const shown = applyTimelineFilter(events, timelineFilter);
             return (
             <div className="relative">
               {filterActive(timelineFilter) && events.length > 0 && (
-                <p className="text-xs text-[#5B6B78] mb-3" aria-live="polite">Showing {shown.length} of {events.length} {events.length === 1 ? "event" : "events"}</p>
+                <p className="text-xs text-[#5B6B78] mb-3" aria-live="polite">Showing {shown.length} of {events.length} {events.length === 1 ? "event" : "events"}{!filtersOpen && <> · <button type="button" onClick={() => setTimelineFilter(NO_FILTER)} className="font-semibold text-deep hover:underline">Clear filters</button></>}</p>
               )}
               {events.length === 0 && (
                 <p className="secondary-text py-6 text-center border border-dashed border-line rounded-lg">No events on the timeline. Add one, or restore removed events.</p>
               )}
               {events.length > 0 && shown.length === 0 && (
                 <div className="py-10 text-center border border-dashed border-line rounded-lg">
-                  <p className="text-sm font-semibold text-ink">No timeline events found</p>
-                  <p className="secondary-text mt-1">Try adjusting your filters or clearing them to see more events.</p>
+                  <p className="text-sm font-semibold text-ink">No timeline events match your filters.</p>
                   <button type="button" onClick={() => setTimelineFilter(NO_FILTER)} className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:bg-wash">Clear filters</button>
                 </div>
               )}
