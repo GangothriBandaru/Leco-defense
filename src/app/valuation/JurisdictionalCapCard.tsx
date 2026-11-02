@@ -20,53 +20,44 @@ export function JurisdictionalCapCard({ caseData, documents }: { caseData: any; 
   const suit = facts.caseStatus === "Suit";
   const state = (suit ? facts.courtState : undefined) || facts.incidentState || undefined;
   const county = (suit ? facts.courtCounty : undefined) || facts.incidentCounty || undefined;
-  const court = suit ? facts.courtName : undefined;
   const place = join(state, county) || facts.caseJurisdiction || undefined;
   const claim = [facts.caseType, facts.caseSubType].filter(Boolean).join(" · ") || undefined;
   const cap = state ? VERIFIED_CAPS[`${state}|${facts.caseType ?? ""}`] : undefined;
 
+  // Icon and label on one line, the value beneath; columns split by thin rules.
   const group = (icon: typeof MapPin, label: string, children: React.ReactNode) => {
     const Icon = icon;
     return (
-      <div className="flex items-start gap-2 min-w-0 @lg:px-3 @lg:first:pl-0 @lg:border-l @lg:first:border-l-0 border-line">
-        <span className="w-6 h-6 rounded-md bg-tint text-deep inline-flex items-center justify-center shrink-0"><Icon className="w-3.5 h-3.5" strokeWidth={1.75} /></span>
-        <div className="min-w-0">
-          <div className="text-[10.5px] font-semibold uppercase tracking-wide text-[#5B6B78] leading-4">{label}</div>
-          {children}
+      <div className="min-w-0 @xl:px-4 @xl:first:pl-0 @xl:last:pr-0 @xl:border-l @xl:first:border-l-0 border-line">
+        <div className="flex items-start @md:items-center gap-1.5 min-w-0">
+          <span className="w-5 h-5 rounded-md bg-tint text-deep inline-flex items-center justify-center shrink-0"><Icon className="w-3 h-3" strokeWidth={2} /></span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.03em] text-[#5B6B78] leading-4 @md:truncate" title={label}>{label}</span>
         </div>
+        <div className="mt-1.5">{children}</div>
       </div>
     );
   };
-  const value = "text-[12.5px] leading-[18px] font-semibold text-ink break-words";
-  const sub = "text-[11px] leading-4 text-[#5B6B78] break-words";
+  const value = "text-[13px] leading-[18px] font-semibold text-ink break-words";
+  const badge = "inline-flex items-center mt-1 rounded-full border text-[10.5px] font-semibold leading-4 px-1.5";
 
   return (
-    <section aria-labelledby="noneconomic-cap" className="@container rounded-xl border border-line bg-white px-4 py-3">
+    <section aria-labelledby="noneconomic-cap" className="@container rounded-xl border border-line bg-white p-4">
       <h4 id="noneconomic-cap" className="text-sm font-semibold text-ink leading-5">Jurisdictional Non-Economic Damages Limit</h4>
-      <p className="text-xs text-[#5B6B78] leading-4 mt-0.5">State law may limit recoverable non-economic damages. Informational only; it doesn't change the valuation above.</p>
-      <div className="grid grid-cols-1 @xs:grid-cols-2 @lg:grid-cols-3 gap-x-4 @lg:gap-x-0 gap-y-2.5 mt-2.5">
-        {group(MapPin, "Jurisdiction", <>
-          <p className={value}>{place ?? <span className="text-[#8A98A3] font-normal">Not provided</span>}</p>
-          {court && <p className={sub}>{court}</p>}
-        </>)}
-        {group(Scale, "Maximum non-economic damages", cap ? <>
+      <div className="grid grid-cols-1 @md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] @xl:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)] gap-x-4 @xl:gap-x-0 gap-y-3 mt-3 pt-3 border-t border-line">
+        {group(MapPin, "Jurisdiction", <p className={value}>{place ?? <span className="text-[#8A98A3] font-normal">Not provided</span>}</p>)}
+        {group(Scale, "Maximum Non-Economic Damages", cap ? <>
           <p className={`${value} tabular-nums`}>{usd(cap.amount)}</p>
-          <p className={sub}>{cap.appliesTo}</p>
+          <span className={`${badge} border-[#D1FADF] bg-[#ECFDF3] text-[#15803D]`}>Verified</span>
         </> : <>
-          <p className={value}>No applicable cap confirmed{" "}
-          <span title={`Attorney review required${claim ? ` for ${claim}` : ""}.`}
-            className="inline-flex items-center align-[1px] whitespace-nowrap rounded-full border border-[#FDE6C8] bg-[#FFF7ED] text-[#B45309] text-[10.5px] font-semibold leading-4 px-1.5">Not verified</span></p>
+          <p className={value}>No applicable cap confirmed</p>
+          <span title={`Attorney review required${claim ? ` for ${claim}` : ""}.`} className={`${badge} border-[#FDE6C8] bg-[#FFF7ED] text-[#B45309]`}>Not verified</span>
         </>)}
-        {group(BookOpen, "Legal reference", cap ? <>
-          <p className={value}>{cap.authority}</p>
-          <p className={sub}>Verified {cap.verifiedOn}{cap.url && <> · <a href={cap.url} target="_blank" rel="noreferrer" className="font-semibold text-deep hover:text-ink">View Source</a></>}</p>
-        </> : <>
-          <p className="text-[12.5px] leading-[18px] text-[#8A98A3] break-words">No verified legal source on file</p>
-        </>)}
+        {group(BookOpen, "Legal Reference", cap ? (
+          <p className={value}>{cap.url ? <a href={cap.url} target="_blank" rel="noreferrer" className="text-deep hover:text-ink">{cap.authority}</a> : cap.authority}</p>
+        ) : (
+          <p className="text-[13px] leading-[18px] text-[#5B6B78] break-words">No verified source on file</p>
+        ))}
       </div>
-      {facts.policyLimits && (
-        <p className="text-[11px] leading-4 text-[#8A98A3] mt-2">Policy limit ({facts.policyLimits}) is insurance coverage, not a statutory cap.</p>
-      )}
     </section>
   );
 }
