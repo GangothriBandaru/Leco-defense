@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { User, Building2, Shield, Gavel, CalendarDays, Scale, Hourglass, CalendarClock, ArrowRight } from "lucide-react";
+import { User, Building2, Shield, Gavel, CalendarDays, Scale, Hourglass, CalendarClock, ArrowRight, Landmark } from "lucide-react";
 import type { CaseDetails } from "../intake/caseDetailsStore";
 import { fmtDay, isSuit, daysUntil, join } from "./caseFacts";
 
@@ -55,14 +55,13 @@ export function CaseIntelligenceSummary({ d, dirty, blockers, onProceed }: {
   const contact = (...v: (string | undefined)[]) => v.filter(Boolean).join(" · ") || undefined;
 
   return (
-    <div id="case-intelligence" className="lg-card px-5 py-4 flex flex-col min-w-0 lg:max-h-full lg:min-h-0">
+    <div id="case-intelligence" className="lg-card px-5 py-4 flex flex-col min-w-0">
       <div className="flex items-center gap-2.5 mb-3 flex-wrap">
         <h2 className="section-header">Case Intelligence Summary</h2>
         <span className={`pill ${provided === total ? "pill-complete" : "pill-progress"}`} title="Counts each group once its key fact is saved">{provided} of {total} provided</span>
       </div>
 
-      {/* Only the tiles scroll when the card is taller than the space below the stage bar; the action stays in view. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-2 mb-3 lg:min-h-0 lg:overflow-y-auto">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-2 mb-3">
         <Tile icon={Building2} label="Insured" value={d.insuredName}>
           <Line k="Type" v={d.insuredType} />
           <Line k="Contact" v={contact(d.insuredContact, d.insuredEmail, d.insuredPhone)} />
@@ -76,21 +75,25 @@ export function CaseIntelligenceSummary({ d, dirty, blockers, onProceed }: {
         <Tile icon={Shield} label="Insurance" value={d.insurerName}>
           <Line k="Policy no." v={d.policyNumber} />
           <Line k="Type" v={d.policyName} />
-          <Line k="Limits" v={d.policyLimits} />
+          {d.policyLimitOccurrence || d.policyLimitAggregate || !d.policyLimits ? <>
+            <Line k="Per occurrence" v={d.policyLimitOccurrence} />
+            <Line k="Aggregate" v={d.policyLimitAggregate} />
+          </> : <Line k="Limits" v={d.policyLimits} />}
         </Tile>
         <Tile icon={Gavel} label="Case Status" value={d.caseStatus}>
           <Line k="Suit filed" v={suit ? "Yes" : pre ? "No" : undefined} />
           {suit && <Line k="Filed on" v={fmtDay(d.suitFiledDate)} />}
         </Tile>
         <Tile icon={CalendarDays} label="Incident" value={fmtDay(d.incidentDate)}>
-          <Line k="Type" v={d.incidentType || d.caseType} />
-          <Line k="Location" v={join(d.incidentLocation, d.incidentCounty, d.incidentState) || undefined} />
+          <Line k="Case type" v={d.caseType} />
+          <Line k="Subtype" v={d.caseSubType} />
+          <Line k="Location" v={d.incidentLocation || join(d.incidentCounty, d.incidentState) || undefined} />
         </Tile>
         <Tile icon={Scale} label="Suit Jurisdiction" value={pre ? <span className="font-normal text-[#5B6B78]">Not applicable · pre-suit</span> : d.courtName}>
           {!pre && <>
             <Line k="State" v={d.courtState} />
             <Line k="County" v={d.courtCounty} />
-            <Line k="Jurisdiction" v={d.suitJurisdiction} />
+            <Line k="Court location" v={d.courtLocation} />
           </>}
         </Tile>
         <Tile icon={Hourglass} label="Statute of Limitations" value={fmtDay(d.solDate)}>
@@ -99,6 +102,12 @@ export function CaseIntelligenceSummary({ d, dirty, blockers, onProceed }: {
         <Tile icon={CalendarClock} label="Answer Due" value={pre ? <span className="font-normal text-[#5B6B78]">Not applicable · pre-suit</span> : fmtDay(d.answerDueDate)}>
           {!pre && <Deadline date={d.answerDueDate} verified={d.answerVerified} />}
         </Tile>
+        <div className="sm:col-span-2 lg:col-span-1 xl:col-span-2">
+          <Tile icon={Landmark} label="Legal" value={d.jurisdictionType}>
+            <Line k="Governing law" v={d.governingLaw} />
+            <Line k="Demand" v={d.demandAmount ? `$${d.demandAmount.replace(/^\$/, "")}` : undefined} />
+          </Tile>
+        </div>
       </div>
 
       {dirty && <p className="text-xs text-[#B45309] mb-2">Case Details has unsaved changes. This summary shows the saved values.</p>}

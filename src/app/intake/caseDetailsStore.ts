@@ -28,6 +28,9 @@ export interface CaseDetails {
   insuredCountry?: string;
   insuredJurisdiction?: string;
   policyLimits?: string;
+  /** Per-occurrence and general aggregate limits; policyLimits holds them as one line. */
+  policyLimitOccurrence?: string;
+  policyLimitAggregate?: string;
   coverageNotes?: string;
   // Plaintiff & counsel
   plaintiffName?: string;
@@ -62,6 +65,8 @@ export interface CaseDetails {
   answerDueDate?: string;
   answerVerified?: string;
   governingLaw?: string;
+  /** "Comparative Negligence" | "Contributory Negligence". */
+  jurisdictionType?: string;
   // Demands & exposure. demandDocs holds document names joined by "\n".
   demandAmount?: string;
   demandDate?: string;

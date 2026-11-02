@@ -9,6 +9,7 @@ type K = keyof CaseDetails;
 export type Errors = Partial<Record<K, string>>;
 
 const INSURED_TYPES = ["Individual", "LLC", "Corporation", "Partnership", "Government", "NGO", "Other"];
+const JURISDICTION_TYPES = ["Comparative Negligence", "Contributory Negligence"];
 const DEMAND_STATUSES = ["No demand received", "Demand received", "Time-limited demand", "Under review", "Responded", "Withdrawn"];
 const VERIFY = ["Unverified", "Verified"];
 
@@ -28,6 +29,7 @@ export function validateCaseDetails(d: CaseDetails): Errors {
   for (const k of ["insuredEmail", "plaintiffEmail", "counselEmail"] as K[]) if (v(k) && !EMAIL.test(v(k))) e[k] = "Enter a valid email address.";
   for (const k of ["insuredPhone", "plaintiffPhone", "counselPhone"] as K[]) if (v(k) && !phoneOk(v(k))) e[k] = "Enter a valid phone number.";
   if (v("demandAmount") && !moneyOk(v("demandAmount"))) e.demandAmount = "Enter an amount, e.g. 250,000.";
+  for (const k of ["policyLimitOccurrence", "policyLimitAggregate"] as K[]) if (v(k) && !moneyOk(v(k))) e[k] = "Enter an amount, e.g. $1,000,000.";
   if (v("incidentDate") && v("incidentDate") > today()) e.incidentDate = "The incident date can't be in the future.";
   if (v("demandDate") && v("incidentDate") && v("demandDate") < v("incidentDate")) e.demandDate = "The demand can't predate the incident.";
   if (isSuit(d)) {
@@ -42,9 +44,9 @@ export function validateCaseDetails(d: CaseDetails): Errors {
 // The three sections and the fields each holds, for error and change badges.
 export type SectionKey = "insured" | "plaintiff" | "legal";
 export const SECTION_FIELDS: Record<SectionKey, K[]> = {
-  insured: ["insuredName", "insuredType", "insuredContact", "insuredEmail", "insuredPhone", "insuredAddress", "insuredState", "insuredCountry", "insuredJurisdiction", "insurerName", "policyNumber", "policyName", "policyLimits", "coverageNotes"],
+  insured: ["insuredName", "insuredType", "insuredContact", "insuredEmail", "insuredPhone", "insuredAddress", "insuredState", "insuredCountry", "insuredJurisdiction", "insurerName", "policyNumber", "policyName", "policyLimitOccurrence", "policyLimitAggregate", "policyLimits", "coverageNotes"],
   plaintiff: ["plaintiffName", "plaintiffLocation", "plaintiffEmail", "plaintiffPhone", "counselName", "counselFirm", "counselEmail", "counselPhone", "counselAddress", "plaintiffState", "plaintiffCounty", "plaintiffJurisdiction"],
-  legal: ["incidentType", "caseType", "incidentDate", "incidentLocation", "incidentState", "incidentCounty", "jurisdictionalLimits", "caseStatus", "suitFiledDate", "courtName", "courtLocation", "suitJurisdiction", "courtState", "courtCounty", "jurisdictionVerified", "solDate", "solVerified", "answerDueDate", "answerVerified", "governingLaw", "caseJurisdiction", "demandAmount", "demandDate", "demandStatus", "demandDocs", "exposureNotes"],
+  legal: ["incidentType", "caseType", "caseSubType", "incidentDate", "incidentLocation", "incidentState", "incidentCounty", "jurisdictionalLimits", "caseStatus", "suitFiledDate", "courtName", "courtLocation", "suitJurisdiction", "courtState", "courtCounty", "jurisdictionVerified", "solDate", "solVerified", "answerDueDate", "answerVerified", "governingLaw", "jurisdictionType", "caseJurisdiction", "demandAmount", "demandDate", "demandStatus", "demandDocs", "exposureNotes"],
 };
 const SECTIONS: { key: SectionKey; label: string; icon: typeof User; sub: string }[] = [
   { key: "insured", label: "Insured & Insurance", icon: Building2, sub: "Who we defend, how to reach them, and the coverage behind them." },
@@ -76,7 +78,7 @@ const Ref = ({ label, value, from }: { label: string; value?: string; from: stri
   </div>
 );
 
-export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, documents, dirty, onSave, onDiscard }: {
+export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, documents, dirty, onSave, onDiscard, demoFilled = 0 }: {
   draft: CaseDetails;
   setDraft: (fn: (d: CaseDetails) => CaseDetails) => void;
   errors: Errors;
@@ -87,9 +89,17 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
   dirty: boolean;
   onSave: () => void;
   onDiscard: () => void;
+  /** How many fields demo values filled in, unsaved. */
+  demoFilled?: number;
 }) {
   const val = (k: K) => draft[k] ?? "";
-  const set = (k: K) => (e: { target: { value: string } }) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  // The two limits also keep the one-line Policy limits current, which other views read.
+  const limitsLine = (occ?: string, agg?: string) => [occ?.trim() && `${occ.trim()} per occurrence`, agg?.trim() && `${agg.trim()} aggregate`].filter(Boolean).join(" / ");
+  const set = (k: K) => (e: { target: { value: string } }) => setDraft((d) => {
+    const next = { ...d, [k]: e.target.value };
+    if (k === "policyLimitOccurrence" || k === "policyLimitAggregate") next.policyLimits = limitsLine(next.policyLimitOccurrence, next.policyLimitAggregate);
+    return next;
+  });
   const err = (k: K) => (showErrors ? errors[k] : undefined);
   const id = (k: K) => `cd-${k}`;
 
@@ -147,6 +157,11 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
       <div className="px-6 pt-5 pb-4 border-b border-line">
         <h2 id="cd-title" className="section-header">Case Details</h2>
         <p className="secondary-text mt-0.5">The initial defense picture. Saved values update the Case Intelligence Summary.</p>
+        {demoFilled > 0 && (
+          <p role="status" className="mt-3 rounded-lg border border-[#FDE6C8] bg-[#FFF7ED] px-3.5 py-2.5 text-sm text-ink">
+            <b className="font-semibold">Demo values filled in.</b> {demoFilled} field{demoFilled === 1 ? "" : "s"} of this sample case had no saved value and now hold demonstration data, not verified case facts. Save Case Details to keep them, or Discard Changes to clear them.
+          </p>
+        )}
       </div>
 
       <section aria-labelledby="cd-sec-insured" className="px-6 py-5 border-b border-line">
@@ -167,7 +182,8 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
             {text("insurerName", "Insurance company", { placeholder: "e.g. Sentinel Casualty Insurance" })}
             {text("policyNumber", "Policy number", { placeholder: "e.g. CGL-0000-00" })}
             {text("policyName", "Policy type", { placeholder: "e.g. Commercial General Liability" })}
-            {text("policyLimits", "Policy limits", { placeholder: "e.g. $1,000,000 / $2,000,000" })}
+            {text("policyLimitOccurrence", "Per occurrence limit", { placeholder: "e.g. $1,000,000" })}
+            {text("policyLimitAggregate", "General aggregate limit", { placeholder: "e.g. $2,000,000" })}
             {area("coverageNotes", "Additional policy details", "Reservation of rights, exclusions, other insurance")}
         </div>
       </section>
@@ -198,6 +214,7 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
             <Sub>Incident</Sub>
             {text("incidentType", "Incident type", { placeholder: "e.g. Fall, vehicle collision" })}
             {select("caseType", "Case type", CASE_TYPES)}
+            {text("caseSubType", "Case subtype", { placeholder: "e.g. Delayed Treatment" })}
             {text("incidentDate", "Incident date", { type: "date" })}
             {text("incidentLocation", "Incident location", { placeholder: "Where it happened" })}
             {text("incidentState", "Incident state", { placeholder: "e.g. Illinois" })}
@@ -239,7 +256,8 @@ export function CaseDetailsForm({ draft, setDraft, errors, showErrors, saved, do
             {select("solVerified", "SOL verification", VERIFY, { placeholder: "Not checked" })}
             {suit && text("answerDueDate", "Answer due date", { type: "date" })}
             {suit && select("answerVerified", "Answer due verification", VERIFY, { placeholder: "Not checked" })}
-            {text("governingLaw", "Governing law", { placeholder: "e.g. Illinois law" })}
+            {text("governingLaw", "Governing law", { placeholder: "e.g. Illinois State Law" })}
+            {select("jurisdictionType", "Jurisdiction type", JURISDICTION_TYPES)}
             {text("caseJurisdiction", "Governing state, county or court", { placeholder: "e.g. Cook County, IL" })}
             <Divider />
             <Sub>Demand</Sub>

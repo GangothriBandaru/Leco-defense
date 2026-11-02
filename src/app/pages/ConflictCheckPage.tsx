@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { toast } from "sonner";
 import { StageNavigator } from "../components/StageNavigator";
@@ -10,10 +10,11 @@ import { type Party, useConflictRecord, partyState, overallState } from "../conf
 import { CaseIntelligenceSummary } from "../conflict/CaseIntelligenceSummary";
 import { ConflictSearch } from "../conflict/ConflictSearch";
 import { CaseDetailsForm, validateCaseDetails } from "../conflict/CaseDetailsForm";
+import { demoCaseDetails, withDemo } from "../conflict/demoCaseDetails";
 
 type Tab = "conflict" | "details";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "conflict", label: "Conflict Check" },
+  { key: "conflict", label: "Internal Client Conflict Check" },
   { key: "details", label: "Case Details" },
 ];
 
@@ -47,7 +48,24 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
 
   const [tab, setTab] = useState<Tab>("conflict");
   // The form's working copy lives here, so switching tabs keeps unsaved edits.
-  const [draft, setDraft] = useState<CaseDetails>(() => draftCache.get(caseId) ?? facts);
+  // The sample case's demo values fill only fields with no saved value, as unsaved changes.
+  const demo = demoCaseDetails(caseId);
+  const [draft, setDraft] = useState<CaseDetails>(() => draftCache.get(caseId) ?? withDemo(facts, demo).details);
+  const demoFilled = demo ? (Object.keys(demo) as (keyof CaseDetails)[]).filter((k) => !(facts[k] ?? "").trim() && draft[k] === demo[k]).length : 0;
+  // The summary sticks below the stage bar; when it is taller than the space
+  // there, it scrolls up with the page until its bottom shows, then sticks.
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const [stickTop, setStickTop] = useState(171);
+  useEffect(() => {
+    const el = summaryRef.current, main = document.querySelector("main");
+    if (!el || !main) return;
+    const fit = () => setStickTop(Math.min(171, main.clientHeight - el.offsetHeight - 16));
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    window.addEventListener("resize", fit);
+    return () => { ro.disconnect(); window.removeEventListener("resize", fit); };
+  }, []);
   const [showErrors, setShowErrors] = useState(false);
   const dirty = !same(draft, facts);
   // Saved values that change elsewhere flow into a form with no edits of its own.
@@ -145,9 +163,8 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
         </h1>
 
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] gap-6 items-start">
-          {/* The summary stays in view below the stage bar while the right-hand
-              content scrolls; it keeps its own height, capped to the viewport. */}
-          <div className="min-w-0 lg:sticky lg:top-[171px] lg:max-h-[calc(100vh-251px)] lg:flex lg:flex-col">
+          {/* The summary keeps its own height and stays in view while the right-hand content scrolls. */}
+          <div ref={summaryRef} className="min-w-0 lg:sticky" style={{ top: stickTop }}>
             <CaseIntelligenceSummary d={facts} dirty={dirty} blockers={blockers} onProceed={onProceedToAnalysis} />
           </div>
 
@@ -192,6 +209,7 @@ export function ConflictCheckPage({ caseData, documents, onStageClick, onBackToI
                 saved={facts}
                 onSave={save}
                 onDiscard={discard}
+                demoFilled={demoFilled}
               />
             </div>
           </div>
