@@ -68,6 +68,7 @@ function MailCard({ m, open, onToggle, onReply, onForward }: { m: MailMsg; open:
           <span className="flex items-center gap-2 flex-wrap text-sm">
             <b className="font-semibold text-ink break-words min-w-0">{m.fromN || "Unknown sender"}</b>
             <Tag text={m.kind} tone={KIND_TONE[m.kind]} />
+            {m.demo && <span title="Sample correspondence: never sent or received"><Tag text="Sample" /></span>}
             {m.att.length > 0 && <span className="inline-flex items-center gap-0.5 text-xs text-[#5B6B78]"><Paperclip className="w-3 h-3" />{m.att.length}</span>}
           </span>
           <span className={`block text-xs text-[#5B6B78] mt-0.5 ${open ? "break-words" : "truncate"}`}>

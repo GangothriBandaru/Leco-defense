@@ -7,6 +7,7 @@ import { CatIcon, Avatar, NotConnected } from "./TrackerShared";
 interface Form {
   cat: string; type: string; othertype: string; to: string; docs: string[]; other: string;
   range: string; method: string; channel: string; owner: string; cost: string; auto: boolean;
+  priority: "High" | "Medium" | "Low"; notes: string;
 }
 
 const input = "w-full bg-white border border-line rounded-lg px-3.5 py-2.5 text-sm text-ink placeholder:text-[#8A98A3] focus:outline-none focus:border-brand";
@@ -29,6 +30,7 @@ export function NewRequestDrawer({ ctx, onClose, onCreated }: { ctx: CaseCtx; on
   const [f, setF] = useState<Form>({
     cat: TAX[0][0], type: "", othertype: "", to: "", docs: TAX[0][2].slice(0, 2), other: "",
     range: ranges[0], method: "Subpoena", channel: CHANNELS[0], owner: OWNERS[0].n, cost: "0", auto: true,
+    priority: "Medium", notes: "",
   });
   const set = (p: Partial<Form>) => { setErr(""); setF((x) => ({ ...x, ...p })); };
   const tax = taxOf(f.cat);
@@ -56,6 +58,7 @@ export function NewRequestDrawer({ ctx, onClose, onCreated }: { ctx: CaseCtx; on
       cat: f.cat, type: type === "Other" ? f.othertype.trim() || "Other" : type, to: f.to.trim(),
       docs: [...f.docs, ...(f.other.trim() ? [f.other.trim()] : [])], range: f.range.trim() || ranges[0],
       method: f.method, channel: f.channel, owner: f.owner, cost: Math.max(0, +f.cost || 0), auto: f.auto,
+      priority: f.priority, notes: f.notes.trim() || undefined,
     }, mode);
     onCreated(id, mode === "draft" ? "Draft saved" : needsApproval ? "Approval request recorded" : "Request recorded as sent. Email isn't connected, so send the letter yourself.");
   };
@@ -144,6 +147,15 @@ export function NewRequestDrawer({ ctx, onClose, onCreated }: { ctx: CaseCtx; on
           <input className={input} type="number" min={0} value={f.cost} onChange={(e) => set({ cost: e.target.value })} />
         </label>
       </section>
+      <section className="grid sm:grid-cols-2 gap-4">
+        <div className="space-y-2.5">
+          <span className="text-sm font-semibold text-ink">Priority</span>
+          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Priority">{(["High", "Medium", "Low"] as const).map((x) => <button key={x} type="button" role="radio" aria-checked={x === f.priority} aria-pressed={x === f.priority} onClick={() => set({ priority: x })} className={chip(x === f.priority)}>{x}</button>)}</div>
+        </div>
+        <label className="space-y-2.5 block"><span className="text-sm font-semibold text-ink">Internal notes / instructions</span>
+          <textarea className={`${input} min-h-[64px]`} value={f.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="For the team only; not part of the letter" />
+        </label>
+      </section>
       <div className="flex flex-wrap items-center justify-between gap-3 bg-wash border border-line rounded-xl px-3.5 py-3 text-sm">
         <span className="inline-flex items-center gap-1.5 text-ink"><Clock className="w-4 h-4 text-deep" />Response due <b>{due}</b></span>
         <label className="inline-flex items-center gap-2 cursor-pointer text-ink">
@@ -188,7 +200,10 @@ export function NewRequestDrawer({ ctx, onClose, onCreated }: { ctx: CaseCtx; on
             : <button type="button" onClick={() => submit("draft")} className="h-9 px-4 rounded-lg border border-line text-sm font-semibold text-ink hover:bg-wash">Save as draft</button>}
           {step < 3
             ? <button type="button" onClick={next} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-brand hover:bg-deep text-white text-sm font-semibold">Continue <ArrowRight className="w-4 h-4" /></button>
-            : <button type="button" onClick={() => submit("send")} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-brand hover:bg-deep text-white text-sm font-semibold"><Send className="w-4 h-4" />{needsApproval ? "Request approval" : "Send request"}</button>}
+            : <span className="flex items-center gap-2">
+                <button type="button" onClick={() => submit("draft")} className="h-9 px-4 rounded-lg border border-line text-sm font-semibold text-ink hover:bg-wash">Save as draft</button>
+                <button type="button" onClick={() => submit("send")} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-brand hover:bg-deep text-white text-sm font-semibold"><Send className="w-4 h-4" />{needsApproval ? "Request approval" : "Send request"}</button>
+              </span>}
         </div>
       </aside>
     </>

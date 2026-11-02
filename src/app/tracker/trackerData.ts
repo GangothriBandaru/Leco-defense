@@ -34,6 +34,11 @@ export interface DocRequest {
   /** When the next follow-up is due — set by a reminder or a snooze. */
   next?: string;
   createdAt: string;
+  priority?: "High" | "Medium" | "Low";
+  /** Internal notes — never part of the letter. */
+  notes?: string;
+  /** Sample record for a demo case, not real case work. */
+  demo?: boolean;
 }
 
 export type MailDir = "in" | "out" | "draft";
@@ -51,6 +56,8 @@ export interface MailMsg {
   att: { name: string; pages: number }[];
   unread: boolean;
   replied: boolean;
+  /** Sample correspondence for a demo case — never sent or received. */
+  demo?: boolean;
 }
 
 /** The open case, as the tracker needs it. */

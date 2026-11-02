@@ -11,7 +11,7 @@ import {
 // survive leaving the case or a refresh. Email is not connected: messages here
 // are records of what the firm sent or noted, and nothing is delivered.
 
-interface CaseState { requests: DocRequest[]; mail: MailMsg[]; seq: number; mseq: number; refreshedAt?: string }
+export interface CaseState { requests: DocRequest[]; mail: MailMsg[]; seq: number; mseq: number; refreshedAt?: string; seeded?: boolean }
 const STORAGE_KEY = "leco.docTracker.v1";
 const EMPTY: CaseState = { requests: [], mail: [], seq: 0, mseq: 0 };
 
@@ -91,6 +91,7 @@ function goOut(s: CaseState, ctx: CaseCtx, r: DocRequest) {
 export interface NewRequestInput {
   cat: string; type: string; to: string; docs: string[]; range: string;
   method: string; channel: string; owner: string; cost: number; auto: boolean;
+  priority?: DocRequest["priority"]; notes?: string;
 }
 
 export function createRequest(ctx: CaseCtx, input: NewRequestInput, mode: "draft" | "send"): string {
@@ -183,7 +184,13 @@ export function escalate(ctx: CaseCtx, id: string) {
 }
 
 export function markAcknowledged(ctx: CaseCtx, id: string) {
-  mutate(ctx.caseId, (s) => { const r = find(s, id); r.status = "Acknowledged"; log(r, "Recipient acknowledged the request"); }, "Marked acknowledged");
+  mutate(ctx.caseId, (s) => {
+    const r = find(s, id);
+    r.status = "Acknowledged";
+    log(r, "Recipient acknowledged the request");
+    // Filed under Acknowledgments as a record the attorney entered, not an email.
+    addMail(s, ctx, r, "in", "Acknowledgment", `Recorded by ${r.owner}: ${r.to} acknowledged this request. Email isn't connected, so this is a note of the acknowledgment, not the message itself.`, { unread: false });
+  }, "Marked acknowledged");
 }
 
 export function markReceived(ctx: CaseCtx, id: string, pages: number, files: ReqFile[], none: boolean) {
@@ -198,6 +205,9 @@ export function markReceived(ctx: CaseCtx, id: string, pages: number, files: Req
     r.pages = pages;
     r.files = [...r.files, ...files];
     log(r, `Records received: ${pages} page${pages === 1 ? "" : "s"}${files.length ? `, ${files.length} file${files.length === 1 ? "" : "s"} attached` : ""}`);
+    // Filed under Records received, with the files attached.
+    addMail(s, ctx, r, "in", "Response", `Recorded by ${r.owner}: ${pages} page${pages === 1 ? "" : "s"} received from ${r.to}. Email isn't connected, so this is a note of the receipt, not the message itself.`,
+      { unread: false, att: files.map((f) => ({ name: f.name, pages: f.pages })) });
   }, none ? "Marked no records" : "Marked received");
 }
 
@@ -242,4 +252,17 @@ export function sendReply(ctx: CaseCtx, src: MailMsg, fwd: boolean, to: { n: str
     if (!fwd) { const o = s.mail.find((m) => m.id === src.id); if (o) o.replied = true; }
     if (r) log(r, `${fwd ? "Forwarded to" : "Reply recorded to"} ${to.n || to.e}`);
   }, fwd ? "Forward recorded" : "Reply recorded");
+}
+
+/** Loads sample requests and correspondence for a demo case, once: only when
+ *  the case has no tracker records of its own, so nothing is ever replaced
+ *  and a refresh never adds them again. */
+export function ensureDemo(ctx: CaseCtx, build: (ctx: CaseCtx) => CaseState | undefined) {
+  const cur = db[ctx.caseId];
+  if (cur && (cur.seeded || cur.requests.length || cur.mail.length)) return;
+  const seed = build(ctx);
+  if (!seed) return;
+  db = { ...db, [ctx.caseId]: { ...seed, seeded: true } };
+  save();
+  emit();
 }

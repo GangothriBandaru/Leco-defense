@@ -24,7 +24,7 @@ export function CaseMailbox({ ctx, mail, requests, onOpenRequest }: {
   const [sel, setSel] = useState("");
   const fd = FOLDERS.find((x) => x[0] === folder) ?? FOLDERS[0];
   const qq = q.trim().toLowerCase();
-  const match = (m: MailMsg) => fd[3](m) && (!qq || `${m.subject} ${m.fromN} ${m.toN} ${m.body}`.toLowerCase().includes(qq));
+  const match = (m: MailMsg) => fd[3](m) && (!qq || `${m.subject} ${m.fromN} ${m.toN} ${m.body} ${m.att.map((x) => x.name).join(" ")}`.toLowerCase().includes(qq));
   const keyOf = (m: MailMsg) => m.rid ?? m.id;
   const threadOf = (k: string) => mail.filter((m) => keyOf(m) === k).sort((a, b) => t(a) - t(b));
   const threads = [...new Set(mail.filter(match).map(keyOf))]
@@ -92,6 +92,7 @@ export function CaseMailbox({ ctx, mail, requests, onOpenRequest }: {
                     <span className="block mt-0.5 text-xs leading-[18px] text-[#5B6B78] truncate">{m.body.replace(/\s+/g, " ").slice(0, 140)}</span>
                     <span className="flex flex-wrap items-center gap-1.5 mt-2">
                       <Tag text={m.kind} tone={KIND_TONE[m.kind]} />
+                      {m.demo && <Tag text="Sample" />}
                       {r && <span className="rounded-md bg-track px-1.5 py-px text-[11px] text-ink truncate max-w-[160px]">{r.cat}</span>}
                       {th.L.length > 1 && <span className="text-[11px] text-[#5B6B78] tabular-nums">{th.L.length} messages</span>}
                       {th.L.some((x) => x.att.length) && <Paperclip className="w-3 h-3 text-[#5B6B78]" aria-label="Has attachments" />}

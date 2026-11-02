@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, RefreshCw, Plus, Inbox, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { StageNavigator } from "../components/StageNavigator";
@@ -6,7 +6,8 @@ import type { CaseDocument } from "../types/case";
 import { resolveCasePolicy } from "../insurance/casePolicy";
 import { useCaseDetails } from "../intake/caseDetailsStore";
 import { type CaseCtx, fmtTime } from "../tracker/trackerData";
-import { useTracker, refreshLocal } from "../tracker/trackerStore";
+import { useTracker, refreshLocal, ensureDemo } from "../tracker/trackerStore";
+import { buildDemoTracker } from "../tracker/trackerDemo";
 import { RequestTracker } from "../tracker/RequestTracker";
 import { CaseMailbox } from "../tracker/CaseMailbox";
 import { NewRequestDrawer } from "../tracker/NewRequestDrawer";
@@ -26,6 +27,9 @@ export function DocumentTrackerPage({ caseData, documents, stage, backLabel, onB
     insurer: saved?.insurerName ?? policy.insurer,
   };
   const { requests, mail, refreshedAt } = useTracker(ctx.caseId);
+  // The demo case opens with sample records, loaded once and only into an empty tracker.
+  useEffect(() => { ensureDemo(ctx, buildDemoTracker); }, [ctx.caseId]);
+  const hasDemo = requests.some((r) => r.demo) || mail.some((m) => m.demo);
   const [tab, setTab] = useState<"tracker" | "mail">("tracker");
   const [drawer, setDrawer] = useState(false);
   const [focus, setFocus] = useState<{ id: string; n: number } | undefined>();
@@ -63,6 +67,11 @@ export function DocumentTrackerPage({ caseData, documents, stage, backLabel, onB
           </div>
         </div>
 
+        {hasDemo && (
+          <p role="note" className="rounded-lg border border-[#FDE6C8] bg-[#FFF7ED] px-3.5 py-2.5 text-sm text-ink">
+            <b className="font-semibold">Sample data.</b> This demo case is loaded with sample requests and correspondence, marked Sample. They were never sent or received, and you can update them like any other record.
+          </p>
+        )}
         <div role="tablist" aria-label="Document Tracker" className="grid grid-cols-2 gap-1 bg-track rounded-xl p-1 max-w-[640px]">
           {([["tracker", "Request Tracker", "Status of every request", Inbox], ["mail", "Case Mailbox", "Case email, threaded", Mail]] as const).map(([k, l, s, I]) => {
             const on = tab === k;

@@ -18,6 +18,7 @@ import { toast } from "sonner";
 
 const btn = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:bg-wash transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 const btnP = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+const PRIORITY_TONE: Record<string, string> = { High: "crit", Medium: "warn", Low: "" };
 const METRIC_TONE = { crit: "bg-[#FEF3F2] text-[#B42318]", warn: "bg-[#FFF7ED] text-[#B45309]", acc: "bg-tint text-deep", "": "bg-[#F1F5F7] text-[#5B6B78]" };
 const chip =(on: boolean) => `inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${on ? "border-brand bg-tint text-deep" : "border-line bg-white text-ink hover:border-[#CBD7DE]"}`;
 
@@ -191,7 +192,8 @@ function DetailPanel({ ctx, r, mail }: { ctx: CaseCtx; r: DocRequest | undefined
         <div className="min-w-0 flex-1">
           <div className="eyebrow">{r.cat} · {r.type} · <span className="mono-ref">{r.id}</span></div>
           <h3 className="card-title mt-0.5 break-words">{r.to}</h3>
-          <div className="flex flex-wrap items-center gap-2 mt-1.5"><StatusPill r={r} /><DueChip r={r} /></div>
+          <div className="flex flex-wrap items-center gap-2 mt-1.5"><StatusPill r={r} /><DueChip r={r} />{r.priority && <Tag text={`${r.priority} priority`} tone={PRIORITY_TONE[r.priority]} />}{r.demo && <Tag text="Sample" />}</div>
+          {r.notes && <p className="mt-2 text-sm text-ink rounded-lg bg-wash border border-line px-3 py-2"><span className="eyebrow mr-1.5">Internal note</span>{r.notes}</p>}
         </div>
       </div>
 
@@ -459,7 +461,7 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
                           <span className="min-w-0 flex-1 space-y-1">
                             <span className="block text-sm font-semibold text-ink leading-snug break-words">{r.to}</span>
                             <span className="block text-xs text-[#5B6B78] truncate"><b className="font-semibold text-ink">{r.type}</b> · {r.docs.join(", ")}</span>
-                            <span className="flex flex-wrap items-center gap-2"><StatusPill r={r} /><DueChip r={r} /><span className="ml-auto"><Avatar name={r.owner} /></span></span>
+                            <span className="flex flex-wrap items-center gap-2"><StatusPill r={r} /><DueChip r={r} />{r.priority === "High" && <Tag text="High" tone="crit" />}{r.demo && <Tag text="Sample" />}<span className="ml-auto"><Avatar name={r.owner} /></span></span>
                           </span>
                         </button>
                       </div>
