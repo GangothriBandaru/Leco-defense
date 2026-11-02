@@ -36,7 +36,7 @@ function Metric({ label, value, sub }: { label: string; value: number | string; 
 export function EvidenceConflictsWorkspace({ caseId, ev }: { caseId: string; ev: CaseEvidence }) {
   const dec = useCaseDecisions(caseId);
   const decided = (c: Conflict) => !!dec.items[`conflict:${c.id}`];
-  const [tab, setTab] = useState<"review" | "matrix" | "sources">("review");
+  const [tab, setTab] = useState<"review" | "matrix">("review");
   const [f, setF] = useState({ topic: "All", severity: "All", effect: "All", status: "All" });
   const [selId, setSelId] = useState<string | undefined>(() => takeFocus());
   const { conflicts, sources } = ev;
@@ -69,7 +69,7 @@ export function EvidenceConflictsWorkspace({ caseId, ev }: { caseId: string; ev:
         <Metric label="Decided" value={decidedN} sub={`${conflicts.length - decidedN} still open`} />
       </div>
 
-      <Tabs<"review" | "matrix" | "sources"> label="evidence" value={tab} onChange={setTab} tabs={[["review", "Conflict review", conflicts.length], ["matrix", "Fact × source matrix"], ["sources", "Source library", sources.length]]} />
+      <Tabs<"review" | "matrix"> label="evidence" value={tab} onChange={setTab} tabs={[["review", "Conflict review", conflicts.length], ["matrix", "Fact × source matrix"]]} />
 
       {tab === "review" && (
         <div className="space-y-4">
@@ -111,7 +111,8 @@ export function EvidenceConflictsWorkspace({ caseId, ev }: { caseId: string; ev:
       )}
 
       {tab === "matrix" && <Matrix ev={ev} onOpen={open} />}
-      {tab === "sources" && <SourceLibrary ev={ev} onOpen={open} />}
+      {/* The sources behind both views, below them rather than as a third tab. */}
+      <SourceLibrary ev={ev} onOpen={open} />
     </div>
   );
 }
@@ -284,8 +285,8 @@ function SourceLibrary({ ev, onOpen }: { ev: CaseEvidence; onOpen: (id: string) 
     <section className="lg-card overflow-hidden">
       <div className="px-6 py-4 border-b border-line flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="section-header">Source library</h2>
-          <p className="secondary-text mt-0.5">The case record and every text document compared. Characteristics describe the kind of source, not its credibility.</p>
+          <h2 className="section-header">Evidence &amp; Source Library</h2>
+          <p className="secondary-text mt-0.5">Review the documents and records used to identify and compare factual conflicts in this case. Characteristics describe the kind of source, not its credibility.</p>
         </div>
         <label className="flex items-center gap-2 bg-white border border-line rounded-lg px-3 focus-within:border-brand w-full sm:w-64">
           <Search className="w-4 h-4 text-[#8A98A3]" /><input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search sources" className="flex-1 min-w-0 py-2 text-sm bg-transparent outline-none" />

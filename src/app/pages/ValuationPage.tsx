@@ -3,6 +3,7 @@ import { FileTypeIcon, FileTypeTag } from "../components/fileType";
 import { StageNavigator } from "../components/StageNavigator";
 import { ChevronLeft, ChevronRight, CheckCircle, ArrowRight, DollarSign, Shield, AlertCircle, Sparkles, ChevronDown, FileText, Eye, X, ChevronUp, Plus, Pencil, Trash2, History, UserPlus } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { JurisdictionalCapCard } from "../valuation/JurisdictionalCapCard";
 import { AnalysisFinding, type CaseDocument } from "../types/case";
 import { DocumentWorkspaceModal, RowMenu } from "../components/DocumentWorkspace";
 import { AiDraftPanel } from "../components/AiDraftPanel";
@@ -1093,6 +1094,9 @@ export function ValuationPage({ caseData, analysisFindings = [], documents = [],
                       <strong className="font-semibold text-ink">Non-Economic Damages</strong> based on the verified case evidence and overall case strength.
                     </p>
                   </div>
+
+                  {/* The state's non-economic damages cap, if one is confirmed — informational only */}
+                  <JurisdictionalCapCard caseData={caseData} documents={documents} />
 
                   {/* Damage Factors — collapsible breakdown of what the multiplier covers */}
                   <div className="border border-line rounded-xl overflow-hidden">
