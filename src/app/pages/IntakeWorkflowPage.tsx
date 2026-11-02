@@ -1272,24 +1272,123 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
       </dl>
     </div>
   );
-  const receivedList = receivedOpen && receivedDocs.length > 0 ? (
-    <ul id="received-list" aria-label="Received documents" className="bg-white border border-line rounded-xl divide-y divide-line overflow-hidden">
-      {receivedDocs.map((doc) => (
-        <li key={doc.id} className="flex items-center justify-between gap-4 px-5 py-2.5">
-          <span className="flex items-center gap-2 min-w-0 mono-ref text-ink">
-            <FileTypeIcon name={doc.name} />
-            <span className="truncate">{doc.name}</span>
-          </span>
-          <span className="flex items-center gap-3 shrink-0">
-            <span className="text-xs text-[#5B6B78] whitespace-nowrap hidden sm:inline">{doc.receivedAt ? formatShortDate(doc.receivedAt) : doc.date}</span>
-            <span className={`pill whitespace-nowrap ${DOC_STATUS_PILL[doc.status]}`}>
-              {doc.status === "Processing" && <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />}
-              {doc.status}
-            </span>
-          </span>
-        </li>
-      ))}
-    </ul>
+  // ── Required documents, requirement by requirement ──
+  // The case's required-document checklist: each requirement is met by the
+  // categories REQUESTED_DOC_CATEGORIES assigns it, and a part the
+  // missing-evidence check still names (the Police Report Addendum) keeps it
+  // partly outstanding. Every file on the case counts, whoever sent it; each
+  // shows its sender. A file still being processed isn't treated as received.
+  const REQUIRED_DOCS = ["Medical Records", "Police Report", "Insurance Documents", "Wage Loss Records"];
+  type RequirementStatus = "Received" | "Partially received" | "Missing" | "Processing" | "Needs review" | "Failed";
+  const REQUIREMENT_STATUS_PILL: Record<RequirementStatus, string> = {
+    Received: "pill-complete", "Partially received": "pill-progress", Missing: "pill-risk",
+    Processing: "pill-neutral", "Needs review": "bg-[#F1F3F5] text-[#5B6B78] border-line", Failed: "pill-risk",
+  };
+  const caseDocs = sharedDocs.filter((d) => { const k = fileKind(d.name); return k !== "image" && k !== "video"; });
+  const requirementCategory = (d: CaseDocument) => d.category ?? classifyDocuments([d]).find((c) => c.docs.length > 0)?.name ?? "General Documents";
+  // The missing-evidence check names some requirements differently.
+  const MISSING_NAME: Record<string, string> = { "Insurance Policy": "Insurance Documents" };
+  const requirementStatus = REQUIRED_DOCS.map((name) => {
+    const cats = REQUESTED_DOC_CATEGORIES[name] ?? [];
+    const files = caseDocs.filter((d) => cats.includes(requirementCategory(d)));
+    // Parts the missing-evidence check still names under this requirement.
+    const parts = name === "Police Report" ? missingEvidence.filter((m) => m.title === "Police Report Addendum").map((m) => m.title) : [];
+    const outstanding = files.length ? parts : [missingEvidence.find((m) => (MISSING_NAME[m.title] ?? m.title) === name)?.title ?? name, ...parts];
+    const status: RequirementStatus = !files.length ? "Missing"
+      : files.every((d) => d.status === "Failed") ? "Failed"
+      : outstanding.length ? "Partially received"
+      : files.some((d) => !processingFinished(d)) ? "Processing"
+      : files.some((d) => d.status === "Failed" || d.status === "Attorney Review Required") ? "Needs review"
+      : "Received";
+    return { name, files, outstanding, status };
+  });
+  const otherDocs = caseDocs.filter((d) => !REQUIRED_DOCS.some((n) => (REQUESTED_DOC_CATEGORIES[n] ?? []).includes(requirementCategory(d))));
+  const [openRequirement, setOpenRequirement] = useState<string | null>(null);
+  const senderLabel = (d: CaseDocument) => d.source === "Attorney" ? "Defense Counsel" : d.source;
+  const receivedList = receivedOpen ? (
+    <section id="received-list" aria-label="Received documents by requirement" className="bg-white border border-line rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h3 className="card-title">Document status by requirement</h3>
+        <span className="text-xs text-[#5B6B78]">
+          {requirementStatus.filter((r) => r.status === "Received").length} of {requirementStatus.length} received · {requirementStatus.filter((r) => r.outstanding.length).length} with documents outstanding
+        </span>
+      </div>
+      <div className="grid grid-cols-1 @3xl:grid-cols-2 gap-3">
+        {[...requirementStatus, ...(otherDocs.length ? [{ name: "Other documents", files: otherDocs, outstanding: [] as string[], status: (otherDocs.some((d) => !processingFinished(d)) ? "Processing" : "Received") as RequirementStatus }] : [])].map((r) => {
+          const open = openRequirement === r.name;
+          return (
+            <div key={r.name} className="rounded-xl border border-line bg-offwhite p-3.5 min-w-0">
+              <button type="button" aria-expanded={open} onClick={() => setOpenRequirement(open ? null : r.name)} className="w-full flex items-start justify-between gap-3 text-left">
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-ink">{r.name}</span>
+                  <span className="block text-xs text-[#5B6B78] mt-0.5">
+                    {r.files.length} received{r.outstanding.length ? ` · ${r.outstanding.length} outstanding` : ""}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1.5 shrink-0">
+                  <span className={`pill whitespace-nowrap ${REQUIREMENT_STATUS_PILL[r.status]}`}>{r.status}</span>
+                  <ChevronDown className={`w-4 h-4 text-deep transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
+                </span>
+              </button>
+              {!open ? (
+                <div className="mt-2 space-y-0.5 text-xs">
+                  {r.files.length > 0 && <p className="text-[#5B6B78] break-words"><span className="font-semibold text-ink">Received:</span> {r.files.map((d) => d.name).join(", ")}</p>}
+                  {r.outstanding.length > 0 && <p className="text-[#B45309] break-words"><span className="font-semibold">Outstanding:</span> {r.outstanding.join(", ")}</p>}
+                </div>
+              ) : (
+                <ul className="mt-2.5 space-y-1.5">
+                  {r.files.map((d) => (
+                    <li key={d.id} className="flex items-center justify-between gap-2 rounded-lg bg-white border border-line px-2.5 py-1.5">
+                      <button type="button" onClick={() => handlePreviewDocument(d)} className="flex items-center gap-2 min-w-0 text-left mono-ref text-ink hover:text-deep" title={`Preview ${d.name}`}>
+                        <FileTypeIcon name={d.name} />
+                        <span className="truncate">{d.name}</span>
+                      </button>
+                      <span className="flex items-center gap-2 shrink-0 text-xs text-[#5B6B78]">
+                        <span className="hidden sm:inline">{senderLabel(d)}</span>
+                        <span className={`pill whitespace-nowrap ${DOC_STATUS_PILL[d.status]}`}>{d.status === "Attorney Review Required" ? "Needs Review" : d.status}</span>
+                      </span>
+                    </li>
+                  ))}
+                  {r.outstanding.map((t) => (
+                    <li key={t} className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-[#FAC775] bg-[#FFF8EC] px-2.5 py-1.5 text-xs">
+                      <span className="text-[#854F0B] font-semibold">{t}</span>
+                      <span className="pill pill-risk whitespace-nowrap">Missing</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  ) : null;
+
+  // The missing-documents panel: the same missing-evidence list the request
+  // form reads, so the count, names and any request stay in step.
+  const missingDocsPanel = documentsReceived && missingDocCount > 0 ? (
+    <div id="missing-docs" className="rounded-xl p-5 scroll-mt-[150px]" style={{ background: "#FAEEDA", border: "1px solid #FAC775" }}>
+      <div className="flex items-start gap-3">
+        <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "#854F0B" }} strokeWidth={1.75} />
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold mb-1" style={{ color: "#854F0B" }}>
+            {missingDocCount} Document{missingDocCount === 1 ? "" : "s"} Still Missing
+          </h3>
+          <ul className="space-y-0.5 mb-4">
+            {missingDocNames.map((name) => (
+              <li key={name} className="text-sm" style={{ color: "#854F0B" }}>• {name}</li>
+            ))}
+          </ul>
+          <button
+            onClick={() => openMissingRequestModal()}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
+            style={{ background: "#B45309" }}
+          >
+            <Send className="w-3.5 h-3.5" strokeWidth={1.75} /> Request All Missing
+          </button>
+        </div>
+      </div>
+    </div>
   ) : null;
 
   // The status filters and search — shown below the processing summary on case
@@ -1682,6 +1781,7 @@ export function IntakeWorkflowPage({ caseData, pipeline, onPipelineUpdate, onDoc
                     {docsSummary}
                   </div>
                   {receivedList}
+                  {missingDocsPanel}
                 </div>
 
                 {/* Documents Sub-Tabs */}
