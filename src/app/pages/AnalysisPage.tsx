@@ -17,6 +17,7 @@ import { useCaseDetails } from "../intake/caseDetailsStore";
 import { resolveCasePolicy } from "../insurance/casePolicy";
 import { resolveCaseFacts } from "../conflict/caseFacts";
 import { useTracker } from "../tracker/trackerStore";
+import { TimelineFilterBar, applyTimelineFilter, filterActive, NO_FILTER, type TimelineFilter } from "../timeline/timelineFilters";
 import { INSURANCE_ANALYSIS } from "../insurance/insuranceData";
 import { Button } from "../components/ui/button";
 import { DocActions, DocumentWorkspaceModal, RowMenu, RowActionGroup } from "../components/DocumentWorkspace";
@@ -391,6 +392,8 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
   const [workspaceView, setWorkspaceView] = useState<"preview" | "insights" | "chat">("preview");
   // Index of the timeline event shown in the detail drawer (null = closed)
   const [drawerEventIndex, setDrawerEventIndex] = useState<number | null>(null);
+  // Case Timeline Overview filters; the events themselves are never changed.
+  const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>(NO_FILTER);
   // Discovered Signals: active tab + whether each tab is expanded past the first 3
   const [signalTab, setSignalTab] = useState<"liability" | "injury" | "violations">("liability");
   const [signalExpanded, setSignalExpanded] = useState<{ liability: boolean; injury: boolean }>({ liability: false, injury: false });
@@ -778,12 +781,26 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
               </button>
             </div>
 
+            {events.length > 0 && <TimelineFilterBar events={events} value={timelineFilter} onChange={setTimelineFilter} />}
+            {(() => {
+            const shown = applyTimelineFilter(events, timelineFilter);
+            return (
             <div className="relative">
+              {filterActive(timelineFilter) && events.length > 0 && (
+                <p className="text-xs text-[#5B6B78] mb-3" aria-live="polite">Showing {shown.length} of {events.length} {events.length === 1 ? "event" : "events"}</p>
+              )}
               {events.length === 0 && (
                 <p className="secondary-text py-6 text-center border border-dashed border-line rounded-lg">No events on the timeline. Add one, or restore removed events.</p>
               )}
-              {events.map((ev, i) => {
-                const isLast = i === events.length - 1;
+              {events.length > 0 && shown.length === 0 && (
+                <div className="py-10 text-center border border-dashed border-line rounded-lg">
+                  <p className="text-sm font-semibold text-ink">No timeline events found</p>
+                  <p className="secondary-text mt-1">Try adjusting your filters or clearing them to see more events.</p>
+                  <button type="button" onClick={() => setTimelineFilter(NO_FILTER)} className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:bg-wash">Clear filters</button>
+                </div>
+              )}
+              {shown.map((ev, i) => {
+                const isLast = i === shown.length - 1;
                 return (
                   <div key={ev.id} className="relative flex gap-3 pb-3 last:pb-0">
                     {/* Marker + connector line */}
@@ -795,7 +812,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                     {/* Compact event card — date, title, supporting doc count, View Details, then Edit / Delete */}
                     <div className="group flex-1 min-w-0 flex items-center rounded-lg border border-line bg-white mb-1 transition-colors hover:border-soft hover:bg-wash">
                       <button
-                        onClick={() => setDrawerEventIndex(i)}
+                        onClick={() => setDrawerEventIndex(events.indexOf(ev))}
                         className="flex-1 min-w-0 flex items-center justify-between gap-3 text-left pl-4 pr-2 py-2.5"
                       >
                         <div className="min-w-0">
@@ -828,6 +845,8 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
                 );
               })}
             </div>
+            );
+            })()}
           </div>
       </div>
     );
