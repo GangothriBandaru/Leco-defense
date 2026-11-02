@@ -1,71 +1,59 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Clock, Bell, Inbox, Search, X, Check, Send, CheckCheck, FileText, Download, Upload, Plus, Loader2, Pencil, Trash2, Eye, AlarmClock, Hourglass,
+  Clock, Bell, Scale, Inbox, Search, X, Check, Send, ArrowUpRight, CheckCheck, FileText, Download, Upload, Plus, Loader2,
 } from "lucide-react";
 import {
-  type CaseCtx, type DocRequest, type MailMsg, type ListFilter, type ReqFile,
-  CATEGORIES, FILTERS, FOCUS_LABEL, BUCKETS, STAGES, OWNERS, TYPICAL, APPROVAL_THRESHOLD,
-  inFilter, bucket, urgency, isOver, isDone, daysTo, stageIx, nextReminder, reminderText, titleOf, taxOf,
-  fmtDate, fmtShort, fmtTime, money, addDays, today,
+  type CaseCtx, type DocRequest, type MailMsg, type ListFilter, type Tone,
+  CATEGORIES, FILTERS, FOCUS_LABEL, BUCKETS, STAGES, OWNERS, ESC, TYPICAL, APPROVAL_THRESHOLD,
+  inFilter, bucket, urgency, isOver, isDone, isWaiting, daysTo, stageIx, reminderCount, nextReminder,
+  reminderText, fmtDate, fmtShort, fmtTime, money, addDays, today, iso,
 } from "./trackerData";
 import {
-  sendDraft, recordApproval, sendReminder, remindMany, markAcknowledged, markReceived, markReviewed,
-  reassign, setDue, scheduleFollowUp, setAuto, updateDraft, deleteDraft, addDocuments,
+  sendDraft, recordApproval, sendReminder, remindMany, escalate, markAcknowledged, markReceived, markReviewed,
+  reassign, extendDue, snooze, setAuto,
 } from "./trackerStore";
-import { CatIcon, StatusPill, DueChip, Avatar, Thread, Tag, NotConnected, Collapse, Modal, FilePreview } from "./TrackerShared";
-import { fileBlob, saveBlob } from "./trackerFiles";
-import { putMediaFile } from "../intake/mediaFileStore";
+import { CatIcon, StatusPill, DueChip, Avatar, Thread, Tag, NotConnected, Collapse } from "./TrackerShared";
+import { putMediaFile, downloadMediaFile } from "../intake/mediaFileStore";
 import { toast } from "sonner";
 
 const btn = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line bg-white text-xs font-semibold text-deep hover:bg-wash transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 const btnP = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-brand hover:bg-deep text-white text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
-const btnD = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-xs font-semibold transition-colors";
-const input = "w-full bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-[#8A98A3] focus:outline-none focus:border-brand";
-const PRIORITY_TONE: Record<string, string> = { High: "crit", Normal: "", Medium: "", Low: "" };
+const PRIORITY_TONE: Record<string, string> = { High: "crit", Medium: "warn", Low: "" };
 const METRIC_TONE = { crit: "bg-[#FEF3F2] text-[#B42318]", warn: "bg-[#FFF7ED] text-[#B45309]", acc: "bg-tint text-deep", "": "bg-[#F1F5F7] text-[#5B6B78]" };
 const chip =(on: boolean) => `inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${on ? "border-brand bg-tint text-deep" : "border-line bg-white text-ink hover:border-[#CBD7DE]"}`;
 
-/** yyyy-mm-dd for a date input, in local time. */
-const dayInput = (s?: string) => { if (!s) return ""; const d = new Date(s); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-const fromInput = (day: string, time = "00:00") => { const [y, m, d] = day.split("-").map(Number), [h, mi] = time.split(":").map(Number); return new Date(y, m - 1, d, h || 0, mi || 0).toISOString(); };
-const slug = (t: string) => t.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
-
-type NextAction = "send" | "approve" | "remind" | "review" | "received" | "ack";
-function nextStep(r: DocRequest, confirmedAt?: string): { title: string; text: string; actions: [NextAction, string][]; tone: string } {
+type NextAction = "send" | "approve" | "remind" | "escalate" | "review" | "received" | "ack";
+function nextStep(r: DocRequest): { title: string; text: string; actions: [NextAction, string][]; tone: string } {
   const n = daysTo(r) ?? 0;
-  if (r.status === "Draft") return { title: "Ready to send", text: "Check the details, then send the request to the recipient.", actions: [["send", "Send request"]], tone: "" };
+  const last = r.log[r.log.length - 1]?.text ?? "No activity yet";
+  if (r.status === "Draft") return { title: "Ready to send", text: "Review the request and send it to the recipient.", actions: [["send", "Send request"]], tone: "" };
   if (r.status === "Awaiting approval") return { title: "Waiting for carrier approval", text: `${money(r.cost)} is over the ${money(APPROVAL_THRESHOLD)} pre-approval threshold. Record the carrier's approval to send it.`, actions: [["approve", "Record approval"]], tone: "warn" };
-  if (isOver(r)) return { title: `No response, ${-n} day${n === -1 ? "" : "s"} past due`, text: `The documents were due ${fmtDate(r.due)}. Send a reminder to ${r.to}.`, actions: [["remind", "Send reminder"], ["received", "Mark as received"]], tone: "crit" };
-  if (r.status === "Received" && !r.reviewed) return { title: "Documents received", text: `Received${r.received ? ` ${fmtDate(r.received)}` : ""}. Review the documents, then mark the request reviewed.`, actions: [["review", "Mark as reviewed"]], tone: "acc" };
-  if (isDone(r)) return { title: "Complete", text: `Documents received${r.received ? ` ${fmtDate(r.received)}` : ""} and reviewed${r.reviewedAt ? ` ${fmtDate(r.reviewedAt)}` : ""}.`, actions: [], tone: "ok" };
-  const due = r.due ? `${n === 0 ? "Due today" : `Due in ${n} day${n === 1 ? "" : "s"}`} (${fmtDate(r.due)}).` : "";
-  const follow = r.next ? ` Next follow-up: ${fmtDate(r.next)}, ${fmtTime(r.next)}.` : "";
-  const acked = ["Acknowledged", "In progress", "Partially received"].includes(r.status);
-  if (acked) return { title: "Acknowledged, waiting for the documents", text: `${due}${follow}`, actions: [["remind", "Send reminder"], ["received", "Mark as received"]], tone: "" };
-  if (confirmedAt) return { title: "Recipient confirmed receipt", text: `${r.to} confirmed the request on ${fmtDate(confirmedAt)}. Mark it acknowledged to move it forward. ${due}${follow}`, actions: [["ack", "Mark acknowledged"], ["remind", "Send reminder"], ["received", "Mark as received"]], tone: "acc" };
-  return { title: "Waiting for a response", text: `${due}${follow}`, actions: [["remind", "Send reminder"], ["ack", "Mark acknowledged"], ["received", "Mark as received"]], tone: "" };
+  if (isOver(r)) return { title: `No response, ${-n} day${n === -1 ? "" : "s"} past due`, text: `Last activity: ${last}. Send a reminder now, or escalate.`, actions: [["remind", "Send reminder"], ["escalate", ESC[r.method] ?? "Escalate"]], tone: "crit" };
+  if (isWaiting(r)) return { title: "Waiting on plaintiff's counsel", text: `Due ${fmtDate(r.due)}. ${last}.`, actions: [["remind", "Remind plaintiff's counsel"], ["received", "Mark received"]], tone: "warn" };
+  if (r.status === "Received" && !r.reviewed) return { title: "Records received", text: `${r.pages} page${r.pages === 1 ? "" : "s"} received. Review them, then mark the request reviewed.`, actions: [["review", "Mark reviewed"]], tone: "acc" };
+  if (isDone(r)) return { title: "Complete", text: r.status === "No records" ? "The recipient certified that no records exist." : `${r.pages} pages received and reviewed.`, actions: [], tone: "ok" };
+  const acts: [NextAction, string][] = [["remind", "Send reminder"]];
+  if (r.status === "Sent") acts.push(["ack", "Mark acknowledged"]);
+  acts.push(["received", "Mark received"]);
+  return { title: r.status === "Escalated" ? "Escalated" : "With the recipient", text: `${n === 0 ? "Due today" : `Due in ${n} day${n === 1 ? "" : "s"}`} (${fmtDate(r.due)}). ${r.auto ? `Next automatic reminder: ${nextReminder(r)}.` : "Automatic reminders are off."}`, actions: acts, tone: "" };
 }
 const NEXT_BG: Record<string, string> = { crit: "bg-[#FEF2F2] border-[#FBD5D5]", warn: "bg-[#FFF7ED] border-[#FDE6C8]", acc: "bg-tint border-[#CDEBF5]", ok: "bg-[#ECFDF3] border-[#D1FADF]", "": "bg-wash border-line" };
 
 function Stepper({ r }: { r: DocRequest }) {
   const ix = stageIx(r), over = isOver(r), done = isDone(r);
-  const dates = [
-    r.createdAt, r.sent, r.log.find((l) => /acknowledged/i.test(l.text))?.at,
-    r.received ?? r.log.find((l) => /^(Documents|Records) received/i.test(l.text))?.at,
-    r.reviewedAt ?? r.log.find((l) => l.text === "Reviewed")?.at,
-  ];
+  const dates = [r.createdAt, r.sent, r.log.find((l) => /acknowledged/i.test(l.text))?.at, r.log.find((l) => /^Records received|no records/i.test(l.text))?.at, r.log.find((l) => l.text === "Reviewed")?.at];
   return (
-    <ol className="grid grid-cols-5" aria-label="Request progress">
+    <ol className="grid grid-cols-5">
       {STAGES.map((s, i) => {
         const complete = i < ix || (done && i === ix), cur = i === ix && !complete;
         return (
-          <li key={s} aria-current={cur ? "step" : undefined} className="relative flex flex-col items-center text-center gap-1 min-w-0">
+          <li key={s} className="relative flex flex-col items-center text-center gap-1 min-w-0">
             {i > 0 && <span className={`absolute top-[10px] right-1/2 w-full h-[2px] ${i <= ix ? "bg-brand" : "bg-line"}`} />}
             <span className={`relative z-[1] w-[22px] h-[22px] rounded-full border-2 inline-flex items-center justify-center ${complete ? "bg-brand border-brand text-white" : cur ? (over ? "border-[#B91C1C] bg-[#FEF2F2]" : "border-brand bg-white ring-4 ring-tint") : "border-line bg-white"}`}>
               {complete && <Check className="w-3 h-3" strokeWidth={3} />}
             </span>
             <span className="text-[11px] font-semibold text-ink">{s}</span>
-            <span className={`text-[10.5px] ${cur && over ? "text-[#B91C1C] font-semibold" : "text-[#8A98A3]"}`}>{cur && over ? `${-(daysTo(r) ?? 0)}d overdue` : dates[i] && i <= ix ? fmtShort(dates[i]) : " "}</span>
+            <span className={`text-[10.5px] ${cur && over ? "text-[#B91C1C] font-semibold" : "text-[#8A98A3]"}`}>{cur && over ? `${-(daysTo(r) ?? 0)}d overdue` : dates[i] && (i < ix || complete) ? fmtShort(dates[i]) : " "}</span>
           </li>
         );
       })}
@@ -88,219 +76,145 @@ function OpenTime({ r }: { r: DocRequest }) {
   );
 }
 
-type Dialog = "" | "owner" | "due" | "snooze" | "remind" | "delete" | "edit" | "upload";
-
-function ReassignDialog({ ctx, r, onClose }: { ctx: CaseCtx; r: DocRequest; onClose: () => void }) {
-  const [owner, setOwner] = useState(r.owner);
+function Ladder({ r }: { r: DocRequest }) {
+  const n = r.status === "Escalated" ? 4 : Math.min(reminderCount(r) + 1, 3);
   return (
-    <Modal title="Reassign request" onClose={onClose} footer={<>
-      <button type="button" className={btn} onClick={onClose}>Cancel</button>
-      <button type="button" className={btnP} disabled={owner === r.owner} onClick={() => { reassign(ctx, [r.id], owner); onClose(); }}>Reassign</button>
-    </>}>
-      <p className="text-sm text-[#5B6B78]">Choose who handles <b className="text-ink">{titleOf(r)}</b>.</p>
-      <div role="radiogroup" aria-label="Team member" className="space-y-1.5">
-        {OWNERS.map((o) => (
-          <label key={o.n} className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer text-sm ${owner === o.n ? "border-brand bg-tint" : "border-line hover:bg-wash"}`}>
-            <input type="radio" name="owner" checked={owner === o.n} onChange={() => setOwner(o.n)} className="accent-[#3FB5D7]" />
-            <Avatar name={o.n} /><span className="flex-1 text-ink">{o.n}</span>{o.n === r.owner && <span className="text-xs text-[#5B6B78]">Current</span>}
-          </label>
-        ))}
-      </div>
-    </Modal>
+    <ol className="flex flex-wrap gap-x-3 gap-y-1 mt-2.5">
+      {["Requested", "Reminder 1", "Reminder 2", "Escalate"].map((s, i) => (
+        <li key={s} className={`inline-flex items-center gap-1.5 text-[11px] ${i < n ? "text-ink font-semibold" : i === n && isOver(r) ? "text-[#B91C1C] font-bold" : "text-[#8A98A3]"}`}>
+          <i className={`w-2 h-2 rounded-full border ${i < n ? "bg-ink border-ink" : i === n && isOver(r) ? "border-[#B91C1C] ring-2 ring-[#FEF2F2]" : "border-[#8A98A3]"}`} />{s}
+        </li>
+      ))}
+    </ol>
   );
 }
 
-function DueDialog({ ctx, r, onClose }: { ctx: CaseCtx; r: DocRequest; onClose: () => void }) {
-  const [day, setDay] = useState(dayInput(r.due ?? addDays(today(), 7).toISOString()));
-  const min = dayInput(today().toISOString());
-  const ok = !!day && day >= min && day !== dayInput(r.due);
-  return (
-    <Modal title="Extend due date" onClose={onClose} footer={<>
-      <button type="button" className={btn} onClick={onClose}>Cancel</button>
-      <button type="button" className={btnP} disabled={!ok} onClick={() => { setDue(ctx, r.id, fromInput(day)); onClose(); }}>Save due date</button>
-    </>}>
-      <p className="text-sm text-[#5B6B78]">Current due date: <b className="text-ink">{r.due ? fmtDate(r.due) : "Not set"}</b></p>
-      <label className="block"><span className="eyebrow block mb-1">New due date</span>
-        <input type="date" className={input} value={day} min={min} onChange={(e) => setDay(e.target.value)} />
-      </label>
-    </Modal>
-  );
-}
-
-function SnoozeDialog({ ctx, r, onClose }: { ctx: CaseCtx; r: DocRequest; onClose: () => void }) {
-  const [day, setDay] = useState(dayInput(addDays(today(), 1).toISOString()));
-  const [time, setTime] = useState("09:00");
-  const min = dayInput(today().toISOString());
-  return (
-    <Modal title="Snooze follow-up" onClose={onClose} footer={<>
-      <button type="button" className={btn} onClick={onClose}>Cancel</button>
-      <button type="button" className={btnP} disabled={!day || day < min || !time} onClick={() => { scheduleFollowUp(ctx, r.id, fromInput(day, time)); onClose(); }}>Schedule reminder</button>
-    </>}>
-      <p className="text-sm text-[#5B6B78]">Pick when to follow up with {r.to}. The due date stays {r.due ? fmtDate(r.due) : "unset"}.</p>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block"><span className="eyebrow block mb-1">Date</span><input type="date" className={input} value={day} min={min} onChange={(e) => setDay(e.target.value)} /></label>
-        <label className="block"><span className="eyebrow block mb-1">Time</span><input type="time" className={input} value={time} onChange={(e) => setTime(e.target.value)} /></label>
-      </div>
-    </Modal>
-  );
-}
-
-function ReminderDialog({ ctx, r, onClose }: { ctx: CaseCtx; r: DocRequest; onClose: () => void }) {
-  const [text, setText] = useState(reminderText(r, isOver(r) ? "Firm" : "Friendly", ctx));
-  return (
-    <Modal title="Send reminder" onClose={onClose} footer={<>
-      <button type="button" className={btn} onClick={onClose}>Cancel</button>
-      <button type="button" className={btnP} disabled={!text.trim()} onClick={() => { sendReminder(ctx, r.id, text.trim()); onClose(); }}><Send className="w-3.5 h-3.5" />Send reminder</button>
-    </>}>
-      <p className="text-sm text-ink">Send a reminder to <b>{r.to}</b>{r.contact ? <> at <span className="mono-ref">{r.contact}</span></> : null}?</p>
-      <textarea rows={7} value={text} onChange={(e) => setText(e.target.value)} aria-label="Reminder message" className={input} />
-      <NotConnected />
-    </Modal>
-  );
-}
-
-function DeleteDialog({ ctx, r, onClose }: { ctx: CaseCtx; r: DocRequest; onClose: () => void }) {
-  return (
-    <Modal title="Delete draft?" onClose={onClose} footer={<>
-      <button type="button" className={btn} onClick={onClose}>Cancel</button>
-      <button type="button" className={btnD} onClick={() => { deleteDraft(ctx, r.id); onClose(); }}><Trash2 className="w-3.5 h-3.5" />Delete draft</button>
-    </>}>
-      <p className="text-sm text-ink"><b>{titleOf(r)}</b> to {r.to} and its draft letter will be removed. This can't be undone after the notice closes.</p>
-    </Modal>
-  );
-}
-
-function EditDialog({ ctx, r, onClose }: { ctx: CaseCtx; r: DocRequest; onClose: () => void }) {
-  const options = [...new Set([...r.docs, ...taxOf(r.cat)[2]])];
-  const [f, setF] = useState({ title: r.title ?? "", to: r.to, docs: r.docs, other: "", range: r.range, due: dayInput(r.due), priority: r.priority === "Medium" ? "Normal" : r.priority ?? "Normal", notes: r.notes ?? "" });
-  const [err, setErr] = useState("");
-  const set = (p: Partial<typeof f>) => { setErr(""); setF((x) => ({ ...x, ...p })); };
-  const save = () => {
-    const docs = [...f.docs, ...(f.other.trim() ? [f.other.trim()] : [])];
-    if (!f.to.trim()) return setErr("Add who the request is for.");
-    if (!docs.length) return setErr("Pick at least one document.");
-    updateDraft(ctx, r.id, { title: f.title.trim() || undefined, to: f.to.trim(), docs, range: f.range.trim() || r.range, due: f.due ? fromInput(f.due) : undefined, priority: f.priority as DocRequest["priority"], notes: f.notes.trim() || undefined });
-    onClose();
-  };
-  return (
-    <Modal title="Edit request" onClose={onClose} wide footer={<>
-      <button type="button" className={btn} onClick={onClose}>Cancel</button>
-      <button type="button" className={btnP} onClick={save}>Save changes</button>
-    </>}>
-      <div className="grid sm:grid-cols-2 gap-3">
-        <label className="block"><span className="eyebrow block mb-1">Request</span><input className={input} value={f.title} placeholder={r.type} onChange={(e) => set({ title: e.target.value })} /></label>
-        <label className="block"><span className="eyebrow block mb-1">Recipient</span><input className={input} value={f.to} onChange={(e) => set({ to: e.target.value })} /></label>
-      </div>
-      <div><span className="eyebrow block mb-1.5">Documents requested</span>
-        <div className="flex flex-wrap gap-1.5">
-          {options.map((d) => { const on = f.docs.includes(d); return <button key={d} type="button" aria-pressed={on} onClick={() => set({ docs: on ? f.docs.filter((x) => x !== d) : [...f.docs, d] })} className={chip(on)}>{on ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}{d}</button>; })}
-        </div>
-        <input className={`${input} mt-2`} value={f.other} placeholder="Optional: another document" onChange={(e) => set({ other: e.target.value })} aria-label="Another document" />
-      </div>
-      <div className="grid sm:grid-cols-2 gap-3">
-        <label className="block"><span className="eyebrow block mb-1">Date range</span><input className={input} value={f.range} onChange={(e) => set({ range: e.target.value })} /></label>
-        <label className="block"><span className="eyebrow block mb-1">Due date</span><input type="date" className={input} value={f.due} min={dayInput(today().toISOString())} onChange={(e) => set({ due: e.target.value })} /></label>
-      </div>
-      <div><span className="eyebrow block mb-1.5">Priority</span>
-        <div className="flex gap-1.5" role="radiogroup" aria-label="Priority">{(["High", "Normal", "Low"] as const).map((x) => <button key={x} type="button" role="radio" aria-checked={f.priority === x} onClick={() => set({ priority: x })} className={chip(f.priority === x)}>{x}</button>)}</div>
-      </div>
-      <label className="block"><span className="eyebrow block mb-1">Internal notes</span><textarea rows={3} className={input} value={f.notes} onChange={(e) => set({ notes: e.target.value })} /></label>
-      {err && <p role="alert" className="text-sm text-[#B91C1C]">{err}</p>}
-    </Modal>
-  );
-}
-
-function UploadDialog({ ctx, r, onClose }: { ctx: CaseCtx; r: DocRequest; onClose: () => void }) {
+function ReceiveBox({ ctx, r, onDone }: { ctx: CaseCtx; r: DocRequest; onDone: () => void }) {
+  const [pages, setPages] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [none, setNone] = useState(false);
   const [busy, setBusy] = useState(false);
-  const open = !isDone(r);
-  const upload = async () => {
+  const [err, setErr] = useState("");
+  const save = async () => {
+    const n = Math.round(+pages);
+    if (!none && (!pages.trim() || !Number.isFinite(n) || n < 0)) return setErr("Enter the number of pages received.");
     setBusy(true);
     try {
-      const stored: ReqFile[] = await Promise.all(files.map(async (f) => ({ name: f.name, pages: 0, size: f.size, storageKey: await putMediaFile(f) })));
-      addDocuments(ctx, r.id, stored);
-      onClose();
+      const stored = none ? [] : await Promise.all(files.map(async (f) => ({ name: f.name, pages: 0, size: f.size, storageKey: await putMediaFile(f) })));
+      markReceived(ctx, r.id, none ? 0 : n, stored, none);
+      onDone();
     } catch {
-      toast.error("The files couldn't be stored in this browser.");
+      setErr("The files could not be stored in this browser.");
     } finally {
       setBusy(false);
     }
   };
-  const sample = () => {
-    const name = `${slug(r.to)}_${slug(r.docs[r.files.length % r.docs.length] ?? "Document")}.pdf`;
-    addDocuments(ctx, r.id, [{ name, pages: 1, demo: true }]);
-    onClose();
-  };
   return (
-    <Modal title="Upload documents" onClose={onClose} footer={<>
-      <button type="button" className={btn} onClick={onClose}>Cancel</button>
-      <button type="button" className={btnP} disabled={!files.length || busy} onClick={upload}>{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}Upload {files.length || ""}</button>
-    </>}>
-      <p className="text-sm text-[#5B6B78]">Attach the documents {r.to} produced.{open ? " The request will be marked received." : ""}</p>
-      <label className="flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-line rounded-xl px-4 py-6 text-sm text-[#5B6B78] cursor-pointer hover:border-brand hover:bg-wash">
-        <Upload className="w-5 h-5 text-deep" />
-        {files.length ? <b className="text-ink">{files.map((f) => f.name).join(", ")}</b> : <span><b className="text-deep">Choose files</b> from your computer</span>}
-        <input type="file" multiple className="sr-only" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+    <div className="rounded-xl border border-line bg-wash p-3.5 space-y-3">
+      <label className="inline-flex items-center gap-2 text-sm text-ink cursor-pointer">
+        <input type="checkbox" checked={none} onChange={(e) => setNone(e.target.checked)} className="w-4 h-4 accent-[#3FB5D7]" />
+        The recipient certified that no records exist
       </label>
-      <div className="flex items-center justify-between gap-3 rounded-lg bg-wash border border-line px-3 py-2.5 text-sm">
-        <span className="text-[#5B6B78]">No file to hand? Attach a sample document for the demo.</span>
-        <button type="button" className={btn} onClick={sample}><FileText className="w-3.5 h-3.5" />Add sample</button>
+      {!none && (
+        <div className="grid sm:grid-cols-[140px_1fr] gap-3 items-end">
+          <label className="block"><span className="eyebrow block mb-1">Pages received</span>
+            <input type="number" min={0} value={pages} onChange={(e) => { setErr(""); setPages(e.target.value); }} className="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand" />
+          </label>
+          <label className="block"><span className="eyebrow block mb-1">Attach the files (optional)</span>
+            <span className={`${btn} cursor-pointer w-full sm:w-auto`}><Upload className="w-3.5 h-3.5" />{files.length ? `${files.length} file${files.length === 1 ? "" : "s"} chosen` : "Choose files"}
+              <input type="file" multiple className="hidden" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+            </span>
+          </label>
+        </div>
+      )}
+      {err && <p className="text-xs text-[#B91C1C]">{err}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" className={btn} onClick={onDone}>Cancel</button>
+        <button type="button" className={btnP} disabled={busy} onClick={save}>{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}Save</button>
       </div>
-    </Modal>
+    </div>
+  );
+}
+
+function ReminderComposer({ ctx, r, onDone }: { ctx: CaseCtx; r: DocRequest; onDone: () => void }) {
+  const initTone: Tone = isOver(r) ? (reminderCount(r) >= 2 ? "Final notice" : "Firm") : "Friendly";
+  const [tone, setTone] = useState<Tone>(initTone);
+  const [channel, setChannel] = useState(r.channel);
+  const [text, setText] = useState(reminderText(r, initTone, ctx));
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { ref.current?.focus(); ref.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }, []);
+  return (
+    <div className="border border-brand rounded-xl p-3.5 space-y-3 ring-2 ring-tint bg-white">
+      <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-[#5B6B78] w-14">Tone</span>
+        {(["Friendly", "Firm", "Final notice"] as Tone[]).map((t) => <button key={t} type="button" aria-pressed={t === tone} onClick={() => { setTone(t); setText(reminderText(r, t, ctx)); }} className={chip(t === tone)}>{t}</button>)}
+      </div>
+      <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-[#5B6B78] w-14">Send by</span>
+        {["Retrieval vendor portal", "Email", "Fax", "Phone call (log only)"].map((c) => <button key={c} type="button" aria-pressed={c === channel} onClick={() => setChannel(c)} className={chip(c === channel)}>{c}</button>)}
+      </div>
+      <textarea ref={ref} rows={6} value={text} onChange={(e) => setText(e.target.value)} aria-label="Reminder message" className="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-brand" />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button type="button" className={btn} onClick={onDone}>Cancel</button>
+        <div className="flex gap-2">
+          <button type="button" className={btn} onClick={() => { sendReminder(ctx, r.id, channel, tone, text, "later"); onDone(); }}><Clock className="w-3.5 h-3.5" />Tomorrow 9 AM</button>
+          <button type="button" className={btnP} disabled={!text.trim()} onClick={() => { sendReminder(ctx, r.id, channel, tone, text, "now"); onDone(); }}><Send className="w-3.5 h-3.5" />Record reminder</button>
+        </div>
+      </div>
+      <NotConnected />
+    </div>
   );
 }
 
 function DetailPanel({ ctx, r, mail }: { ctx: CaseCtx; r: DocRequest | undefined; mail: MailMsg[] }) {
-  const [dlg, setDlg] = useState<Dialog>("");
-  const [tab, setTab] = useState<"activity" | "messages" | "files">("activity");
-  const [preview, setPreview] = useState<{ name: string; blob: Blob } | null>(null);
-  useEffect(() => { setDlg(""); setTab("activity"); setPreview(null); }, [r?.id]);
+  const [menu, setMenu] = useState<"" | "owner" | "due" | "snooze">("");
+  const [composer, setComposer] = useState(false);
+  const [rx, setRx] = useState(false);
+  const [tab, setTab] = useState<"messages" | "activity" | "files">("messages");
+  useEffect(() => { setMenu(""); setComposer(false); setRx(false); setTab("messages"); }, [r?.id]);
   if (!r) return <div className="lg-card p-10 text-center text-sm text-[#5B6B78] flex flex-col items-center gap-2"><Inbox className="w-8 h-8 text-[#9BDAEC]" />Select a request to see its status and history.</div>;
 
+  const ns = nextStep(r), done = isDone(r);
   const thread = mail.filter((m) => m.rid === r.id).sort((a, b) => +new Date(a.at) - +new Date(b.at));
-  const confirmed = thread.find((m) => m.dir === "in" && m.kind === "Acknowledgment")?.at;
-  const ns = nextStep(r, confirmed), done = isDone(r), draft = r.status === "Draft" || r.status === "Awaiting approval";
   const run = (a: NextAction) => {
     if (a === "send") sendDraft(ctx, r.id);
     if (a === "approve") recordApproval(ctx, r.id);
+    if (a === "escalate") escalate(ctx, r.id);
     if (a === "review") markReviewed(ctx, r.id);
     if (a === "ack") markAcknowledged(ctx, r.id);
-    if (a === "remind") setDlg("remind");
-    if (a === "received") markReceived(ctx, r.id);
+    if (a === "remind") { setRx(false); setTab("messages"); setComposer(true); }
+    if (a === "received") { setComposer(false); setRx(true); }
   };
-  const ICON: Record<NextAction, typeof Bell> = { send: Send, approve: Check, remind: Bell, review: CheckCheck, received: Inbox, ack: Check };
-  const file = async (f: ReqFile, then: (b: Blob) => void) => {
-    const b = await fileBlob(f, ctx.caseName, r.to);
-    if (b) then(b); else toast.error("This file isn't stored in this browser, so it can't be opened or downloaded.");
-  };
-  const tools: [Dialog, string, typeof Bell][] = [
-    ...(r.status === "Draft" ? [["edit", "Edit request", Pencil], ["delete", "Delete draft", Trash2]] as [Dialog, string, typeof Bell][] : []),
-    ["owner", "Reassign", Clock],
-    ...(!done ? [["due", "Extend due date", Clock]] as [Dialog, string, typeof Bell][] : []),
-    ...(!done && !draft ? [["snooze", "Snooze follow-up", AlarmClock]] as [Dialog, string, typeof Bell][] : []),
-    ...(!draft ? [["upload", "Upload documents", Upload]] as [Dialog, string, typeof Bell][] : []),
-  ];
-  const row = (k: string, v: React.ReactNode, wide = false) => <div className={wide ? "col-span-2" : ""}><dt className="eyebrow mb-1">{k}</dt><dd className="text-ink">{v}</dd></div>;
+  const ICON: Record<NextAction, typeof Bell> = { send: Send, approve: Check, remind: Bell, escalate: ArrowUpRight, review: CheckCheck, received: Inbox, ack: Check };
 
   return (
     <div id="request-detail" className="lg-card p-5 space-y-5">
       <div className="flex gap-3.5 items-start">
         <CatIcon cat={r.cat} size={44} />
         <div className="min-w-0 flex-1">
-          <div className="eyebrow">{r.cat} · <span className="mono-ref">{r.id}</span></div>
-          <h3 className="card-title mt-0.5 break-words">{titleOf(r)}</h3>
-          <p className="text-sm text-[#5B6B78] break-words">To {r.to}</p>
-          <div className="flex flex-wrap items-center gap-2 mt-1.5"><StatusPill r={r} /><DueChip r={r} />{r.priority && <Tag text={`${r.priority === "Medium" ? "Normal" : r.priority} priority`} tone={PRIORITY_TONE[r.priority]} />}</div>
+          <div className="eyebrow">{r.cat} · {r.type} · <span className="mono-ref">{r.id}</span></div>
+          <h3 className="card-title mt-0.5 break-words">{r.to}</h3>
+          <div className="flex flex-wrap items-center gap-2 mt-1.5"><StatusPill r={r} /><DueChip r={r} />{r.priority && <Tag text={`${r.priority} priority`} tone={PRIORITY_TONE[r.priority]} />}{r.demo && <Tag text="Sample" />}</div>
+          {r.notes && <p className="mt-2 text-sm text-ink rounded-lg bg-wash border border-line px-3 py-2"><span className="eyebrow mr-1.5">Internal note</span>{r.notes}</p>}
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Manage request">
-        {tools.map(([k, l, I]) => (
-          <button key={k} type="button" onClick={() => setDlg(k)} className={`${btn} ${k === "delete" ? "text-[#B91C1C]" : ""}`}>
-            {k === "owner" ? <Avatar name={r.owner} /> : <I className="w-3.5 h-3.5" />}{l}
-          </button>
-        ))}
-      </div>
+      {!done && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Manage request">
+            {([["owner", "Reassign"], ["due", "Extend due date"], ["snooze", "Snooze follow-up"]] as const).map(([k, l]) => (
+              <button key={k} type="button" aria-expanded={menu === k} onClick={() => setMenu(menu === k ? "" : k)} className={`${btn} ${menu === k ? "border-brand bg-tint" : ""}`}>
+                {k === "owner" ? <Avatar name={r.owner} /> : k === "due" ? <Clock className="w-3.5 h-3.5" /> : <Bell className="w-3.5 h-3.5" />}{l}
+              </button>
+            ))}
+          </div>
+          {menu && (
+            <div className="rounded-xl border border-line bg-wash p-3 space-y-2">
+              {menu === "owner" && (<><span className="text-xs text-[#5B6B78]">Assign to</span><div className="flex flex-wrap gap-1.5">{OWNERS.map((o) => <button key={o.n} type="button" aria-pressed={r.owner === o.n} disabled={r.owner === o.n} onClick={() => { reassign(ctx, [r.id], o.n); setMenu(""); }} className={chip(r.owner === o.n)}><Avatar name={o.n} />{o.n}</button>)}</div></>)}
+              {menu === "due" && (<><span className="text-xs text-[#5B6B78]">Current due date: {r.due ? fmtDate(r.due) : "none"}. Changes the request's deadline.</span><div className="flex flex-wrap gap-1.5">{[7, 14, 30].map((d) => <button key={d} type="button" onClick={() => { extendDue(ctx, r.id, d); setMenu(""); }} className={chip(false)}>+{d} days · {fmtShort(iso(addDays(r.due ? new Date(r.due) : today(), d)))}</button>)}</div></>)}
+              {menu === "snooze" && (<><span className="text-xs text-[#5B6B78]">Pause follow-up reminders until (the due date stays the same)</span><div className="flex flex-wrap gap-1.5">{([["Tomorrow", 1], ["In 3 days", 3], ["Next week", 7]] as const).map(([l, d]) => <button key={d} type="button" onClick={() => { snooze(ctx, r.id, d); setMenu(""); }} className={chip(false)}>{l} · {fmtShort(iso(addDays(today(), d)))}</button>)}</div></>)}
+            </div>
+          )}
+        </div>
+      )}
 
       <Stepper r={r} />
 
@@ -309,6 +223,7 @@ function DetailPanel({ ctx, r, mail }: { ctx: CaseCtx; r: DocRequest | undefined
           <div className="eyebrow">Next step</div>
           <b className={`block text-[15px] mt-0.5 ${ns.tone === "crit" ? "text-[#B91C1C]" : "text-ink"}`}>{ns.title}</b>
           <p className="text-sm text-ink mt-0.5">{ns.text}</p>
+          {!done && r.status !== "Draft" && r.status !== "Awaiting approval" && <Ladder r={r} />}
           <OpenTime r={r} />
         </div>
         {ns.actions.length > 0 && (
@@ -318,47 +233,34 @@ function DetailPanel({ ctx, r, mail }: { ctx: CaseCtx; r: DocRequest | undefined
         )}
       </div>
 
+      {rx && <ReceiveBox ctx={ctx} r={r} onDone={() => setRx(false)} />}
+
       <dl className="grid grid-cols-2 gap-x-5 gap-y-3.5 text-sm">
-        {row("Recipient", r.to)}
-        {row("Category", r.cat)}
-        {row("Status", <StatusPill r={r} />)}
-        {row("Assigned to", <span className="inline-flex items-center gap-2"><Avatar name={r.owner} />{r.owner}</span>)}
-        {row("Created", fmtDate(r.createdAt))}
-        {row("Sent", r.sent ? fmtDate(r.sent) : <span className="text-[#8A98A3]">Not sent</span>)}
-        {row("Due", r.due ? fmtDate(r.due) : <span className="text-[#8A98A3]">Not set</span>)}
-        {r.received ? row("Received", fmtDate(r.received)) : row("Priority", r.priority === "Medium" ? "Normal" : r.priority ?? "Normal")}
-        {r.received && row("Priority", r.priority === "Medium" ? "Normal" : r.priority ?? "Normal")}
-        {row("Request method", `${r.method} · ${r.channel}`)}
-        {row("Date range", r.range)}
-        {r.next && !done && row("Next follow-up", `${fmtDate(r.next)}, ${fmtTime(r.next)}`)}
-        {row("Documents requested", <span className="flex flex-wrap gap-1.5">{r.docs.map((d) => <span key={d} className="rounded-md bg-track px-2 py-0.5 text-xs text-ink">{d}</span>)}</span>, true)}
-        {row("Internal notes", r.notes ? <span className="block rounded-lg bg-wash border border-line px-3 py-2">{r.notes}</span> : <span className="text-[#8A98A3]">None</span>, true)}
+        <div className="col-span-2"><dt className="eyebrow mb-1">Documents requested</dt><dd className="flex flex-wrap gap-1.5">{r.docs.map((d) => <span key={d} className="rounded-md bg-track px-2 py-0.5 text-xs text-ink">{d}</span>)}</dd></div>
+        <div><dt className="eyebrow mb-1">Date range</dt><dd className="text-ink">{r.range}</dd></div>
+        <div><dt className="eyebrow mb-1">Method</dt><dd className="text-ink">{r.method} · {r.channel}</dd></div>
+        <div><dt className="eyebrow mb-1">Sent</dt><dd className="text-ink">{r.sent ? fmtDate(r.sent) : "Not sent"}</dd></div>
+        <div><dt className="eyebrow mb-1">Due</dt><dd className="text-ink">{r.due ? fmtDate(r.due) : "Not scheduled"}</dd></div>
+        <div><dt className="eyebrow mb-1">Owner</dt><dd className="flex items-center gap-2 text-ink"><Avatar name={r.owner} />{r.owner}</dd></div>
+        <div><dt className="eyebrow mb-1">Estimated cost</dt><dd className="text-ink">{r.cost ? money(r.cost) : "—"}</dd></div>
+        <div className="col-span-2"><dt className="eyebrow mb-1">Contact</dt><dd className={r.contact ? "text-ink" : "text-[#8A98A3]"}>{r.contact || "Not recorded"}</dd></div>
       </dl>
 
       <div className="inline-flex bg-track border border-line rounded-lg p-0.5" role="tablist">
-        {([["activity", "Activity", r.log.length], ["messages", "Messages", thread.length], ["files", "Documents", r.files.length]] as const).map(([k, l, n]) => (
+        {([["messages", "Messages", thread.length], ["activity", "Activity", r.log.length], ["files", "Files", r.files.length]] as const).map(([k, l, n]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={`px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 ${tab === k ? "bg-white text-ink shadow-sm" : "text-[#5B6B78] hover:text-ink"}`}>
             {l}<span className="text-[10px] px-1.5 rounded-full bg-track text-[#5B6B78]">{n}</span>
           </button>
         ))}
       </div>
 
-      {tab === "activity" && (
-        <ol className="space-y-2.5" aria-label="Activity history">
-          {[...r.log].reverse().map((l, i) => (
-            <li key={i} className="grid grid-cols-[110px_10px_1fr] gap-2.5 text-sm">
-              <span className="mono-ref text-xs pt-0.5">{fmtShort(l.at)} · {fmtTime(l.at)}</span>
-              <span className="w-2 h-2 rounded-full bg-brand mt-1.5" />
-              <span className="text-ink">{l.text}</span>
-            </li>
-          ))}
-        </ol>
-      )}
       {tab === "messages" && (
         <div className="space-y-3">
           <Thread key={r.id} ctx={ctx} messages={thread} />
-          {!done && !draft && <button type="button" onClick={() => setDlg("remind")} className="inline-flex items-center gap-1.5 text-sm font-semibold text-deep hover:text-ink"><Bell className="w-4 h-4" />Send a reminder</button>}
-          {!done && !draft && (
+          {!done && (composer
+            ? <ReminderComposer ctx={ctx} r={r} onDone={() => setComposer(false)} />
+            : <button type="button" onClick={() => run("remind")} className="inline-flex items-center gap-1.5 text-sm font-semibold text-deep hover:text-ink"><Bell className="w-4 h-4" />Send a reminder</button>)}
+          {!done && (
             <label className="flex items-center justify-between gap-3 border-t border-line pt-3 cursor-pointer text-sm">
               <span><b className="font-semibold text-ink">Automatic reminders</b><br /><span className="text-xs text-[#5B6B78]">{r.auto ? `Next: ${nextReminder(r)} · 3 days before due, on the due date, then weekly` : "Off. You'll need to follow up manually."}</span></span>
               <input type="checkbox" role="switch" checked={r.auto} onChange={(e) => setAuto(ctx, r.id, e.target.checked)} className="w-4 h-4 accent-[#3FB5D7]" />
@@ -366,35 +268,34 @@ function DetailPanel({ ctx, r, mail }: { ctx: CaseCtx; r: DocRequest | undefined
           )}
         </div>
       )}
-      {tab === "files" && (
-        <div className="space-y-2">
-          {r.files.length ? (
-            <ul className="space-y-2">
-              {r.files.map((f) => (
-                <li key={f.storageKey ?? f.name} className="flex flex-wrap items-center gap-2.5 border border-line rounded-lg px-3 py-2.5">
-                  <FileText className="w-4 h-4 text-deep shrink-0" />
-                  <span className="mono-ref text-ink flex-1 min-w-0 truncate" title={f.name}>{f.name}</span>
-                  {r.reviewed && <Tag text="Reviewed" tone="ok" />}
-                  <button type="button" className={btn} onClick={() => file(f, (b) => setPreview({ name: f.name, blob: b }))}><Eye className="w-3.5 h-3.5" />View</button>
-                  <button type="button" className={btn} disabled={!f.storageKey && !f.demo} title={f.storageKey || f.demo ? "Download" : "The file isn't stored in this browser"} onClick={() => file(f, (b) => saveBlob(b, f.name))}>
-                    <Download className="w-3.5 h-3.5" />Download
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : <p className="text-sm text-[#8A98A3]">No documents yet.{!draft ? " Upload them when they arrive." : ""}</p>}
-          {!draft && <button type="button" onClick={() => setDlg("upload")} className="inline-flex items-center gap-1.5 text-sm font-semibold text-deep hover:text-ink"><Upload className="w-4 h-4" />Upload documents</button>}
-        </div>
+      {tab === "activity" && (
+        <ol className="space-y-2.5">
+          {[...r.log].reverse().map((l, i) => (
+            <li key={i} className="grid grid-cols-[96px_10px_1fr] gap-2.5 text-sm">
+              <span className="mono-ref text-xs pt-0.5">{fmtShort(l.at)} · {fmtTime(l.at)}</span>
+              <span className="w-2 h-2 rounded-full bg-brand mt-1.5" />
+              <span className="text-ink">{l.text}</span>
+            </li>
+          ))}
+        </ol>
       )}
-
-      {dlg === "owner" && <ReassignDialog ctx={ctx} r={r} onClose={() => setDlg("")} />}
-      {dlg === "due" && <DueDialog ctx={ctx} r={r} onClose={() => setDlg("")} />}
-      {dlg === "snooze" && <SnoozeDialog ctx={ctx} r={r} onClose={() => setDlg("")} />}
-      {dlg === "remind" && <ReminderDialog ctx={ctx} r={r} onClose={() => setDlg("")} />}
-      {dlg === "delete" && <DeleteDialog ctx={ctx} r={r} onClose={() => setDlg("")} />}
-      {dlg === "edit" && <EditDialog ctx={ctx} r={r} onClose={() => setDlg("")} />}
-      {dlg === "upload" && <UploadDialog ctx={ctx} r={r} onClose={() => setDlg("")} />}
-      {preview && <FilePreview name={preview.name} blob={preview.blob} onClose={() => setPreview(null)} />}
+      {tab === "files" && (
+        r.files.length ? (
+          <ul className="space-y-2">
+            {r.files.map((f) => (
+              <li key={f.storageKey ?? f.name} className="flex items-center gap-2.5 border border-line rounded-lg px-3 py-2.5">
+                <FileText className="w-4 h-4 text-deep shrink-0" />
+                <span className="mono-ref text-ink flex-1 min-w-0 truncate">{f.name}</span>
+                {r.reviewed && <Tag text="Reviewed" tone="ok" />}
+                <button type="button" className={btn} disabled={!f.storageKey} title={f.storageKey ? "Download" : "The file is not stored in this browser"}
+                  onClick={async () => { if (!(await downloadMediaFile(f.storageKey, f.name))) toast.error("The file is not stored in this browser"); }}>
+                  <Download className="w-3.5 h-3.5" />Download
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-sm text-[#8A98A3]">No files yet. Files attached when the request is marked received appear here.</p>
+      )}
     </div>
   );
 }
@@ -402,7 +303,7 @@ function DetailPanel({ ctx, r, mail }: { ctx: CaseCtx; r: DocRequest | undefined
 export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
   ctx: CaseCtx; requests: DocRequest[]; mail: MailMsg[]; focus?: { id: string; n: number }; onNew: () => void;
 }) {
-  const [f, setF] = useState<ListFilter>("all");
+  const [f, setF] = useState<ListFilter>("action");
   const [cat, setCat] = useState("all");
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<string>("");
@@ -418,11 +319,11 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
 
   const over = requests.filter(isOver);
   const week = requests.filter((r) => inFilter(r, "week"));
-  const awaiting = requests.filter((r) => inFilter(r, "open") && !isOver(r));
+  const waiting = requests.filter(isWaiting);
   const review = requests.filter((r) => inFilter(r, "review"));
   const qq = q.trim().toLowerCase();
   const list = useMemo(() => requests
-    .filter((r) => inFilter(r, f) && (cat === "all" || r.cat === cat) && (!qq || `${r.to} ${titleOf(r)} ${r.docs.join(" ")} ${r.cat} ${r.type} ${r.id}`.toLowerCase().includes(qq)))
+    .filter((r) => inFilter(r, f) && (cat === "all" || r.cat === cat) && (!qq || `${r.to} ${r.docs.join(" ")} ${r.cat} ${r.type} ${r.id}`.toLowerCase().includes(qq)))
     .sort((a, b) => BUCKETS.indexOf(bucket(a)) - BUCKETS.indexOf(bucket(b)) || urgency(a) - urgency(b)), [requests, f, cat, qq]);
   const current = list.find((r) => r.id === sel) ?? list[0];
   const cur = FILTERS.find((x) => x.key === f);
@@ -430,7 +331,7 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
   const cats = [{ c: "all", L: requests }, ...CATEGORIES.map((c) => ({ c, L: requests.filter((r) => r.cat === c) }))];
 
   const metric = (k: ListFilter, n: number, label: string, sub: string, Icon: typeof Clock, tone: keyof typeof METRIC_TONE) => (
-    <button type="button" aria-pressed={f === k} onClick={() => setF(f === k ? "all" : k)}
+    <button type="button" aria-pressed={f === k} onClick={() => setF(f === k ? "action" : k)}
       className={`h-full flex gap-3 items-start text-left bg-white border rounded-xl p-4 min-w-0 transition-colors ${f === k ? "border-brand ring-2 ring-tint" : "border-line hover:border-[#CBD7DE] hover:bg-[#FCFEFF]"}`}>
       <span className={`w-9 h-9 rounded-lg inline-flex items-center justify-center shrink-0 ${METRIC_TONE[tone]}`}><Icon className="w-4 h-4" strokeWidth={1.75} /></span>
       <span className="min-w-0 flex-1">
@@ -445,7 +346,7 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
     <div className="lg-card text-center text-sm text-[#5B6B78] py-10 px-6 flex flex-col items-center gap-2">
       <Inbox className="w-8 h-8 text-[#9BDAEC]" strokeWidth={1.5} />
       <b className="text-ink">{requests.length ? `No ${cat.toLowerCase()} requests yet` : "No document requests on this case yet"}</b>
-      <span className="max-w-sm">Create a request to track it from draft to reviewed. Reminders and replies are recorded against it.</span>
+      <span className="max-w-sm">Create a request to track it from draft to reviewed. Reminders, escalations and replies are recorded against it.</span>
       <button type="button" onClick={onNew} className={`${btnP} mt-1`}><Plus className="w-3.5 h-3.5" />New request</button>
     </div>
   ) : (
@@ -460,7 +361,7 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {metric("overdue", over.length, "Overdue", over.length ? over.map((r) => r.to).join(", ") : "Nothing overdue", Clock, "crit")}
         {metric("week", week.length, "Due this week", "Next 7 days", Bell, "warn")}
-        {metric("open", awaiting.length, "Awaiting response", "Sent or acknowledged", Hourglass, "acc")}
+        {metric("waiting", waiting.length, "Waiting on plaintiff", "Discovery and signed forms", Scale, "acc")}
         {metric("review", review.length, "To review", "Received, not reviewed", Inbox, "")}
         {over.length > 0 && (
           <div className="sm:col-span-2 xl:col-span-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#FEF2F2] border border-[#FBD5D5] px-4 py-2.5 text-sm font-semibold text-[#B91C1C]">
@@ -530,7 +431,7 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
           {(FOCUS_LABEL[f] || cat !== "all") && (
             <div className="flex items-center gap-2 text-sm bg-tint text-deep rounded-lg pl-3 pr-1.5 py-1">
               Showing: <b className="font-semibold">{[FOCUS_LABEL[f], cat !== "all" ? cat : ""].filter(Boolean).join(" · ")}</b>
-              <button type="button" aria-label="Clear filters" onClick={() => { setF("all"); setCat("all"); }} className="ml-auto p-1 rounded hover:bg-white"><X className="w-3.5 h-3.5" /></button>
+              <button type="button" aria-label="Clear filters" onClick={() => { setF("action"); setCat("all"); }} className="ml-auto p-1 rounded hover:bg-white"><X className="w-3.5 h-3.5" /></button>
             </div>
           )}
           {bulk && (
@@ -558,9 +459,9 @@ export function RequestTracker({ ctx, requests, mail, focus, onNew }: {
                           className={`flex-1 min-w-0 flex gap-3 text-left bg-white border rounded-xl p-3 transition-colors ${on ? "border-brand ring-2 ring-tint" : "border-line hover:border-[#CBD7DE]"} ${isDone(r) ? "opacity-75" : ""}`}>
                           <CatIcon cat={r.cat} size={36} />
                           <span className="min-w-0 flex-1 space-y-1">
-                            <span className="block text-sm font-semibold text-ink leading-snug break-words">{titleOf(r)}</span>
-                            <span className="block text-xs text-[#5B6B78] truncate"><b className="font-semibold text-ink">{r.to}</b> · {r.docs.join(", ")}</span>
-                            <span className="flex flex-wrap items-center gap-2"><StatusPill r={r} /><DueChip r={r} />{r.priority === "High" && <Tag text="High" tone="crit" />}<span className="ml-auto"><Avatar name={r.owner} /></span></span>
+                            <span className="block text-sm font-semibold text-ink leading-snug break-words">{r.to}</span>
+                            <span className="block text-xs text-[#5B6B78] truncate"><b className="font-semibold text-ink">{r.type}</b> · {r.docs.join(", ")}</span>
+                            <span className="flex flex-wrap items-center gap-2"><StatusPill r={r} /><DueChip r={r} />{r.priority === "High" && <Tag text="High" tone="crit" />}{r.demo && <Tag text="Sample" />}<span className="ml-auto"><Avatar name={r.owner} /></span></span>
                           </span>
                         </button>
                       </div>
